@@ -41,9 +41,15 @@ jobs:
             # first push of a branch, or a manual run: compare with main
             base=$(git merge-base origin/main HEAD)
           fi
-          echo "Comparing $base..HEAD"
-          # --check-versions: an update to an existing skill must bump metadata.version
-          python3 scripts/ci_changed_skills.py --base "$base" --check-versions
+          # versions: judged against main, so only skills already on main need a
+          # bump (a push to main itself compares with the commit before it)
+          if [ "$EVENT" = push ] && [ "$GITHUB_REF" = refs/heads/main ]; then
+            vbase=$base
+          else
+            vbase=$(git merge-base origin/main HEAD)
+          fi
+          echo "Comparing $base..HEAD (versions against $vbase)"
+          python3 scripts/ci_changed_skills.py --base "$base" --version-base "$vbase" --check-versions
 
       - name: Repo-wide safety scan (always; fast)
         run: python3 -m unittest tests.test_public_safety -v

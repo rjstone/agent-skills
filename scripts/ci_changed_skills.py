@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Decide which skills CI must test, from the files changed since a base commit.
 
-    python3 scripts/ci_changed_skills.py --base <sha> [--check-versions]
+    python3 scripts/ci_changed_skills.py --base <sha> [--check-versions [--version-base <sha>]]
 
 Prints `skills=<comma list>` (or `skills=all`). In GitHub Actions it also
 writes `skills` and `any` (true/false) to $GITHUB_OUTPUT. Rules:
@@ -10,7 +10,10 @@ writes `skills` and `any` (true/false) to $GITHUB_OUTPUT. Rules:
 - tests/test_<name>.py        -> that skill (name with "_" for "-")
 - shared test files, scripts/, .github/ -> every skill
 - anything else (notes, docs) -> no skill tests
-Exit 1 if a version check fails. Standard library only.
+--base picks what to test (e.g. the previous push). --version-base (default:
+--base) is what versions are judged against: use main's merge-base, so only
+skills that already exist on main need a bump, and iterating on an unmerged
+skill branch does not. Exit 1 if a version check fails. Standard library only.
 """
 import argparse
 import os
@@ -90,6 +93,7 @@ def main(argv=None):
     ap = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
     ap.add_argument("--base", required=True, help="commit to compare HEAD against")
     ap.add_argument("--check-versions", action="store_true")
+    ap.add_argument("--version-base", help="commit versions are compared with (default: --base)")
     a = ap.parse_args(argv)
     repo = os.getcwd()
     skills = {d for d in os.listdir(os.path.join(repo, "skills"))
@@ -103,7 +107,10 @@ def main(argv=None):
         with open(out, "a", encoding="utf-8") as f:
             f.write("skills=%s\nany=%s\n" % (value, "true" if value else "false"))
     if a.check_versions:
-        problems = check_versions(repo, a.base, own)
+        vbase = a.version_base or a.base
+        if vbase != a.base:
+            own = classify(changed_files(repo, vbase), skills)[1]
+        problems = check_versions(repo, vbase, own)
         for p in problems:
             print("::error::" + p)
         if problems:

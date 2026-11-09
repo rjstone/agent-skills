@@ -6,6 +6,7 @@ Run from the repo root: python3 -m unittest discover -s tests -v
 import importlib.util
 import os
 import subprocess
+import sys
 import tempfile
 import unittest
 
@@ -98,6 +99,30 @@ class TestVersionCheck(unittest.TestCase):
         self.skill("beta", "0.1.0")
         self.commit()
         self.assertEqual(ccs.check_versions(self.dir, self.base, {"beta"}), [])
+
+    def run_main(self, *argv):
+        out = subprocess.run([sys.executable, SCRIPT, *argv], cwd=self.dir, capture_output=True, text=True)
+        return out.returncode, out.stdout
+
+    def test_version_base_separates_selection_from_bump_check(self):
+        # main has alpha; a branch adds beta, pushes, then edits beta again
+        self.skill("beta", "0.1.0")
+        self.commit()
+        first_push = self.git("rev-parse", "HEAD")
+        self.skill("beta", "0.1.0", body="Fixed during review.\n")
+        self.commit()
+        # against the previous push alone, beta looks like an un-bumped update
+        code, _ = self.run_main("--base", first_push, "--check-versions")
+        self.assertEqual(code, 1)
+        # versions are judged against main: beta is new there, so no bump needed
+        code, out = self.run_main("--base", first_push, "--version-base", self.base, "--check-versions")
+        self.assertEqual(code, 0, out)
+        self.assertIn("skills=beta", out)
+        # but an edit to alpha (on main) still needs a bump
+        self.skill("alpha", "0.1.0", body="Changed.\n")
+        self.commit()
+        code, _ = self.run_main("--base", first_push, "--version-base", self.base, "--check-versions")
+        self.assertEqual(code, 1)
 
     def test_changed_files_from_git(self):
         self.skill("alpha", "0.1.1", body="Changed.\n")
