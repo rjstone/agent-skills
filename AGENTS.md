@@ -34,6 +34,30 @@ mechanical cases of 2 and 3) **and** read the whole diff for anything the
 patterns can't see. When in doubt, leave it out; keep personal or
 project-specific skills in that project's own repo.
 
+## Paths: no machine or account details
+
+Everything committed must work for any account on any machine.
+
+- Never write a user name, account name or machine name into the repo.
+- Never write an absolute path that starts with a drive letter (`C:`, `D:`,
+  ...) or with `/`. Start absolute paths from a standard location variable
+  instead:
+  - Windows prose: `%USERPROFILE%`, `%APPDATA%`, `%LOCALAPPDATA%`,
+    `%ProgramFiles%`
+  - PowerShell: `$env:USERPROFILE`, `$env:APPDATA`, `$env:LOCALAPPDATA`,
+    `$env:ProgramFiles`, in double quotes (single quotes don't expand)
+  - Linux/macOS: `~/`, `$HOME`; in CI, `$RUNNER_TEMP`
+- Inside a skill, use paths relative to the skill's folder (`scripts/x.py`,
+  `references/y.md`): the skill is installed in different places by
+  different harnesses.
+- Exceptions:
+  - system locations that have no variable (`/Applications/...` on macOS)
+  - verbatim upstream copies (`skills/*/references/`), which keep their own
+    example paths
+  - made-up fixture paths in `tests/`
+- `tests/test_public_safety.py` fails on drive-letter paths and on home paths
+  with a real-looking account name; other `/` paths need the diff review.
+
 ## Layout
 
 Follows the layout of `obra/superpowers` (a popular pack that supports several
