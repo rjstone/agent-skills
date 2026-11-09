@@ -1,6 +1,12 @@
 ---
 name: opencode-build
 description: Use when writing, changing or reviewing an opencode plugin (server, TUI, GUI or RPC part, Plugin.define, hooks, custom tools, package.json exports, loading from opencode.json), using @opencode/plugin, @opencode/sdk or @opencode/client, porting a v1 plugin (@opencode-ai/plugin), or unsure whether an opencode API is v1 or v2.
+compatibility: Refreshing references/ (scripts/refresh_references.py) needs network access to opencode.ai; the cached docs work offline.
+license: MIT
+metadata:
+  author: Robert Stone
+  source: https://github.com/rjstone/agent-skills
+  version: "0.1.0"
 ---
 
 # opencode Build docs (v2)

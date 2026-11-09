@@ -73,9 +73,9 @@ vendors' plugin formats):
   the skill links to), `scripts/` (tools the skill runs; invoke them through
   their interpreter, e.g. `python scripts/x.py`).
 - `tests/` - stdlib `python3` `unittest` tests. `test_skills.py` checks every
-  skill (frontmatter, name = folder, single-line `description` starting
-  "Use when", every `references/*.md` linked from `SKILL.md`, no nested
-  `SKILL.md`); `test_public_safety.py` scans every tracked file for secrets,
+  skill (the frontmatter standard below, name = folder, single-line
+  `description` starting "Use when", every `references/*.md` linked from
+  `SKILL.md`, no nested `SKILL.md`); `test_public_safety.py` scans every tracked file for secrets,
   personal emails, account home paths and drive-letter paths; per-skill
   tests are `test_<skill>.py`.
 - `.github/workflows/ci.yml` - runs the tests and checks that the skills CLI
@@ -84,6 +84,38 @@ vendors' plugin formats):
 - `TODO.md` - open work. `BUGS.md` - upstream bugs (create when needed).
 
 Run the tests from the repo root: `python3 -m unittest discover -s tests -v`.
+
+## Skill frontmatter (the user, 2026-11-08)
+
+Format: the Agent Skills specification,
+https://agentskills.io/specification.md (index of all its pages:
+https://agentskills.io/llms.txt). Every `SKILL.md` in this repo starts with
+these fields, in this order:
+
+```yaml
+---
+name: <skill-name>
+description: <triggering conditions only, starting "Use when">
+compatibility: <only if the skill needs an atypical environment>
+license: MIT
+metadata:
+  author: Robert Stone
+  source: https://github.com/rjstone/agent-skills
+  version: "0.1.0"
+---
+```
+
+- Required here: `name`, `description`, `license`, and `metadata` with
+  `author`, `source` and `version`. Add co-authors to `author`, separated
+  by commas.
+- `version` is a quoted `"X.Y.Z"` string (metadata values are strings).
+  New skills start at `"0.1.0"`.
+- `compatibility` (1-500 characters) only when it's worthwhile: system
+  packages or tools that usually aren't installed (Xvfb, ImageMagick,
+  tkinter), network access a script needs, or one intended product. Leave
+  it out for things nearly everyone has (Python, git, a shell).
+- License and attribution live only in the frontmatter: no license or
+  "maintained by" prose in the body.
 
 ## Skills
 

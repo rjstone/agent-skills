@@ -10,6 +10,11 @@ import unittest
 REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 SKILLS = os.path.join(REPO_ROOT, "skills")
 NAME = re.compile(r"^[a-z0-9]+(?:-[a-z0-9]+)*$")
+# Frontmatter standard (AGENTS.md "Skill frontmatter", the user, 2026-11-08)
+ORDER = ["name", "description", "compatibility", "license", "metadata"]
+REQUIRED = {"name", "description", "license", "metadata"}
+SOURCE = "https://github.com/rjstone/agent-skills"
+VERSION = re.compile(r'^"\d+\.\d+\.\d+"$')
 FRONTMATTER = re.compile(r"^---\n(.*?)\n---\n", re.S)
 
 
@@ -24,14 +29,22 @@ def read(path):
 
 
 def frontmatter(text):
+    """Top-level keys (in order) -> raw value; metadata's indented keys go in
+    fields["_metadata"]. Enough for this repo's flat frontmatter."""
     m = FRONTMATTER.match(text)
     if not m:
         return None
-    fields = {}
+    fields, meta, keys = {}, {}, []
     for line in m.group(1).split("\n"):
         k, sep, v = line.partition(":")
-        if sep and not line.startswith((" ", "\t")):
+        if not sep:
+            continue
+        if line.startswith(("  ", "\t")):
+            meta[k.strip()] = v.strip()
+        else:
+            keys.append(k.strip())
             fields[k.strip()] = v.strip()
+    fields["_order"], fields["_metadata"] = keys, meta
     return fields
 
 
@@ -55,6 +68,22 @@ class TestSkills(unittest.TestCase):
                 self.assertNotIn(desc, ("", ">", "|", ">-", "|-"), "single-line description")
                 self.assertTrue(desc.startswith("Use when"), "description starts with 'Use when'")
                 self.assertLessEqual(len(desc), 1024)
+
+    def test_frontmatter_standard(self):
+        for d in skill_dirs():
+            with self.subTest(skill=d):
+                fm = frontmatter(read(os.path.join(SKILLS, d, "SKILL.md")))
+                keys = fm["_order"]
+                self.assertTrue(REQUIRED <= set(keys), f"missing {REQUIRED - set(keys)}")
+                self.assertTrue(set(keys) <= set(ORDER), f"unknown keys {set(keys) - set(ORDER)}")
+                self.assertEqual(keys, [k for k in ORDER if k in keys], "keys out of order")
+                self.assertEqual(fm["license"], "MIT")
+                meta = fm["_metadata"]
+                self.assertTrue(meta.get("author", "").startswith("Robert Stone"), "metadata.author")
+                self.assertEqual(meta.get("source"), SOURCE, "metadata.source")
+                self.assertRegex(meta.get("version", ""), VERSION, 'metadata.version as a quoted "X.Y.Z"')
+                if "compatibility" in fm:
+                    self.assertTrue(1 <= len(fm["compatibility"]) <= 500, "compatibility 1-500 chars")
 
     def test_references_are_linked_from_skill_md(self):
         for d in skill_dirs():
