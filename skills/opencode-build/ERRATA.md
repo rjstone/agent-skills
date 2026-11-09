@@ -15,4 +15,36 @@ Entry format (the script reads the `## E..` heading and the `- Page:` line):
 - Checked: <YYYY-MM-DD> against @opencode/plugin <version>
 ```
 
-No entries yet.
+## E01: `editor.namespace()` alone does not namespace a tool; id vs Code Mode path
+- Page: `plugins-server.md` (section "Tools", the `ctx.tool.transform` example)
+- Docs say: the example calls `editor.namespace({ name: "acme", ... })` and adds a
+  tool with `options: { namespace: "acme", codemode: true }`, then: "Use `update`
+  and `remove` with the effective tool name, including its namespace
+  (`acme_greeting` above)." It never says which of the two calls makes the
+  prefix, or how the model then sees the tool.
+- Actually:
+  - Only `options.namespace` on each `editor.add(...)` puts a tool in a
+    namespace. Effective id = `<namespace, "." -> "_">_<name>`; without
+    `options.namespace` the id is just the name. `editor.namespace()` only
+    records a namespace's description (shown in the Code Mode catalog) and
+    prefixes nothing. Declaring the namespace and omitting the option gives
+    an un-prefixed id: `enter`, not `tutor_enter`.
+  - `codemode` is on unless set to `false`. A Code Mode tool is called by the
+    model inside Code Mode as `tools.<namespace>.<name>(...)` (dots), or
+    `tools.<name>(...)` with no namespace; `pinned: true` lists it up front in
+    that catalog. So one tool has two names: id `tutor_enter`
+    (`list`/`get`/`update`/`remove`) and Code Mode path `tools.tutor.enter()`.
+  - For a plain, direct tool call set `codemode: false`, as opencode's own
+    direct tools (bash, patch, question) do. (Inferred from the source: that
+    Code Mode tools are not also offered as direct calls was not tested.)
+- Evidence: opencode v2.2.5 server (`opencode serve`) with a probe plugin;
+  `ctx.tool.list()` returned:
+  `namespace()` + no option -> id `enter_declared_only`;
+  `options: { namespace: "tutor" }` -> `tutor_enter_with_option`;
+  `options: { namespace: "tutor", codemode: false }` -> `tutor_enter_direct`.
+  The server's bundled source names ids with
+  `options?.namespace === undefined ? name : ns.replaceAll(".", "_") + "_" + name`
+  and Code Mode paths with `ns + "." + name`, and tells models to call tools as
+  `tools.<ns>.<tool>(...)`. Seen in practice: a tool added without the option
+  showed up as `tools.enter()`.
+- Checked: 2026-11-08 against @opencode/plugin 2.2.5 (opencode v2.2.5)

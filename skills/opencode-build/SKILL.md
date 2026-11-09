@@ -6,7 +6,7 @@ license: MIT
 metadata:
   author: Robert Stone
   source: https://github.com/rjstone/agent-skills
-  version: "0.1.0"
+  version: "0.1.1"
 ---
 
 # opencode Build docs (v2)
@@ -66,5 +66,6 @@ section you need.
 | --- | --- |
 | v1 imports or exported async function | `import { Plugin } from "@opencode/plugin"`; `export default Plugin.define({ id, setup(ctx) { ... } })` |
 | Guessing an `exports` key | `plugins.md` "Parts" lists them (`.`, `./tui`, `./gui-experimental`, `./rpc`) |
+| `editor.namespace()` but no `options.namespace` on the tool (id stays un-prefixed; Code Mode shows `tools.<name>()`) | Pass `options: { namespace }` on every `add`; see `ERRATA.md` E01 |
 | Reading a whole 2000-line reference | Search headings, read one section |
 | Trusting a reference over the installed types | Types win; record the conflict in `ERRATA.md` |
