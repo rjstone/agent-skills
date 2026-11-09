@@ -125,7 +125,9 @@ metadata:
   tkinter), network access a script needs, or one intended product. Leave
   it out for things nearly everyone has (Python, git, a shell).
 - License and attribution live only in the frontmatter: no license or
-  "maintained by" prose in the body.
+  "maintained by" prose in the body. One exception: an optional `## Credits`
+  section, last in the file, of one or two plain sentences crediting an
+  inspiration or prior idea (not authorship or license; the user, 2026-11-08).
 
 ## Skills
 
