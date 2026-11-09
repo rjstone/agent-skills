@@ -17,11 +17,6 @@
       (`https://opencode.ai/inference/...`), the model lists
       (`GET /inference/v1/models`, `/inference/go/v1/models`), API key types
       and SCIM user sync. Revisit if an account API appears.
-- [ ] `provider-onboarding` (after its initial add is merged, as an
-      `update/` PR): its overrides use `https://opencode.ai/zen/v1`,
-      `/zen/go/v1` and `GET /go/v1/usage`; the current Console docs use
-      `https://opencode.ai/inference/...` and document no usage endpoint.
-      Re-verify and update the `opencode` / `opencode-go` entries.
 - [ ] Docs-cache skills copy their refresh script (each skill must stand
       alone when installed). If they drift, generate the copies from one
       template instead of hand-editing each.
