@@ -35,8 +35,15 @@ Entry format (the script reads the `## E..` heading and the `- Page:` line):
     that catalog. So one tool has two names: id `tutor_enter`
     (`list`/`get`/`update`/`remove`) and Code Mode path `tools.tutor.enter()`.
   - For a plain, direct tool call set `codemode: false`, as opencode's own
-    direct tools (bash, patch, question) do. (Inferred from the source: that
-    Code Mode tools are not also offered as direct calls was not tested.)
+    direct tools (bash, patch, question) do. While Code Mode (the `execute`
+    tool) is allowed, the model's direct tool list holds only
+    `codemode: false` tools; the rest are reachable only through Code Mode.
+    If `execute` is denied by permissions, every tool is direct.
+  - `ctx.tool.hook("execute.before" | "execute.after")` also fire for calls
+    made from Code Mode, and `event.tool` is always the effective id
+    (`tutor_enter`, `thonny-agent_eval`), never the bare name or the dotted
+    Code Mode path. MCP tools are namespaced by server name
+    (`<server>_<tool>`, unsupported characters -> `_`).
 - Evidence: opencode v2.2.5 server (`opencode serve`) with a probe plugin;
   `ctx.tool.list()` returned:
   `namespace()` + no option -> id `enter_declared_only`;
@@ -46,7 +53,8 @@ Entry format (the script reads the `## E..` heading and the `- Page:` line):
   `options?.namespace === undefined ? name : ns.replaceAll(".", "_") + "_" + name`
   and Code Mode paths with `ns + "." + name`, and tells models to call tools as
   `tools.<ns>.<tool>(...)`. Seen in practice: a tool added without the option
-  showed up as `tools.enter()`.
+  showed up as `tools.enter()`. The direct-list filter and the hook names
+  come from the server's tool snapshot and `Tool.execute` code.
 - Checked: 2026-11-08 against @opencode/plugin 2.2.5 (opencode v2.2.5)
 
 ## E02: session hook reference uses made-up type names (`SessionContextHook` vs `SessionHookContext`)
@@ -77,3 +85,26 @@ Entry format (the script reads the `## E..` heading and the `- Page:` line):
   (`ModelHooks`, `ModelHookOptions`); no `SessionContextHook` or
   `SessionHookContext` anywhere in the package.
 - Checked: 2026-11-08 against @opencode/plugin 2.2.5
+
+## E03: tool results - `content` vs `output`, and what the model gets in Code Mode
+- Page: `plugins-server.md` (sections "Tools" and the `execute.after` tool hook)
+- Docs say: tool examples return only `{ content }`, and the `execute.after`
+  example edits `event.result`, but nothing says how `content` and `output`
+  differ or which one reaches the model.
+- Actually:
+  - Direct (non-Code-Mode) call: the model sees `content` when present;
+    `output` (JSON-stringified) only when there is no content.
+  - Code Mode call: the tool function returns `output` to the model's code
+    whenever it is defined; only otherwise the text of `content`.
+  - MCP tools always set `output` (the MCP structured content; else the text,
+    parsed as JSON when it looks like JSON; else `null`) and keep the MCP
+    content as `content`. MCP tools default to Code Mode.
+  - So text appended to `event.result.content` in `execute.after` reaches the
+    model for direct calls but is invisible in Code Mode when `output` is set,
+    which for MCP tools is always. Edit `output` too (or instead), or make
+    the tool `codemode: false`.
+- Evidence: opencode v2.2.5 server bundle: the Code Mode result function
+  returns `output` when defined, else the joined text content; the direct path
+  sends `content`, falling back to stringified `output`; the MCP bridge
+  returns `{ output: structured ?? text ?? null, content }`.
+- Checked: 2026-11-08 against opencode v2.2.5 (@opencode/plugin 2.2.5)
