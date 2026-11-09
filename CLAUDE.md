@@ -21,6 +21,15 @@ symlinks, see AGENTS.md).
 Claude Code keeps the working plan in `~/.claude/plans/`, which disappears
 with a cloud container: archive it to `docs/plans/` before the session ends.
 
+## Claude Code on the web: skills CLI
+
+- `npx skills find <query>` returns "No skills found" for every query in the
+  web container (even `react`): its search service isn't reachable there.
+  To find a skill, identify the source repo (e.g. a plugin's
+  `.claude-plugin/plugin.json`, or Anthropic's
+  `anthropics/claude-plugins-official`) and run
+  `npx skills add <owner/repo> --list`, which works.
+
 ## Claude Code on the web: git
 
 - The session's git proxy refuses deleting remote branches (HTTP 403 on
