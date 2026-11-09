@@ -87,3 +87,53 @@ jobs:
             fi
           done
           exit $missing
+
+  skills-index:
+    # Keep skills/index.json (the opencode HTTP skill catalog, served from
+    # raw.githubusercontent.com) in step with skills/ on main. Works only when
+    # skills/ changed, the file is missing, or it is stale (e.g. an earlier
+    # run was cancelled); commits only a real change. Pushes made with
+    # GITHUB_TOKEN do not start another workflow run.
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    needs: test
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+
+      - name: Regenerate and commit skills/index.json if needed
+        env:
+          BEFORE: ${{ github.event.before }}
+        run: |
+          changed=0
+          if [ -n "$BEFORE" ] && [ "$BEFORE" != 0000000000000000000000000000000000000000 ] \
+             && git cat-file -e "$BEFORE^{commit}" 2>/dev/null; then
+            git diff --name-only "$BEFORE" HEAD -- skills/ | grep -qv '^skills/index.json$' && changed=1
+          else
+            changed=1
+          fi
+          if [ "$changed" = 0 ] && [ -f skills/index.json ] \
+             && python3 scripts/build_skills_index.py --check; then
+            echo "No skill changes and the index is current; nothing to do."
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          for attempt in 1 2 3; do
+            python3 scripts/build_skills_index.py
+            git add skills/index.json
+            if git diff --cached --quiet; then
+              echo "skills/index.json already up to date."
+              exit 0
+            fi
+            git commit -q -m "chore: regenerate skills/index.json"
+            git push origin HEAD:main && exit 0
+            # main moved: start again from the new main (never force-push)
+            git fetch -q origin main
+            git reset -q --hard origin/main
+          done
+          echo "::error::could not push skills/index.json after 3 attempts"
+          exit 1

@@ -23,7 +23,7 @@ import sys
 
 ALL = "all"
 SHARED_PREFIXES = (".github/", "scripts/")
-SHARED_TESTS = re.compile(r"^tests/(?:_.*|test_skills\.py|test_public_safety\.py|test_ci_changed_skills\.py)$")
+SHARED_TESTS = re.compile(r"^tests/(?:_.*|test_skills\.py|test_public_safety\.py|test_ci_changed_skills\.py|test_skills_index\.py)$")
 VERSION_LINE = re.compile(r'^\s+version:\s*(\S+)\s*$', re.M)
 
 

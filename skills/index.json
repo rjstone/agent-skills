@@ -1,0 +1,93 @@
+{
+  "skills": [
+    {
+      "name": "capturing-tk-screenshots-headless",
+      "version": "0.1.0",
+      "files": [
+        "SKILL.md",
+        "claude-code.md",
+        "scripts/grab_stable.py"
+      ]
+    },
+    {
+      "name": "concept-parable",
+      "version": "0.1.0",
+      "files": [
+        "SKILL.md"
+      ]
+    },
+    {
+      "name": "opencode-api",
+      "version": "0.1.0",
+      "files": [
+        "ERRATA.md",
+        "SKILL.md",
+        "references/manifest.json",
+        "references/openapi.json",
+        "scripts/api_lookup.py",
+        "scripts/refresh_references.py"
+      ]
+    },
+    {
+      "name": "opencode-build",
+      "version": "0.1.0",
+      "files": [
+        "ERRATA.md",
+        "SKILL.md",
+        "references/client-effect.md",
+        "references/client.md",
+        "references/intro.md",
+        "references/manifest.json",
+        "references/plugins-cli.md",
+        "references/plugins-effect-rpc.md",
+        "references/plugins-effect.md",
+        "references/plugins-gui.md",
+        "references/plugins-migrate-v1.md",
+        "references/plugins-rpc.md",
+        "references/plugins-server.md",
+        "references/plugins.md",
+        "references/sdk-cloudflare.md",
+        "references/sdk-effect.md",
+        "references/sdk.md",
+        "scripts/refresh_references.py"
+      ]
+    },
+    {
+      "name": "opencode-cli",
+      "version": "0.1.0",
+      "files": [
+        "ERRATA.md",
+        "SKILL.md",
+        "references/acp.md",
+        "references/commands.md",
+        "references/config.md",
+        "references/intro.md",
+        "references/keybinds.md",
+        "references/manifest.json",
+        "references/plugins.md",
+        "references/providers.md",
+        "references/theme.md",
+        "references/tui.md",
+        "references/web.md",
+        "scripts/refresh_references.py"
+      ]
+    },
+    {
+      "name": "provider-onboarding",
+      "version": "0.1.0",
+      "files": [
+        "SKILL.md",
+        "references/data-sources.md",
+        "references/providers-overrides.json",
+        "scripts/lookup.py"
+      ]
+    },
+    {
+      "name": "timestamp",
+      "version": "0.1.0",
+      "files": [
+        "SKILL.md"
+      ]
+    }
+  ]
+}

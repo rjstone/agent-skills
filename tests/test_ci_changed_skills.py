@@ -29,8 +29,13 @@ class TestClassify(unittest.TestCase):
 
     def test_shared_files_select_all(self):
         for p in ("tests/test_skills.py", "tests/test_public_safety.py", "tests/_helpers.py",
+                  "tests/test_skills_index.py",
                   ".github/workflows/ci.yml", "scripts/ci_changed_skills.py"):
             self.assertEqual(ccs.classify([p], SKILLS)[0], ccs.ALL, p)
+
+    def test_generated_index_selects_nothing(self):
+        # skills/index.json is generated, not a skill folder
+        self.assertEqual(ccs.classify(["skills/index.json"], SKILLS), (set(), set()))
 
     def test_notes_select_nothing(self):
         self.assertEqual(ccs.classify(["AGENTS.md", "TODO.md", "docs/plans/x.md"], SKILLS), (set(), set()))

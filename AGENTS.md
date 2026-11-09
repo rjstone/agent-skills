@@ -90,6 +90,13 @@ vendors' plugin formats):
   unit tests and the skills CLI check (`npx skills add . --list`) only for
   the selected skills (`SKILLS=<list>`; unset locally = all). No network in
   the tests.
+- `skills/index.json` - generated opencode HTTP skill catalog (every skill's
+  `name`, `metadata.version` and file list). Never hand-edit it:
+  `python3 scripts/build_skills_index.py` writes it, `--check` reports a
+  missing or stale file. On pushes to `main`, the CI job `skills-index`
+  regenerates and commits it when `skills/` changed, it is missing, or it is
+  stale (the user, 2026-11-08). opencode re-downloads a skill only when its
+  version changes, which "Updating a skill" already requires.
 - `docs/plans/` - finished plans (`YYYY-MM-<topic>.md`).
 - `TODO.md` - open work. `BUGS.md` - upstream bugs (create when needed).
 
@@ -199,6 +206,11 @@ metadata:
 
 - skills.sh (`npx skills`) - **supported** (https://github.com/vercel-labs/skills,
   discovery rules in its `docs/creating-skills.md`).
+- opencode HTTP skill catalog - **supported**: add
+  `https://raw.githubusercontent.com/rjstone/agent-skills/main/skills/` to
+  `skills` in `opencode.json(c)`; opencode reads `skills/index.json` there.
+  Not `https://github.com/...` (a web page; opencode gets 403 for
+  `index.json`). Explicit `skills` entries take precedence over local copies.
 - Claude Code plugin (`.claude-plugin/plugin.json` / `marketplace.json`) - TODO.
 - Claude desktop/web plugins - TODO.
 - opencode v1/v2 plugins - TODO.
