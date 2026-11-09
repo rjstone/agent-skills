@@ -11,6 +11,29 @@ notes and imports this file with `@AGENTS.md`. Agents other than Claude treat
 `CLAUDE.md` as read-only and put their notes here or in their own vendor file.
 Keep this paragraph (and its twin in `CLAUDE.md`) when editing either file.
 
+## Public repo: what may be committed (the user, 2026-11-08)
+
+This repository is public. Anything sensitive, too specific to one person or
+machine, or half-baked stays out. A new skill (or a change to one) is
+committed only when it meets all of these:
+
+1. **Generally useful** to many people, not just one project or one person.
+2. **No machine or account details:** no user or account names, hostnames,
+   personal email addresses, home-directory paths, private repo names or
+   internal URLs. Use placeholders (`<user>`, `~`, `$HOME`, `%USERPROFILE%`,
+   `user@example.com`) and paths relative to the skill.
+3. **No secrets:** no passwords, tokens, API keys, private keys or
+   credentials of any kind, not even expired or "test" ones.
+4. **Reasonable quality** by the Agent Skills standard
+   (https://agentskills.io/specification) and the obra/superpowers
+   `writing-skills` checklist: a "Use when..." trigger description, tested
+   against agents with and without the skill, concise, no narrative.
+
+Before committing: run the tests (`tests/test_public_safety.py` catches the
+mechanical cases of 2 and 3) **and** read the whole diff for anything the
+patterns can't see. When in doubt, leave it out; keep personal or
+project-specific skills in that project's own repo.
+
 ## Layout
 
 Follows the layout of `obra/superpowers` (a popular pack that supports several
@@ -23,7 +46,9 @@ vendors' plugin formats):
 - `tests/` - stdlib `python3` `unittest` tests. `test_skills.py` checks every
   skill (frontmatter, name = folder, single-line `description` starting
   "Use when", every `references/*.md` linked from `SKILL.md`, no nested
-  `SKILL.md`); per-skill tests are `test_<skill>.py`.
+  `SKILL.md`); `test_public_safety.py` scans every tracked file for secrets,
+  personal emails, account home paths and drive-letter paths; per-skill
+  tests are `test_<skill>.py`.
 - `.github/workflows/ci.yml` - runs the tests and checks that the skills CLI
   (`npx skills add . --list`) discovers every skill. No network in the tests.
 - `docs/plans/` - finished plans (`YYYY-MM-<topic>.md`).
@@ -37,8 +62,8 @@ Run the tests from the repo root: `python3 -m unittest discover -s tests -v`.
   Markdown in `references/`, with `scripts/refresh_references.py` to update
   them and `ERRATA.md` for known doc mistakes. Never hand-edit `references/`
   (a test compares each file with its hash in `references/manifest.json`).
-  Moved here from `rjstone/thonny-opencode-tutor` `.agents/skills/` (that copy
-  stays until this repo is set up and tested; the user, 2026-11-08).
+  Started in the project that first needed it; that copy stays until this
+  repo is set up and tested (the user, 2026-11-08).
 
 ## Decisions (the user, 2026-11-08)
 

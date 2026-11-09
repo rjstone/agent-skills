@@ -24,6 +24,6 @@
 
 ## Consumers
 
-- [ ] `rjstone/thonny-opencode-tutor`: decide how it uses `opencode-build`
-      (install with `npx skills` vs keep a vendored copy), then remove or sync
-      its `.agents/skills/opencode-build`.
+- [ ] The project where `opencode-build` started: decide how it uses the
+      skill (install with `npx skills` vs keep a vendored copy), then remove
+      or sync its own copy.
