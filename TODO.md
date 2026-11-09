@@ -17,6 +17,12 @@
 - [ ] `opencode-build` `ERRATA.md`: record the doc mistakes already seen
       (verify each against the installed `@opencode/plugin` types).
 
+## Tests
+
+- [ ] `tests/test_public_safety.py`: SSH remotes like `git@github.com:org/x.git`
+      match the email pattern (seen while reviewing a candidate skill). Allow
+      `git@<host>:` when a skill first needs one.
+
 ## Automation
 
 - [ ] Scheduled workflow: run each skill's `refresh_references.py` weekly and
