@@ -138,6 +138,11 @@ metadata:
   Started in the project that first needed it; that copy stays until this
   repo is set up and tested (the user, 2026-11-08).
 
+- `timestamp` - `/timestamp [start|end|both|on|off]` prints a tool-read
+  time with a delta at the start and/or end of each turn.
+- `concept-parable` - explains a concept as a fable whose governing
+  condition drives the plot, with a late reveal and a mapping.
+
 ## Decisions (the user, 2026-11-08)
 
 - **Formats:** ship for skills.sh (`npx skills add rjstone/agent-skills`) first.

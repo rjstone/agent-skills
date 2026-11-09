@@ -21,6 +21,13 @@ symlinks, see AGENTS.md).
 Claude Code keeps the working plan in `~/.claude/plans/`, which disappears
 with a cloud container: archive it to `docs/plans/` before the session ends.
 
+## Claude Code on the web: git
+
+- The session's git proxy refuses deleting remote branches (HTTP 403 on
+  `git push origin --delete`), and the GitHub tools here have no delete. After
+  a squash-merge, delete the local branch and ask the user to delete the
+  remote one (AGENTS.md "Adding a skill", step 6).
+
 ## Delegating to subagents
 
 - Hand long, mechanical runs (batch jobs, long waits, log sweeps) to a cheap
