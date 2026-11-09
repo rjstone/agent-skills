@@ -48,3 +48,32 @@ Entry format (the script reads the `## E..` heading and the `- Page:` line):
   `tools.<ns>.<tool>(...)`. Seen in practice: a tool added without the option
   showed up as `tools.enter()`.
 - Checked: 2026-11-08 against @opencode/plugin 2.2.5 (opencode v2.2.5)
+
+## E02: session hook reference uses made-up type names (`SessionContextHook` vs `SessionHookContext`)
+- Page: `plugins-server.md` (section "Sessions", "Session reference")
+- Docs say: `SessionHooks` maps `context` to `SessionContextHook` (also used for
+  `compaction` and `generate`), and a separate `interface SessionHookContext`
+  declares `hook(name, callback, options)`. Neither name exists in the
+  package; the two near-identical names stand for unrelated things.
+- Actually (the real `@opencode/plugin/promise/session` types):
+  - The hook events are `SessionContext` (`context`), `SessionCompaction`
+    (`compaction`; `SessionContext` + `result?`), `SessionGenerate`
+    (`generate`), `SessionTitle` (`title`), built on `SessionRequest`. The
+    docs' other `...Hook` names are the real names without `Hook`
+    (`SessionModelRequest`, `SessionHttpRequest`, `SessionWebSocketSend`,
+    `SessionRetry`, ...).
+  - "`SessionHookContext`" is the registration function itself:
+    `ctx.session.hook`, typed `ModelHooks<SessionHooks>` (part of
+    `SessionDomain`), not an event.
+  - `SessionHooks` also has `"experimental.idle"` (event `SessionIdle`), missing
+    from the docs' list.
+  - `options` (`{ providerID?: string }`, `ModelHookOptions`) is allowed only for
+    hooks whose event has a `model` field: not for `prompt` or
+    `experimental.idle` (the docs say only `prompt`).
+  - Import the real names when typing a hook callback; usually
+    `ctx.session.hook("context", (event) => ...)` infers them.
+- Evidence: `@opencode/plugin` 2.2.5 `dist/promise/session.d.ts`
+  (`SessionHooks`, `SessionDomain`) and `dist/promise/registration.d.ts`
+  (`ModelHooks`, `ModelHookOptions`); no `SessionContextHook` or
+  `SessionHookContext` anywhere in the package.
+- Checked: 2026-11-08 against @opencode/plugin 2.2.5
