@@ -28,6 +28,11 @@ committed only when it meets all of these:
    (https://agentskills.io/specification) and the obra/superpowers
    `writing-skills` checklist: a "Use when..." trigger description, tested
    against agents with and without the skill, concise, no narrative.
+5. **Original to this repo:** skills that started elsewhere (third-party
+   packs, even with local edits) stay out. Point to their upstream instead,
+   and send improvements there as a PR. Check a skill's frontmatter
+   (`metadata.author`, `license`) and footer for its origin before adding it
+   (the user, 2026-11-08).
 
 Before committing: run the tests (`tests/test_public_safety.py` catches the
 mechanical cases of 2 and 3) **and** read the whole diff for anything the
