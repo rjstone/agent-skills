@@ -1,0 +1,39 @@
+name: ci
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Unit tests (stdlib python3, no network)
+        run: python3 -m unittest discover -s tests -v
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22 # skills CLI needs Node 22.20+
+
+      - name: skills.sh discovers every skill
+        env:
+          DISABLE_TELEMETRY: "1"
+          DO_NOT_TRACK: "1"
+        run: |
+          out=$(npx -y skills add . --list 2>&1)
+          echo "$out"
+          missing=0
+          for d in skills/*/; do
+            name=$(basename "$d")
+            if ! grep -q -- "$name" <<<"$out"; then
+              echo "::error::skills CLI did not list $name"
+              missing=1
+            fi
+          done
+          exit $missing
