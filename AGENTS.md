@@ -152,6 +152,9 @@ metadata:
 - `opencode-cli` - opencode v2 CLI docs (commands, `cli.json`, keybinds,
   themes, web UI, ACP) cached like `opencode-build`, with its own refresh
   script copy and `ERRATA.md`.
+- `opencode-api` - opencode v2 server HTTP API: the published OpenAPI spec
+  cached in `references/openapi.json`, searched with `scripts/api_lookup.py`
+  (too large to read whole); calls via `opencode api` or Basic auth.
 
 ## Decisions (the user, 2026-11-08)
 
