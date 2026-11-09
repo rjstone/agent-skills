@@ -137,11 +137,14 @@ metadata:
   (a test compares each file with its hash in `references/manifest.json`).
   Started in the project that first needed it; that copy stays until this
   repo is set up and tested (the user, 2026-11-08).
-
 - `timestamp` - `/timestamp [start|end|both|on|off]` prints a tool-read
   time with a delta at the start and/or end of each turn.
 - `concept-parable` - explains a concept as a fable whose governing
   condition drives the plot, with a late reveal and a mapping.
+- `capturing-tk-screenshots-headless` - run a Tk GUI on Xvfb and capture it
+  with ImageMagick; `scripts/grab_stable.py` waits until drawing settles.
+  App-specific notes (e.g. Thonny config) stay in that app's projects
+  (the user, 2026-11-08).
 
 ## Decisions (the user, 2026-11-08)
 
