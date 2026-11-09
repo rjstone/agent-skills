@@ -2,9 +2,37 @@
 
 Agent skills for coding agents (Claude Code, opencode, Codex, Cursor and others).
 
+## Install
+
+With the [skills CLI](https://github.com/vercel-labs/skills) (Node 22.20+), from your project's root:
+
 ```bash
+# Pick skills and coding agents interactively
 npx skills add rjstone/agent-skills
+
+# Every skill, for every coding agent the CLI supports, no prompts
+npx skills add rjstone/agent-skills --all
+
+# Only some skills (asks which agents to install for)
+npx skills add rjstone/agent-skills --skill opencode-build opencode-api
+
+# Only some skills, for more than one coding agent
+npx skills add rjstone/agent-skills --skill opencode-build opencode-api -a opencode claude-code
+
+# Into ./.agents/skills only (the shared folder that opencode, Codex, Cursor
+# and many others read); there is no free-form path option, the agent picks
+# the folder (claude-code -> ./.claude/skills)
+npx skills add rjstone/agent-skills --skill opencode-api -a universal
+
+# List the skills without installing
+npx skills add rjstone/agent-skills --list
 ```
+
+- Installs go into the project; add `-g` to install for your user account instead.
+- With more than one agent, the CLI keeps one copy in `./.agents/skills` and
+  symlinks the others to it. Add `--copy` for real copies instead, for example
+  on Windows without Developer Mode.
+- Update installed skills with `npx skills update`; `npx skills check` lists updates.
 
 ## Skills
 
