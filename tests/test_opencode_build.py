@@ -258,10 +258,21 @@ class TestCommittedTree(unittest.TestCase):
             self.m = json.load(f)
 
     def md_files(self):
-        return sorted(n for n in os.listdir(self.refs) if n.endswith(".md"))
+        """Downloaded pages only; `*.local.md` are hand-written additions."""
+        return sorted(n for n in os.listdir(self.refs)
+                      if n.endswith(".md") and not n.endswith(".local.md"))
+
+    def local_files(self):
+        return sorted(n for n in os.listdir(self.refs) if n.endswith(".local.md"))
 
     def test_manifest_matches_files(self):
         self.assertEqual(self.md_files(), sorted(self.m["pages"]))
+
+    def test_local_files_supplement_a_downloaded_page(self):
+        for name in self.local_files():
+            page = name[: -len(".local.md")] + ".md"
+            self.assertIn(page, self.m["pages"],
+                          f"{name} has no downloaded {page} to supplement")
 
     def test_hashes_match_lf_normalized_files(self):
         for name, e in self.m["pages"].items():
