@@ -5,7 +5,11 @@ Run from the repo root: python3 -m unittest discover -s tests -v
 """
 import os
 import re
+import sys
 import unittest
+
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from _select import selected  # noqa: E402
 
 REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 SKILLS = os.path.join(REPO_ROOT, "skills")
@@ -18,9 +22,14 @@ VERSION = re.compile(r'^"\d+\.\d+\.\d+"$')
 FRONTMATTER = re.compile(r"^---\n(.*?)\n---\n", re.S)
 
 
-def skill_dirs():
+def all_skill_dirs():
     return sorted(d for d in os.listdir(SKILLS)
                   if os.path.isfile(os.path.join(SKILLS, d, "SKILL.md")))
+
+
+def skill_dirs():
+    """The skills selected for this run (SKILLS env; all by default)."""
+    return [d for d in all_skill_dirs() if selected(d)]
 
 
 def read(path):
@@ -50,11 +59,11 @@ def frontmatter(text):
 
 class TestSkills(unittest.TestCase):
     def test_there_are_skills(self):
-        self.assertTrue(skill_dirs())
+        self.assertTrue(all_skill_dirs())
 
     def test_every_skill_dir_has_skill_md(self):
         for d in os.listdir(SKILLS):
-            if os.path.isdir(os.path.join(SKILLS, d)):
+            if os.path.isdir(os.path.join(SKILLS, d)) and selected(d):
                 self.assertTrue(os.path.isfile(os.path.join(SKILLS, d, "SKILL.md")), d)
 
     def test_frontmatter(self):
@@ -95,6 +104,16 @@ class TestSkills(unittest.TestCase):
                 if name.endswith(".md"):
                     with self.subTest(skill=d, ref=name):
                         self.assertIn(f"references/{name}", text)
+
+    def test_skill_test_files_honor_selection(self):
+        # CI skips unchanged skills; a per-skill test file must check SKILLS too
+        tests_dir = os.path.dirname(os.path.abspath(__file__))
+        for d in all_skill_dirs():
+            path = os.path.join(tests_dir, "test_%s.py" % d.replace("-", "_"))
+            if os.path.isfile(path):
+                with self.subTest(skill=d):
+                    self.assertIn('selected("%s")' % d, read(path),
+                                  "add: if not selected(\"%s\"): raise unittest.SkipTest(...)" % d)
 
     def test_no_nested_skill_md(self):
         # a SKILL.md below a skill would be discovered as a second skill

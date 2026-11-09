@@ -1,36 +1,80 @@
 name: ci
 
+# Pushes to main and to new-skill branches, and every PR (opened, pushed to,
+# reopened). update/* branches are tested through their PR, so they are not
+# listed under push (that would run CI twice per push).
 on:
   push:
+    branches: [main, "skill/**"]
   pull_request:
+    types: [opened, synchronize, reopened]
   workflow_dispatch:
 
 permissions:
   contents: read
+
+concurrency:
+  group: ci-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
 
 jobs:
   test:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0 # the diff against the base needs history
 
-      - name: Unit tests (stdlib python3, no network)
+      - name: Choose skills to test (changed ones only)
+        id: pick
+        env:
+          EVENT: ${{ github.event_name }}
+          PR_BASE: ${{ github.event.pull_request.base.sha }}
+          BEFORE: ${{ github.event.before }}
+        run: |
+          if [ "$EVENT" = pull_request ]; then
+            base=$PR_BASE
+          elif [ -n "$BEFORE" ] && [ "$BEFORE" != 0000000000000000000000000000000000000000 ] \
+               && git cat-file -e "$BEFORE^{commit}" 2>/dev/null; then
+            base=$BEFORE
+          else
+            # first push of a branch, or a manual run: compare with main
+            base=$(git merge-base origin/main HEAD)
+          fi
+          echo "Comparing $base..HEAD"
+          # --check-versions: an update to an existing skill must bump metadata.version
+          python3 scripts/ci_changed_skills.py --base "$base" --check-versions
+
+      - name: Repo-wide safety scan (always; fast)
+        run: python3 -m unittest tests.test_public_safety -v
+
+      - name: Unit tests for the chosen skills
+        if: steps.pick.outputs.any == 'true'
+        env:
+          SKILLS: ${{ steps.pick.outputs.skills }}
         run: python3 -m unittest discover -s tests -v
 
       - uses: actions/setup-node@v7
+        if: steps.pick.outputs.any == 'true'
         with:
           node-version: 22 # skills CLI needs Node 22.20+
 
-      - name: skills.sh discovers every skill
+      - name: skills.sh discovers the chosen skills
+        if: steps.pick.outputs.any == 'true'
         env:
           DISABLE_TELEMETRY: "1"
           DO_NOT_TRACK: "1"
+          SKILLS: ${{ steps.pick.outputs.skills }}
         run: |
           out=$(npx -y skills add . --list 2>&1)
           echo "$out"
+          if [ "$SKILLS" = all ]; then
+            names=$(for d in skills/*/; do basename "$d"; done)
+          else
+            names=$(tr ',' '\n' <<<"$SKILLS")
+          fi
           missing=0
-          for d in skills/*/; do
-            name=$(basename "$d")
+          for name in $names; do
             if ! grep -q -- "$name" <<<"$out"; then
               echo "::error::skills CLI did not list $name"
               missing=1

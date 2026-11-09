@@ -14,6 +14,14 @@ import tempfile
 import unittest
 from contextlib import redirect_stdout
 
+import sys
+
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from _select import selected  # noqa: E402
+
+if not selected("opencode-build"):
+    raise unittest.SkipTest("opencode-build not selected (SKILLS)")
+
 REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 SKILL_DIR = os.path.join(REPO_ROOT, "skills", "opencode-build")
 SCRIPT = os.path.join(SKILL_DIR, "scripts", "refresh_references.py")

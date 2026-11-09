@@ -77,9 +77,19 @@ vendors' plugin formats):
   `description` starting "Use when", every `references/*.md` linked from
   `SKILL.md`, no nested `SKILL.md`); `test_public_safety.py` scans every tracked file for secrets,
   personal emails, account home paths and drive-letter paths; per-skill
-  tests are `test_<skill>.py`.
-- `.github/workflows/ci.yml` - runs the tests and checks that the skills CLI
-  (`npx skills add . --list`) discovers every skill. No network in the tests.
+  tests are `test_<skill-with-underscores>.py` and must start with
+  `if not selected("<skill>"): raise unittest.SkipTest(...)` (from
+  `tests/_select.py`; a test enforces it).
+- `scripts/ci_changed_skills.py` - CI's selector: maps the files changed
+  since the base commit to the skills to test (`skills/<name>/` or
+  `tests/test_<name>.py` -> that skill; shared tests, `scripts/`, `.github/`
+  -> all; notes -> none) and, with `--check-versions`, fails when an existing
+  skill changed without a higher `metadata.version`.
+- `.github/workflows/ci.yml` - runs on pushes to `main` and `skill/**`, and on
+  PRs (opened, synchronize, reopened). Always runs the safety scan; runs the
+  unit tests and the skills CLI check (`npx skills add . --list`) only for
+  the selected skills (`SKILLS=<list>`; unset locally = all). No network in
+  the tests.
 - `docs/plans/` - finished plans (`YYYY-MM-<topic>.md`).
 - `TODO.md` - open work. `BUGS.md` - upstream bugs (create when needed).
 
@@ -136,9 +146,34 @@ metadata:
   real `skills/` tree; a format that needs files elsewhere points its manifest
   at `skills/`, or a script generates the copy. Never link.
 - **Tests:** stdlib `python3` `unittest` plus GitHub Actions.
-- **Git:** commit straight to `main`; use a branch only for large changes.
+- **Git:** repo-level changes (notes, tests, CI, tooling) go straight to
+  `main`; use a branch only for large ones. Skills follow "Adding a skill" and
+  "Updating a skill" below.
 - **Versioning:** no releases yet; skills.sh installs from the default branch.
   Add versioning with the first plugin format that has a version field.
+
+## Adding a skill (the user, 2026-11-08)
+
+1. Branch `main` to `skill/<skill-name>`.
+2. Commit all of the skill's files on that branch, in the locations and
+   format this file requires (`skills/<name>/`, its `tests/test_<name>.py` if
+   any, the frontmatter standard, the public-repo criteria).
+3. Run the tests on the skill (CI also runs on every push to `skill/**`).
+4. Ask for review and wait for it.
+5. When approved, **squash-merge** `skill/<skill-name>` into `main`: the
+   initial add of a skill is the only squash.
+6. Delete the merged branch, or ask the user to.
+
+## Updating a skill (the user, 2026-11-08)
+
+1. Branch to `update/<skill-name>`.
+2. Always bump `metadata.version`, roughly semver: **major** for breaking or
+   big changes, **minor** when files are added, **patch** for edits that add
+   no files. CI fails a change to an existing skill without a higher version.
+3. Commit the changes to the branch.
+4. Open a PR for the branch (CI runs on the PR and on each push to it).
+5. When done, merge with a **merge commit** (no squash, no fast-forward) and
+   delete the branch.
 
 ## Formats (status)
 
