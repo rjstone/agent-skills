@@ -30,6 +30,27 @@
 
 ## Consumers
 
-- [ ] The project where `opencode-build` started: decide how it uses the
-      skill (install with `npx skills` vs keep a vendored copy), then remove
-      or sync its own copy.
+- [x] The project where `opencode-build` started: it installs the opencode
+      skills as copies with `npx skills add ... --copy` (for other harnesses)
+      and loads the HTTP catalog in opencode (the user, 2026-11-08).
+
+## Ideas for later
+
+- [ ] Group skills into category folders, e.g. `skills/opencode/<name>/` and
+      `skills/misc/<name>/`, each with its own generated `index.json`, so an
+      opencode project can load one group:
+      `https://raw.githubusercontent.com/rjstone/agent-skills/main/skills/opencode/`.
+      Checked against opencode 2.2.5's catalog code (2026-11-08):
+      - A catalog URL is always a folder (`<url>/index.json`); it cannot
+        name another file such as `index-opencode.json`.
+      - A top-level `skills/index.json` cannot aggregate the groups: entry
+        files come only from `<base>/<name>/`, `name` cannot contain `/`,
+        paths cannot use `..`, and an entry must list its own `SKILL.md`.
+        For "everything", list each group's URL in `skills` (entries are
+        combined).
+      - skills.sh already discovers `skills/<category>/<name>/SKILL.md`.
+      - Needs: the layout rule and tests (`skills/<name>/` assumed), the CI
+        skill selector, the index generator (one index per group) and the
+        `skills-index` CI job.
+      Until then, a project can hide skills it doesn't want with opencode
+      `skill` permission rules.
