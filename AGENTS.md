@@ -149,6 +149,9 @@ metadata:
   snippets for an LLM provider or model; `scripts/lookup.py` reads
   models.dev data merged with `references/providers-overrides.json` (entries
   carry a `verified` date and `source`; re-verify before trusting old ones).
+- `opencode-cli` - opencode v2 CLI docs (commands, `cli.json`, keybinds,
+  themes, web UI, ACP) cached like `opencode-build`, with its own refresh
+  script copy and `ERRATA.md`.
 
 ## Decisions (the user, 2026-11-08)
 
