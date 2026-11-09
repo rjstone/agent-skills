@@ -146,6 +146,9 @@ metadata:
   beside the page `X.md` they supplement (Reference sections with the real
   type declarations from the installed packages); the refresh script ignores
   them and a test requires the matching page (the user, 2026-11-09).
+  `scripts/dts_decls.py` and `scripts/client_outline.py` print the type
+  declarations those additions are written from (no fixed update procedure
+  yet; the user, 2026-11-09).
   Started in the project that first needed it; that copy stays until this
   repo is set up and tested (the user, 2026-11-08).
 - `timestamp` - `/timestamp [start|end|both|on|off]` prints a tool-read
