@@ -145,6 +145,10 @@ metadata:
   with ImageMagick; `scripts/grab_stable.py` waits until drawing settles.
   App-specific notes (e.g. Thonny config) stay in that app's projects
   (the user, 2026-11-08).
+- `provider-onboarding` - provider card plus opencode / fast-agent / curl
+  snippets for an LLM provider or model; `scripts/lookup.py` reads
+  models.dev data merged with `references/providers-overrides.json` (entries
+  carry a `verified` date and `source`; re-verify before trusting old ones).
 
 ## Decisions (the user, 2026-11-08)
 
