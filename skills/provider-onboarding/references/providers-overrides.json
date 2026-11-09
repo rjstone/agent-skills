@@ -1,0 +1,132 @@
+{
+  "_readme": "Keys starting with underscore are ignored. One entry per provider id. Fields: name, base_url, env[], hosts[], signup_url, docs, models_endpoint, protocols{}, headers{}, quirks[], verified (date), source, note, unverified (true = author general knowledge, models.dev wins when it has an api field). Add entries here as providers are verified; leave signup_url null to let the apex-domain inference run.",
+  "openrouter": {
+    "name": "OpenRouter",
+    "base_url": "https://openrouter.ai/api/v1",
+    "env": ["OPENROUTER_API_KEY"],
+    "hosts": ["openrouter.ai"],
+    "signup_url": null,
+    "models_endpoint": "https://openrouter.ai/api/v1/models",
+    "quirks": [
+      "Free tier: :free model variants share a quota of 1,000 requests/day per key, reset 00:00Z",
+      "Presets are addressed as @preset/<slug>",
+      "Account privacy/guardrail settings can produce 404s for models that exist",
+      "Not every model supports tool calling; check the model's supported_parameters"
+    ],
+    "verified": "2026-10-17",
+    "source": "maintainer notes (not a public doc)"
+  },
+  "opencode": {
+    "name": "OpenCode Zen (Console pay-as-you-go)",
+    "base_url": "https://opencode.ai/inference/openai/v1",
+    "env": ["OPENCODE_API_KEY"],
+    "hosts": ["opencode.ai"],
+    "signup_url": "https://opencode.ai/console",
+    "docs": "https://opencode.ai/docs/console/api/inference/",
+    "models_endpoint": "https://opencode.ai/inference/v1/models",
+    "protocols": {
+      "openai_chat": "https://opencode.ai/inference/openai/v1/chat/completions",
+      "openai_responses": "https://opencode.ai/inference/openai/v1/responses",
+      "anthropic_messages": "https://opencode.ai/inference/anthropic/v1/messages",
+      "gemini": "https://opencode.ai/inference/google/v1beta/models/<model>:generateContent"
+    },
+    "headers": {
+      "Authorization": "Bearer <key>",
+      "x-opencode-session": "<stable session id per conversation; recommended>"
+    },
+    "quirks": [
+      "Every paid text model is served through every API family above; Console translates when needed",
+      "Free-tier chat models answer HTTP 403 outside OpenCode, even with a key; use paid models or Go",
+      "Keys: personal API keys or service-account keys (oc_sk_...) from the Console",
+      "Some clients use their own env names (Hermes: OPENCODE_ZEN_API_KEY)",
+      "System One model Jev: POST https://opencode.ai/inference/systemone/v1/systemone",
+      "Paid use draws on Console credits"
+    ],
+    "verified": "2026-11-08",
+    "source": "opencode docs: console/api/inference, console/go, console/harnesses, console/models (2026-11-08)"
+  },
+  "opencode-go": {
+    "name": "OpenCode Go (subscription)",
+    "base_url": "https://opencode.ai/inference/go/openai/v1",
+    "env": ["OPENCODE_API_KEY"],
+    "hosts": ["opencode.ai"],
+    "signup_url": "https://opencode.ai/console",
+    "docs": "https://opencode.ai/docs/console/go/",
+    "models_endpoint": "https://opencode.ai/inference/go/v1/models",
+    "protocols": {
+      "openai_chat": "https://opencode.ai/inference/go/openai/v1/chat/completions",
+      "openai_responses": "https://opencode.ai/inference/go/openai/v1/responses",
+      "anthropic_messages": "https://opencode.ai/inference/go/anthropic/v1/messages",
+      "gemini": "https://opencode.ai/inference/go/google/v1beta/models/<model>:generateContent"
+    },
+    "headers": {
+      "Authorization": "Bearer <key>",
+      "x-opencode-session": "<required: stable session id per conversation (native Claude Code/Codex/Hermes/Pi session headers also work)>",
+      "User-Agent": "<your client's own name/version, e.g. my-coding-agent/1.0, not a generic SDK or HTTP-library UA>"
+    },
+    "quirks": [
+      "Meant for coding-agent traffic; usage is monitored for abuse",
+      "Each model has a native API, but every text model also works through the other API families",
+      "In opencode itself: /connect -> OpenCode Go, model id opencode-go/<model-id>",
+      "Some clients use their own env names (Hermes: OPENCODE_GO_API_KEY)",
+      "No documented API for remaining usage; see the Console's Go page (Extra Usage pays from credits)"
+    ],
+    "verified": "2026-11-08",
+    "source": "opencode docs: console/api/inference, console/go, console/harnesses, console/models (2026-11-08)"
+  },
+  "anthropic": {
+    "name": "Anthropic",
+    "base_url": "https://api.anthropic.com/v1",
+    "env": ["ANTHROPIC_API_KEY"],
+    "hosts": ["api.anthropic.com"],
+    "signup_url": null,
+    "headers": {"x-api-key": "<key>", "anthropic-version": "2023-06-01"},
+    "unverified": true,
+    "note": "Author's general knowledge; not checked against live docs."
+  },
+  "openai": {
+    "name": "OpenAI",
+    "base_url": "https://api.openai.com/v1",
+    "env": ["OPENAI_API_KEY"],
+    "hosts": ["api.openai.com"],
+    "signup_url": null,
+    "unverified": true,
+    "note": "Author's general knowledge; not checked against live docs."
+  },
+  "google": {
+    "name": "Google Gemini API",
+    "base_url": "https://generativelanguage.googleapis.com/v1beta",
+    "env": ["GEMINI_API_KEY"],
+    "hosts": ["generativelanguage.googleapis.com"],
+    "signup_url": null,
+    "unverified": true,
+    "note": "googleapis.com is shared infrastructure, so apex inference does not apply. Keys are typically issued through Google AI Studio; confirm the current URL in the docs."
+  },
+  "mistral": {
+    "name": "Mistral",
+    "base_url": "https://api.mistral.ai/v1",
+    "env": ["MISTRAL_API_KEY"],
+    "hosts": ["api.mistral.ai"],
+    "signup_url": null,
+    "unverified": true,
+    "note": "Author's general knowledge; not checked against live docs."
+  },
+  "xai": {
+    "name": "xAI",
+    "base_url": "https://api.x.ai/v1",
+    "env": ["XAI_API_KEY"],
+    "hosts": ["api.x.ai"],
+    "signup_url": null,
+    "unverified": true,
+    "note": "Author's general knowledge; not checked against live docs."
+  },
+  "groq": {
+    "name": "Groq",
+    "base_url": "https://api.groq.com/openai/v1",
+    "env": ["GROQ_API_KEY"],
+    "hosts": ["api.groq.com"],
+    "signup_url": null,
+    "unverified": true,
+    "note": "Author's general knowledge; not checked against live docs."
+  }
+}
