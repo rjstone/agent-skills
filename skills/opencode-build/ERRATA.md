@@ -141,9 +141,12 @@ Entry format (the script reads the `## E..` heading and the `- Page:` line):
   `Reference.GitSource` / `Reference.Source` from `@opencode/plugin`) do have
   both fields. Workaround: declare the source as `Reference.Source` (path via
   `Reference.LocalSource.fields.path.make(...)`) and pass that variable to
-  `add`; a non-literal with extra fields is assignable. Unverified: whether
-  the server keeps `description`/`hidden` for references added by a plugin.
+  `add`; a non-literal with extra fields is assignable. The server keeps
+  `description` for references added this way.
 - Evidence: `@opencode/client/dist/promise/generated/types.d.ts`
   (`ReferenceLocalSource`); `@opencode/schema/dist/reference.d.ts`
-  (`LocalSource`, `GitSource`); `tsc --noEmit` results as above.
+  (`LocalSource`, `GitSource`); `tsc --noEmit` results as above. A plugin
+  that adds a local reference with `description` this way, loaded by
+  `opencode serve` (v2.2.6): `GET /api/reference` returns it with that
+  `description`. `hidden` not checked.
 - Checked: 2026-11-10 against @opencode/plugin 2.2.6
