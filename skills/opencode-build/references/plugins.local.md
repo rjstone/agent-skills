@@ -17,6 +17,12 @@ Code (https://github.com/anomalyco/opencode, tag `v2.2.5`): part resolution
 
 - Server key order: `<name>/server`, then `<name>` (`.`). A package may use
   either; `./server` wins if both exist.
+- Stale `exports` after `/reload` (observed on 2.2.6, not traced in the
+  source): a running opencode can keep the previous `exports` map. A plugin
+  whose old version had `".": "./src/index.ts"` and whose new one has only
+  `./server` then still resolves the stale `.` and fails with `ENOENT` on the
+  deleted file. Declaring both `.` and `./server` with the same entry avoids
+  it; a fresh start (`Host.resolve` on 2.2.6) resolves `./server` alone fine.
 - A part whose file is missing or not exported (`ENOENT`,
   `MODULE_NOT_FOUND`, `ERR_PACKAGE_PATH_NOT_EXPORTED`, ...) counts as absent;
   other resolution errors throw.

@@ -6,7 +6,7 @@ license: MIT
 metadata:
   author: Robert Stone
   source: https://github.com/rjstone/agent-skills
-  version: "0.2.0"
+  version: "0.2.1"
 ---
 
 # opencode Build docs (v2)

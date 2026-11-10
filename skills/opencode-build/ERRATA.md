@@ -108,3 +108,42 @@ Entry format (the script reads the `## E..` heading and the `- Page:` line):
   sends `content`, falling back to stringified `output`; the MCP bridge
   returns `{ output: structured ?? text ?? null, content }`.
 - Checked: 2026-11-08 against opencode v2.2.5 (@opencode/plugin 2.2.5)
+
+## E04: RPC methods need both `input` and `output`; a contract needs `events`
+- Page: `plugins-rpc.md` (sections "Input and output" and "Events")
+- Docs say: "Leave either one out if the method does not accept or return a
+  value", and every example contract without events omits `events`.
+- Actually: `Rpc.define<const D extends Definition>` requires
+  `Method.input`, `Method.output` and `Definition.events` (no `?`). Omitting
+  any of them fails `define` (TS2741), so `D` widens to `Definition`, and
+  every `ctx.rpc.register(...)` / `client.rpc(...)` call on that contract
+  then fails too ("`Definition` is not assignable to `PortableDefinition`"),
+  which hides the real cause. For a method without arguments use an
+  empty-object schema
+  (`input: { type: "object", properties: {}, additionalProperties: false }`)
+  and call it with `{}`; for no events write `events: {}`.
+- Evidence: `@opencode/schema/dist/rpc.d.ts` (`interface Method`,
+  `interface Definition`); `tsc --noEmit` on a contract without `input` and
+  `events` reports exactly these errors, and passes once both are added.
+- Checked: 2026-11-10 against @opencode/plugin 2.2.6
+
+## E05: plugin-added references: the editor type has no `description` or `hidden`
+- Page: `plugins-server.md` (section "References")
+- Docs say: `ReferenceEditor.add(name, source: ReferenceLocalSource |
+  ReferenceGitSource)`, and the References config docs
+  (https://opencode.ai/docs/references) give every reference optional
+  `description` (advertises it in agent instructions) and `hidden` (keeps it
+  out of client pickers).
+- Actually: those editor types come from the generated client
+  (`@opencode/client` `ReferenceLocalSource = { type: "local"; path }`, Git
+  likewise without them), so an object literal with `description` fails to
+  typecheck (TS2353). The schema types (`Reference.LocalSource` /
+  `Reference.GitSource` / `Reference.Source` from `@opencode/plugin`) do have
+  both fields. Workaround: declare the source as `Reference.Source` (path via
+  `Reference.LocalSource.fields.path.make(...)`) and pass that variable to
+  `add`; a non-literal with extra fields is assignable. Unverified: whether
+  the server keeps `description`/`hidden` for references added by a plugin.
+- Evidence: `@opencode/client/dist/promise/generated/types.d.ts`
+  (`ReferenceLocalSource`); `@opencode/schema/dist/reference.d.ts`
+  (`LocalSource`, `GitSource`); `tsc --noEmit` results as above.
+- Checked: 2026-11-10 against @opencode/plugin 2.2.6
