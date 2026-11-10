@@ -43,6 +43,7 @@ npx skills add rjstone/agent-skills --list
 - **opencode-cli** - use and script the opencode v2 command line and TUI from the current docs.
 - **pygameturbo** - help with and teach Pygame Turbo (the Pygame Zero fork) games, from its docs vendored in the skill (LGPL-3.0, see the skill's `references/README.md`).
 - **provider-onboarding** - find how to call an LLM provider or model and get ready-to-paste config for it.
+- **thonny-plugin** - write, install and debug Thonny IDE plugins: discovery, the plugin folder that actually loads, the UI-thread rule, a test ladder and a verified Thonny 5.0.1 API reference.
 - **timestamp** - toggle time stamps with deltas at the start and/or end of each agent turn.
 
 ## License

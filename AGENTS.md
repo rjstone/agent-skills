@@ -165,6 +165,12 @@ metadata:
   commit in `references/manifest.json` by `scripts/refresh_references.py`
   (stdlib; `--ref <branch|tag|sha>`, `--check`). Never hand-edit them; the
   skill's own text is MIT (the user, 2026-11-10).
+- `thonny-plugin` - Thonny IDE plugin authoring: `thonnycontrib`
+  discovery, the per-OS plugin folder (from Thonny 5.0.1's
+  `thonny/__init__.py` and `misc_utils.py`), UI-thread rule, test ladder,
+  and `references/api-5.0.1.md` (every name checked against the 5.0.1
+  package). Re-verify against the installed Thonny when it changes
+  (the user, 2026-11-10).
 - `provider-onboarding` - provider card plus opencode / fast-agent / curl
   snippets for an LLM provider or model; `scripts/lookup.py` reads
   models.dev data merged with `references/providers-overrides.json` (entries
