@@ -12,7 +12,7 @@ import os
 import shutil
 import tempfile
 import unittest
-from contextlib import redirect_stdout
+from contextlib import redirect_stderr, redirect_stdout
 
 import sys
 
@@ -258,10 +258,21 @@ class TestCommittedTree(unittest.TestCase):
             self.m = json.load(f)
 
     def md_files(self):
-        return sorted(n for n in os.listdir(self.refs) if n.endswith(".md"))
+        """Downloaded pages only; `*.local.md` are hand-written additions."""
+        return sorted(n for n in os.listdir(self.refs)
+                      if n.endswith(".md") and not n.endswith(".local.md"))
+
+    def local_files(self):
+        return sorted(n for n in os.listdir(self.refs) if n.endswith(".local.md"))
 
     def test_manifest_matches_files(self):
         self.assertEqual(self.md_files(), sorted(self.m["pages"]))
+
+    def test_local_files_supplement_a_downloaded_page(self):
+        for name in self.local_files():
+            page = name[: -len(".local.md")] + ".md"
+            self.assertIn(page, self.m["pages"],
+                          f"{name} has no downloaded {page} to supplement")
 
     def test_hashes_match_lf_normalized_files(self):
         for name, e in self.m["pages"].items():
@@ -274,6 +285,142 @@ class TestCommittedTree(unittest.TestCase):
         with open(os.path.join(SKILL_DIR, "ERRATA.md"), encoding="utf-8") as f:
             for name in rr.errata_ids(f.read()):
                 self.assertIn(name, self.m["pages"])
+
+
+def load_script(name):
+    path = os.path.join(SKILL_DIR, "scripts", name + ".py")
+    s = importlib.util.spec_from_file_location(name, path)
+    mod = importlib.util.module_from_spec(s)
+    s.loader.exec_module(mod)
+    return mod
+
+
+co = load_script("client_outline")
+dd = load_script("dts_decls")
+
+# Shaped like tsc's emit for @opencode/client dist/promise/client.d.ts
+CLIENT_DTS = """export * as OpenCode from "./client.js";
+export type { ClientOptions, RequestOptions } from "./generated/client.js";
+export declare function make(options: ClientOptions): {
+    agent: {
+        list: (input?: import("./index.js").AgentListInput, requestOptions?: OpenCode.RequestOptions) => Promise<import("./index.js").AgentListOutput>;
+    };
+    experimental: {
+        generate: {
+            text: (input: import("./index.js").GenerateTextInput, requestOptions?: OpenCode.RequestOptions) => Promise<{
+                text: string;
+            }>;
+        };
+    };
+    event: {
+        subscribe<Type extends "a" | "b">(options?: X<Type>): AsyncIterable<Y>;
+    };
+};
+export declare function other(): void;
+"""
+
+API_DTS = """import type { OpenCode } from "./client.js";
+type Client = ReturnType<typeof OpenCode.make>;
+export type AgentApi = Client["agent"];
+export type ExperimentalSessionApi = Client["experimental"]["session"];
+"""
+
+PLUGIN_DTS = """import type { X } from "./x.js";
+export interface AgentDomain extends AgentApi {
+    readonly transform: Transform<import("./agent.js").AgentEditor>;
+}
+export interface RpcDomain extends RpcApi<Pick<O, "signal"> & {
+    readonly headers?: never;
+}> {
+    readonly register: () => Promise<void>;
+}
+export interface EmptyDomain {}
+export type SessionDomain = Pick<SessionApi, "list"> & {
+    readonly hook: (callback: (input: {
+        readonly a: string;
+    }) => void) => Promise<void>;
+};
+export type OneLineDomain = Pick<A, "b">;
+export interface DomainHelper {
+    readonly x: string;
+}
+export interface AgentDomainExtra {
+}
+"""
+
+
+class TestClientOutline(unittest.TestCase):
+    def test_methods_groups_and_qualifiers(self):
+        lines, bad = co.outline(CLIENT_DTS)
+        self.assertEqual(lines[0], "interface OpenCodeClient {")
+        self.assertIn("    agent: {", lines)
+        self.assertIn("        list(input?: AgentListInput, requestOptions?: RequestOptions)"
+                      ": Promise<AgentListOutput>", lines)
+        self.assertEqual(lines[-1], "}")
+        self.assertNotIn("other", "\n".join(lines))
+
+    def test_inline_return_type_folded(self):
+        lines, _ = co.outline(CLIENT_DTS)
+        self.assertIn("            text(input: GenerateTextInput, requestOptions?: RequestOptions)"
+                      ": Promise<{ text: string }>", lines)
+
+    def test_unclassified_kept_and_reported(self):
+        lines, bad = co.outline(CLIENT_DTS)
+        self.assertEqual([b.strip()[:9] for b in bad], ["subscribe"])
+        self.assertTrue(any(l.strip().startswith("subscribe<") for l in lines))
+
+    def test_long_line_replaced_by_comment(self):
+        lines, _ = co.outline(CLIENT_DTS, max_line=60)
+        self.assertIn("        // subscribe: signature over 60 characters, see client.d.ts", lines)
+
+    def test_missing_make_raises(self):
+        with self.assertRaises(ValueError):
+            co.outline("export declare function other(): void;\n")
+
+    def test_aliases(self):
+        self.assertEqual(co.aliases(API_DTS), [
+            'type AgentApi = OpenCodeClient["agent"]',
+            'type ExperimentalSessionApi = OpenCodeClient["experimental"]["session"]',
+        ])
+
+
+class TestDtsDecls(unittest.TestCase):
+    def test_default_pattern_finds_whole_name_matches_only(self):
+        names = [n for n, _ in dd.declarations(PLUGIN_DTS)]
+        self.assertEqual(names, ["AgentDomain", "RpcDomain", "EmptyDomain",
+                                 "SessionDomain", "OneLineDomain"])
+
+    def test_interface_with_braces_in_extends_ends_at_closing_line(self):
+        text = dict(dd.declarations(PLUGIN_DTS))["RpcDomain"]
+        self.assertTrue(text.startswith("export interface RpcDomain extends"))
+        self.assertTrue(text.endswith("register: () => Promise<void>;\n}"))
+
+    def test_multiline_type_alias_ends_when_balanced(self):
+        text = dict(dd.declarations(PLUGIN_DTS))["SessionDomain"]
+        self.assertTrue(text.endswith("}) => void) => Promise<void>;\n};"))
+        self.assertEqual(dict(dd.declarations(PLUGIN_DTS))["OneLineDomain"],
+                         'export type OneLineDomain = Pick<A, "b">;')
+
+    def test_single_line_interface_and_qualifiers(self):
+        found = dict(dd.declarations(PLUGIN_DTS))
+        self.assertEqual(found["EmptyDomain"], "export interface EmptyDomain {}")
+        self.assertIn("Transform<AgentEditor>", found["AgentDomain"])
+
+    def test_custom_names(self):
+        self.assertEqual([n for n, _ in dd.declarations(PLUGIN_DTS, "DomainHelper")],
+                         ["DomainHelper"])
+
+    def test_main_reads_folder(self):
+        with tempfile.TemporaryDirectory() as d:
+            with open(os.path.join(d, "agent.d.ts"), "w", encoding="utf-8") as f:
+                f.write(PLUGIN_DTS)
+            out = io.StringIO()
+            with redirect_stdout(out):
+                self.assertEqual(dd.main([d, "--names", "OneLineDomain"]), 0)
+            self.assertEqual(out.getvalue(),
+                             '// agent.d.ts\nexport type OneLineDomain = Pick<A, "b">;\n\n')
+            with redirect_stdout(io.StringIO()), redirect_stderr(io.StringIO()):
+                self.assertEqual(dd.main([d, "--names", "Nope"]), 1)
 
 
 if __name__ == "__main__":

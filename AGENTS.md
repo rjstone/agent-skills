@@ -140,8 +140,14 @@ metadata:
 
 - `opencode-build` - opencode v2 Build docs (plugins, client, SDK) cached as
   Markdown in `references/`, with `scripts/refresh_references.py` to update
-  them and `ERRATA.md` for known doc mistakes. Never hand-edit `references/`
-  (a test compares each file with its hash in `references/manifest.json`).
+  them and `ERRATA.md` for known doc mistakes. Never hand-edit the downloaded
+  `references/` pages (a test compares each file with its hash in
+  `references/manifest.json`). Our own additions go in `references/X.local.md`
+  beside the page `X.md` they supplement (the user, 2026-11-09). Where they
+  go, their style and the scripts that print type declarations
+  (`scripts/dts_decls.py`, `scripts/client_outline.py`) are in the skill's
+  `MAINTAINING.md`, which `SKILL.md` only points to: most uses of the skill
+  never maintain it (the user, 2026-11-10).
   Started in the project that first needed it; that copy stays until this
   repo is set up and tested (the user, 2026-11-08).
 - `timestamp` - `/timestamp [start|end|both|on|off]` prints a tool-read

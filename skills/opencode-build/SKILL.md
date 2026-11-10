@@ -6,7 +6,7 @@ license: MIT
 metadata:
   author: Robert Stone
   source: https://github.com/rjstone/agent-skills
-  version: "0.1.1"
+  version: "0.2.0"
 ---
 
 # opencode Build docs (v2)
@@ -26,7 +26,10 @@ it up first, in this order:
    `~/.bun/install/cache/@opencode/plugin@<version>*/` (Windows:
    `%USERPROFILE%\.bun\install\cache\...`).
 2. **`ERRATA.md`** beside this file: known mistakes in the docs below.
-3. **`references/`**: the v2 Build docs cached as Markdown.
+3. **`references/`**: the v2 Build docs cached as Markdown. A page `X.md`
+   may have a `X.local.md` beside it: our additions to that page (Reference
+   sections with the real type declarations, notes), written from the
+   installed types. Read it with its page.
 
 When they disagree, the higher source wins.
 
@@ -35,13 +38,17 @@ When they disagree, the higher source wins.
 | Task | Read |
 | --- | --- |
 | Parts (server/TUI/GUI/RPC), `package.json` `exports`, loading, `plugins` config, publish | `references/plugins.md` |
+| How opencode finds parts and checks a plugin's default export; dependencies of a by-path plugin | `references/plugins.local.md` |
 | Server part: `setup(ctx)`, tools, hooks, transforms, agents, commands, MCP | `references/plugins-server.md` |
+| Type of `ctx` (`Plugin.Context`) and of each `ctx.<domain>`, and how they derive from the client | `references/plugins-server.local.md` |
 | TUI part: commands, keymaps, slash commands, toasts, dialogs, routes, slots | `references/plugins-cli.md` |
 | GUI part (Desktop panels, settings, main process) | `references/plugins-gui.md` |
+| GUI limits: no agent switch, Desktop picker vs server `switchAgent`, hiding app controls, user-only output | `references/plugins-gui.local.md` |
 | Typed methods/events between parts and clients | `references/plugins-rpc.md` |
 | Porting v1 code, or supporting v1 and v2 from one package | `references/plugins-migrate-v1.md` |
 | Effect API versions | `references/plugins-effect.md`, `references/plugins-effect-rpc.md` |
 | Driving a running server from code | `references/client.md`, `references/client-effect.md` |
+| Type of the client object (`OpenCodeClient`): every group and method | `references/client.local.md` |
 | Embedding opencode in your app | `references/sdk.md`, `references/sdk-effect.md`, `references/sdk-cloudflare.md` |
 | What the Build section covers | `references/intro.md` |
 
@@ -51,14 +58,15 @@ section you need.
 
 ## Keeping it current
 
-- References are verbatim copies; **never edit them**. Refresh with
-  `python scripts/refresh_references.py` (path relative to this skill's folder)
-  (`--check` reports staleness without writing; `--help` for the rest).
 - No cached page for it? The live Markdown of any docs page is its URL with
   the trailing `/` replaced by `.md`; the index is `https://opencode.ai/docs/llms.txt`.
 - Cite the page URL without `.md` (it is in `references/manifest.json`).
 - Found a doc mistake (the docs contradict the installed types or real
   behavior)? Add an entry to `ERRATA.md` with your evidence.
+- Refreshing the downloaded pages, or writing or updating a
+  `references/*.local.md` (where it goes, its style, the scripts that print
+  type declarations): read `MAINTAINING.md` first. Never edit the
+  downloaded pages.
 
 ## Common mistakes
 
