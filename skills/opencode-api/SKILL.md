@@ -6,7 +6,7 @@ license: MIT
 metadata:
   author: Robert Stone
   source: https://github.com/rjstone/agent-skills
-  version: "0.1.0"
+  version: "0.2.0"
 ---
 
 # opencode server API (v2)
@@ -23,7 +23,7 @@ instead of reading it.
 ```bash
 python scripts/api_lookup.py --tags                  # areas and operation counts
 python scripts/api_lookup.py --list session          # operations in a tag (or matching text)
-python scripts/api_lookup.py --op session.prompt     # params, body, responses, how to call
+python scripts/api_lookup.py --op session.prompt     # params (with style), body, responses, opencode api + curl lines
 python scripts/api_lookup.py --op POST /api/session  # same, by method and path
 python scripts/api_lookup.py --schema Session        # one schema
 python scripts/api_lookup.py --grep "fork session"   # words in ids, paths, summaries
@@ -39,7 +39,7 @@ disagree, `ERRATA.md` wins.
   talks to the running server with its connection and password already set:
   `opencode api session.list --param limit=10`,
   `opencode api session.create --data '{"title": "x"}'`. `--op` prints this
-  form for each operation.
+  form for each operation, and a `curl` line to adapt for other clients.
 - **Other clients:** HTTP Basic auth, user `opencode`, the server password
   (`OPENCODE_PASSWORD`, or set it with `opencode service set password`):
   `curl -u opencode:$OPENCODE_PASSWORD http://127.0.0.1:<port>/api/info`.
@@ -53,6 +53,26 @@ disagree, `ERRATA.md` wins.
 - Events: `GET /api/event` (`event.subscribe`) is a `text/event-stream`;
   filter with the `types` query parameter. It is volatile: a slow reader is
   dropped, and events during a disconnect are lost.
+- **Location** (72 of 170 operations take it): the query parameter
+  `location` is an object (`style: deepObject`; `--op` flags it and prints
+  the URL form): `?location[directory]=<url-encoded dir>` (`curl -g`, or
+  encode the brackets as `%5B`/`%5D`). On those operations a plain
+  `?directory=` is ignored (the server's default location answers; a few
+  others, like `session.list`, have a real `directory` filter of their
+  own), and `?location=<dir>` → 400 `InvalidRequestError`
+  "Expected object at [\"location\"]". `opencode api` fills it in for the
+  current directory. Checked 2026-11-10 against opencode 2.2.6.
+- **Plugin RPC:** `POST /api/rpc/{rpcID}/{method}` (`rpc.call`) wraps the
+  argument: body `{"input": <value>}` → `{"output": <value>}`. `rpcID` is the
+  id in the plugin's `Rpc.define`. A bare argument as the body →
+  `rpc.invalid_input` "Expected object".
+- **Throwaway server** (tests, sandboxes): `opencode serve --hostname
+  127.0.0.1 --port <n> --print-logs` prints `server password <value>` at
+  startup; point `XDG_CONFIG_HOME`, `XDG_DATA_HOME`, `XDG_CACHE_HOME` and
+  `XDG_STATE_HOME` at a temp folder to keep it off your real setup. A
+  location's plugins load in the background after its first request, so
+  plugin-provided agents, skills, references and MCP servers appear a few
+  seconds later.
 
 ## Keeping it current
 
@@ -71,3 +91,5 @@ disagree, `ERRATA.md` wins.
 | Reading `openapi.json` directly | `api_lookup.py`; the file is far too large for context |
 | curl without auth | `-u opencode:<password>`, or use `opencode api` |
 | Guessing a request body | `--op <id>` shows the schema; `--schema <Name>` for nested types |
+| `?directory=<dir>` or `?location=<dir>` | `?location[directory]=<dir>` (deep-object query) |
+| RPC call with the bare argument as body | `{"input": <value>}` |
