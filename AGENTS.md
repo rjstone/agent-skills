@@ -158,6 +158,13 @@ metadata:
   with ImageMagick; `scripts/grab_stable.py` waits until drawing settles.
   App-specific notes (e.g. Thonny config) stay in that app's projects
   (the user, 2026-11-08).
+- `pygameturbo` - Pygame Turbo (pgturbo) help and beginner teaching. Its
+  `references/` are verbatim copies of the upstream docs sources
+  (`doc/*.rst` in Mambouna/pgturbo, LGPL-3.0, license in
+  `references/COPYING`, notice in `references/README.md`), pinned to the
+  commit in `references/manifest.json` by `scripts/refresh_references.py`
+  (stdlib; `--ref <branch|tag|sha>`, `--check`). Never hand-edit them; the
+  skill's own text is MIT (the user, 2026-11-10).
 - `provider-onboarding` - provider card plus opencode / fast-agent / curl
   snippets for an LLM provider or model; `scripts/lookup.py` reads
   models.dev data merged with `references/providers-overrides.json` (entries
