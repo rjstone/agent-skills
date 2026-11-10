@@ -4,7 +4,8 @@ without reading all of it.
 
     python scripts/api_lookup.py --tags                  # tags with operation counts
     python scripts/api_lookup.py --list session          # operations by tag or path/id substring
-    python scripts/api_lookup.py --op session.create     # one operation: params, body, responses
+    python scripts/api_lookup.py --op session.create     # one operation: params (in, style), body,
+                                                         # responses, opencode api and curl lines
     python scripts/api_lookup.py --op POST /api/session  # same, by method and path
     python scripts/api_lookup.py --schema Session        # one schema, $refs expanded
     python scripts/api_lookup.py --grep "server info"    # words in ids, paths, summaries
@@ -59,6 +60,48 @@ def find_op(spec, query):
     return None
 
 
+def param_flags(p):
+    """'query, required, style=deepObject, explode': where and how a parameter is sent."""
+    flags = [p.get("in", "?")]
+    if p.get("required"):
+        flags.append("required")
+    if p.get("style"):
+        flags.append("style=" + p["style"])
+        if "explode" in p:
+            flags.append("explode" if p["explode"] else "no explode")
+    return ", ".join(flags)
+
+
+def query_example(p):
+    """How a query parameter appears in the URL. deepObject sends each property
+    as name[prop]=value; everything else here is name=value."""
+    name = p.get("name", "?")
+    if p.get("style") == "deepObject":
+        props = (p.get("schema") or {}).get("properties") or {}
+        if props:
+            return "&".join("%s[%s]=<%s>" % (name, k, k) for k in props)
+        return "%s[<key>]=<value>" % name
+    return "%s=<%s>" % (name, name)
+
+
+def curl_example(method, path, params, body):
+    """A curl line to adapt: Basic auth, the required and deepObject query
+    parameters (optional ones are in the parameter list), a JSON body if any."""
+    query = [query_example(p) for p in params
+             if p.get("in") == "query" and (p.get("required") or p.get("style") == "deepObject")]
+    url = "http://127.0.0.1:<port>" + path + ("?" + "&".join(query) if query else "")
+    parts = ["curl"]
+    if "[" in url:
+        parts.append("-g")  # curl globbing would eat the brackets
+    parts.append("-u opencode:$OPENCODE_PASSWORD")
+    if method != "GET":
+        parts.append("-X " + method)
+    if body:
+        parts.append("-H 'content-type: application/json' -d '<json>'")
+    parts.append('"%s"' % url)
+    return " ".join(parts)
+
+
 def show_op(spec, method, path, op, depth):
     oid = op.get("operationId", "")
     print("%s %s  (%s)" % (method, path, oid))
@@ -71,8 +114,10 @@ def show_op(spec, method, path, op, depth):
     if params:
         print("parameters:")
         for p in params:
-            print("  - %s (%s%s): %s" % (p.get("name"), p.get("in"), ", required" if p.get("required") else "",
-                                         json.dumps(p.get("schema", {}))))
+            print("  - %s (%s): %s" % (p.get("name"), param_flags(p), json.dumps(p.get("schema", {}))))
+            if p.get("in") == "query" and p.get("style") == "deepObject":
+                print("    in the URL: ?%s  (not ?%s=... and not the bare property names)"
+                      % (query_example(p), p.get("name")))
     body = op.get("requestBody")
     if body:
         print("request body:")
@@ -86,6 +131,7 @@ def show_op(spec, method, path, op, depth):
     if body:
         args += " --data '<json>'"
     print("call: opencode api %s%s" % (oid or "%s %s" % (method, path), args))
+    print("curl: " + curl_example(method, path, params, body))
 
 
 def main(argv=None, spec=None):

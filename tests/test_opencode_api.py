@@ -42,7 +42,11 @@ SPEC = {
                                   "schema": {"$ref": "#/components/schemas/Info"}}}}}}},
         "/api/session": {
             "get": {"operationId": "session.list", "tags": ["session"], "summary": "List sessions",
-                    "parameters": [{"name": "limit", "in": "query", "schema": {"type": "number"}}]},
+                    "parameters": [
+                        {"name": "limit", "in": "query", "schema": {"type": "number"}},
+                        {"name": "location", "in": "query", "style": "deepObject", "explode": True,
+                         "schema": {"type": "object", "properties": {"directory": {"type": "string"}}}},
+                    ]},
             "post": {"operationId": "session.create", "tags": ["session"], "summary": "Create a session",
                      "requestBody": {"content": {"application/json": {"schema": {"$ref": "#/components/schemas/NewSession"}}}}}},
         "/api/session/{sessionID}/prompt": {"post": {
@@ -89,6 +93,38 @@ class TestLookup(unittest.TestCase):
         _, out = self.run_main("--op", "session.prompt")
         self.assertIn("sessionID", out)
         self.assertIn("path", out)
+
+    def test_op_shows_style_and_deep_object_url(self):
+        _, out = self.run_main("--op", "session.list")
+        self.assertIn("location (query, style=deepObject, explode)", out)
+        self.assertIn("in the URL: ?location[directory]=<directory>", out)
+        curl = [line for line in out.splitlines() if line.startswith("curl: ")]
+        self.assertEqual(len(curl), 1)
+        # -g for the brackets; the deepObject parameter kept, the optional limit left out
+        self.assertIn("curl -g -u opencode:$OPENCODE_PASSWORD", curl[0])
+        self.assertIn("/api/session?location[directory]=<directory>", curl[0])
+        self.assertNotIn("limit=", curl[0])
+        self.assertNotIn("-X", curl[0])
+
+    def test_curl_line_for_a_body_and_path_parameter(self):
+        _, out = self.run_main("--op", "session.create")
+        self.assertIn("curl: curl -u opencode:$OPENCODE_PASSWORD -X POST "
+                      "-H 'content-type: application/json' -d '<json>' "
+                      "\"http://127.0.0.1:<port>/api/session\"", out)
+        _, out = self.run_main("--op", "session.prompt")
+        self.assertIn("/api/session/{sessionID}/prompt\"", out)
+        self.assertNotIn(" -g ", out)
+
+    def test_query_example_forms(self):
+        self.assertEqual(lookup.query_example({"name": "limit", "in": "query"}), "limit=<limit>")
+        self.assertEqual(lookup.query_example({"name": "f", "in": "query", "style": "deepObject"}),
+                         "f[<key>]=<value>")
+        self.assertEqual(
+            lookup.query_example({"name": "f", "in": "query", "style": "deepObject",
+                                  "schema": {"properties": {"a": {}, "b": {}}}}),
+            "f[a]=<a>&f[b]=<b>")
+        self.assertEqual(lookup.param_flags({"in": "query", "style": "form", "explode": False}),
+                         "query, style=form, no explode")
 
     def test_recursive_ref_does_not_loop(self):
         _, out = self.run_main("--schema", "NewSession")
