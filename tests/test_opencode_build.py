@@ -297,6 +297,7 @@ def load_script(name):
 
 co = load_script("client_outline")
 dd = load_script("dts_decls")
+pp = load_script("plugin_probe")
 
 # Shaped like tsc's emit for @opencode/client dist/promise/client.d.ts
 CLIENT_DTS = """export * as OpenCode from "./client.js";
@@ -421,6 +422,47 @@ class TestDtsDecls(unittest.TestCase):
                              '// agent.d.ts\nexport type OneLineDomain = Pick<A, "b">;\n\n')
             with redirect_stdout(io.StringIO()), redirect_stderr(io.StringIO()):
                 self.assertEqual(dd.main([d, "--names", "Nope"]), 1)
+
+
+class TestPluginProbe(unittest.TestCase):
+    """Offline: the pure helpers and the setup errors (no opencode, no server)."""
+
+    def test_find_password_through_ansi_colors(self):
+        log = "\x1b[32mserver listening\x1b[0m\n\x1b[1mserver password\x1b[0m abc-123_XY\n"
+        self.assertEqual(pp.find_password(log), "abc-123_XY")
+        self.assertIsNone(pp.find_password("server listening\n"))
+
+    def test_location_query_is_deep_object(self):
+        self.assertEqual(pp.location_query("/w/p q"), "location%5Bdirectory%5D=%2Fw%2Fp+q")
+
+    def test_plugin_entry_matches_by_source_path(self):
+        with tempfile.TemporaryDirectory() as d:
+            plugins = [
+                {"id": "opencode.builtin", "source": {"type": "builtin"}},
+                {"id": "mine", "source": {"type": "local", "path": d + os.sep}},
+            ]
+            self.assertEqual(pp.plugin_entry(plugins, d)["id"], "mine")
+            self.assertIsNone(pp.plugin_entry(plugins[:1], d))
+
+    def test_plugin_log_lines(self):
+        log = ("level=INFO msg=\"loading plugin\" id=/p entrypoint=file:///p/s.ts\n"
+               "level=INFO message=\"watcher started\" path=/p/s.ts\n"
+               "level=ERROR message=\"setup failed\" plugin=/p\n"
+               "level=ERROR message=\"Failed to fetch models.dev\"\n")
+        lines = pp.plugin_log_lines(log, "/p")
+        self.assertEqual(len(lines), 2)
+        self.assertIn("loading plugin", lines[0])
+        self.assertIn("setup failed", lines[1])
+
+    def test_setup_errors_exit_2_without_leaving_temp(self):
+        before = set(os.listdir(tempfile.gettempdir()))
+        with tempfile.TemporaryDirectory() as d, redirect_stderr(io.StringIO()):
+            missing = os.path.join(d, "no-such-opencode")
+            self.assertEqual(pp.main([d, "--opencode", missing]), 2)
+            self.assertEqual(pp.main([os.path.join(d, "nope"), "--opencode", missing]), 2)
+        leaked = [n for n in set(os.listdir(tempfile.gettempdir())) - before
+                  if n.startswith("plugin-probe-")]
+        self.assertEqual(leaked, [])
 
 
 if __name__ == "__main__":
