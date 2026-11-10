@@ -33,9 +33,17 @@ with a cloud container: archive it to `docs/plans/` before the session ends.
 ## Claude Code on the web: git
 
 - The session's git proxy refuses deleting remote branches (HTTP 403 on
-  `git push origin --delete`), and the GitHub tools here have no delete. After
-  a squash-merge, delete the local branch and ask the user to delete the
-  remote one (AGENTS.md "Adding a skill", step 6).
+  `git push origin --delete`), and the GitHub tools here have no delete. No
+  need: GitHub deletes a PR's branch when it is merged (repo setting; the
+  user, 2026-11-10). After a merge, delete only the local branch.
+- The clone is shallow (`--depth 1`) and tracks only `main`. A branch you
+  push later gets no `origin/<branch>` ref, even with `git push -u`
+  ("upstream branch ... not stored as a remote-tracking branch"), so `git
+  status` and the session's stop hook report it as unpushed with no remote
+  branch although the push worked. Before the first push of a new branch:
+  `git config --add remote.origin.fetch '+refs/heads/<branch>:refs/remotes/origin/<branch>'`,
+  then `git push -u origin <branch>`. Already pushed: add the same line,
+  `git fetch origin <branch>`, `git branch -u origin/<branch>`.
 
 ## Delegating to subagents
 
