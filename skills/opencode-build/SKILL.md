@@ -56,27 +56,15 @@ section you need.
 
 ## Keeping it current
 
-- Downloaded references are verbatim copies; **never edit them**. Refresh with
-  `python scripts/refresh_references.py` (path relative to this skill's folder)
-  (`--check` reports staleness without writing; `--help` for the rest).
-- Additions go in `references/X.local.md` beside the page `X.md` they
-  supplement (a test requires that page). The refresh script never touches
-  them. Copy the vendor heading of the section you supplement. After an
-  opencode upgrade, re-check them against the installed types.
-- Two scripts print type declarations from an installed package, for writing
-  or re-checking those additions (`--help` on each):
-  `python scripts/dts_decls.py <plugin>/dist/promise` prints exported
-  declarations by name (default: every `ctx` domain type; `--names` for
-  others, e.g. `Context`, `\w*Editor`), and
-  `python scripts/client_outline.py <client>/dist/promise/client.d.ts --api <client>/dist/promise/api.d.ts`
-  prints the client object type as a readable interface. `<plugin>` and
-  `<client>` are `node_modules/@opencode/plugin` and `@opencode/client`
-  (or bun's cache entries).
 - No cached page for it? The live Markdown of any docs page is its URL with
   the trailing `/` replaced by `.md`; the index is `https://opencode.ai/docs/llms.txt`.
 - Cite the page URL without `.md` (it is in `references/manifest.json`).
 - Found a doc mistake (the docs contradict the installed types or real
   behavior)? Add an entry to `ERRATA.md` with your evidence.
+- Refreshing the downloaded pages, or writing or updating a
+  `references/*.local.md` (where it goes, its style, the scripts that print
+  type declarations): read `MAINTAINING.md` first. Never edit the
+  downloaded pages.
 
 ## Common mistakes
 

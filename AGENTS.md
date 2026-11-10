@@ -143,12 +143,11 @@ metadata:
   them and `ERRATA.md` for known doc mistakes. Never hand-edit the downloaded
   `references/` pages (a test compares each file with its hash in
   `references/manifest.json`). Our own additions go in `references/X.local.md`
-  beside the page `X.md` they supplement (Reference sections with the real
-  type declarations from the installed packages); the refresh script ignores
-  them and a test requires the matching page (the user, 2026-11-09).
-  `scripts/dts_decls.py` and `scripts/client_outline.py` print the type
-  declarations those additions are written from (no fixed update procedure
-  yet; the user, 2026-11-09).
+  beside the page `X.md` they supplement (the user, 2026-11-09). Where they
+  go, their style and the scripts that print type declarations
+  (`scripts/dts_decls.py`, `scripts/client_outline.py`) are in the skill's
+  `MAINTAINING.md`, which `SKILL.md` only points to: most uses of the skill
+  never maintain it (the user, 2026-11-10).
   Started in the project that first needed it; that copy stays until this
   repo is set up and tested (the user, 2026-11-08).
 - `timestamp` - `/timestamp [start|end|both|on|off]` prints a tool-read
