@@ -5,6 +5,13 @@ skill from the installed type declarations of `@opencode/client@2.2.5`
 (`dist/promise/client.d.ts`, `api.d.ts`, `index.d.ts`). Re-check against the
 installed `.d.ts` files after an opencode upgrade; they win on any conflict.
 
+Code (https://github.com/anomalyco/opencode, tag `v2.2.5`): `@opencode/client` is `packages/client/`:
+`make()` in `src/promise/client.ts`, the `XApi` aliases in
+`src/promise/api.ts`, `Input`/`Output` types in
+`src/promise/generated/types.ts`. Server side of a group: usually
+`packages/server/src/handlers/<group>.ts`, which calls
+`packages/core/src/<group>.ts` or `packages/core/src/<group>/`.
+
 ## Create a client
 
 ### Reference
@@ -20,13 +27,13 @@ The plugin context's domains are derived from these groups (see the
 `Input`/`Output` types below are the ones `ctx.<domain>` methods use.
 
 ```ts
-// @opencode/client (also @opencode/client/promise)
+// @opencode/client (also @opencode/client/promise): packages/client/src/promise/client.ts
 declare namespace OpenCode {
   function make(options: ClientOptions): OpenCodeClient
 }
 type OpenCodeClient = ReturnType<typeof OpenCode.make>
 
-// @opencode/client/promise/api: one alias per group, used by @opencode/plugin
+// @opencode/client/promise/api (packages/client/src/promise/api.ts): one alias per group, used by @opencode/plugin
 type AgentApi = OpenCodeClient["agent"]
 type CommandApi = OpenCodeClient["command"]
 type ConfigApi = OpenCodeClient["config"]
@@ -52,7 +59,7 @@ type WorktreeApi = OpenCodeClient["worktree"]
 // IntegrationApi, ModelApi, PluginApi, ProviderApi, ReferenceApi, RpcApi, WebSearchApi,
 // SessionApi, SkillApi); import the others from "@opencode/client/promise/api".
 
-// Input/Output types are exported from @opencode/client (generated/index).
+// Input/Output types are exported from @opencode/client (packages/client/src/promise/generated/types.ts).
 interface OpenCodeClient {
     server: {
         info(requestOptions?: RequestOptions): Promise<ServerInfo>
@@ -400,6 +407,9 @@ Non-obvious members only; the rest do what group + name say. Apply to
   `generate`: one-off text from the session's context; writes nothing.
   `wait`: resolves when the agent loop is idle. `message.get`: one message by
   id (union of every message kind).
+- Session code: `packages/server/src/handlers/session.ts` (HTTP side of
+  every method) → `packages/core/src/session.ts` and `packages/core/src/session/`
+  (`context.ts`, `inbox.ts`, `instruction-*.ts`, ...).
 - `session.inbox.*`: the durable queue of undelivered input (user, synthetic,
   compaction, move items), in enqueue order. `delivery`:
   - `steer` (default for `prompt`, `compact`): taken at the next step

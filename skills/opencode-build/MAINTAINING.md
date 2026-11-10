@@ -33,7 +33,16 @@ touches these; a test requires the matching `X.md`.
 
 What it supplements, that it is not from the docs site, what it was written
 from (package and version, e.g. `@opencode/client@2.2.5` `.d.ts`), and that
-the installed types win after an upgrade.
+the installed types win after an upgrade. Then a "Code" line: where each
+package lives in the opencode repo at that tag (`@opencode/client` is
+`packages/client/`) and the files the reader most likely wants next.
+
+### Code pointers
+
+Name the source file beside each import path, in Reference block comments
+(`// @opencode/client/promise/api (packages/client/src/promise/api.ts)`) and
+in notes on behavior (`packages/core/src/session/inbox.ts`). Paths are
+relative to the opencode repo root at the tag named in the header.
 
 ### Reference sections
 

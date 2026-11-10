@@ -5,6 +5,12 @@ this skill from the installed type declarations of `@opencode/plugin@2.2.5`
 (`dist/promise/*.d.ts`) and `@opencode/client@2.2.5`. Re-check against the
 installed `.d.ts` files after an opencode upgrade; they win on any conflict.
 
+Code (https://github.com/anomalyco/opencode, tag `v2.2.5`): `@opencode/plugin` is `packages/plugin/`, and
+`@opencode/plugin/promise/<area>` is its `src/promise/<area>.ts`.
+`@opencode/client` is `packages/client/`. The loader that imports a plugin
+and calls `setup` is `packages/core/src/plugin/module.ts`; the Promise `ctx`
+is built in `packages/plugin/src/promise/adapter.ts` (`fromPromise`).
+
 The vendor Reference sections name the domains `AgentContext` and so on and
 flatten them. The real exported names are `AgentDomain` and so on, importable
 from `@opencode/plugin/promise/<area>` (`agent`, `session`, `tool`, ...). The
@@ -21,7 +27,7 @@ unchanged and exists only for that inference. The loader accepts any default
 export with a string `id` and a function `setup` (or `effect`).
 
 ```ts
-// @opencode/plugin/promise/plugin
+// @opencode/plugin/promise/plugin (packages/plugin/src/promise/plugin.ts)
 interface Plugin {
   readonly id: string
   readonly setup: (context: Context) => Promise<Cleanup | void> | Cleanup | void
@@ -64,7 +70,7 @@ interface Context {
   readonly worktree: WorktreeDomain
 }
 
-// @opencode/plugin dist/app.d.ts, dist/options.d.ts
+// @opencode/plugin dist/app.d.ts, dist/options.d.ts (packages/plugin/src/app.ts, src/options.ts)
 interface App {
   readonly name: string
   readonly version: string
@@ -84,7 +90,7 @@ methods have exactly the client's types and follow it when it changes. Each
 domain then adds plugin-only members (`transform`, `hook`, `reload`, ...).
 
 ```ts
-// @opencode/client/promise/api
+// @opencode/client/promise/api (packages/client/src/promise/api.ts)
 type Client = OpenCodeClient
 type AgentApi = Client["agent"]
 type CommandApi = Client["command"]
@@ -104,7 +110,8 @@ type VcsApi = Client["vcs"]
 type WebSearchApi = Client["websearch"]
 type WorktreeApi = Client["worktree"]
 
-// @opencode/plugin/promise/registration: shared by the domains below
+// @opencode/plugin/promise/registration (packages/plugin/src/promise/registration.ts):
+// shared by the domains below. Each XDomain is in packages/plugin/src/promise/<area>.ts.
 interface Registration {
   readonly dispose: () => Promise<void>
 }
