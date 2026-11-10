@@ -9,7 +9,8 @@ Code (https://github.com/anomalyco/opencode, tag `v2.2.5`): part resolution
 `packages/core/src/plugin/module.ts` (`load`, `loadServer`); module import
 `packages/util/src/runtime/import.{bun,node}.ts`; host-provided modules
 `packages/plugin/src/runtime.ts`; Promise-plugin adapter
-`packages/plugin/src/promise/adapter.ts` (`fromPromise`).
+`packages/plugin/src/promise/adapter.ts` (`fromPromise`). Notes marked
+"(2.2.6, observed)" come from running `opencode serve` 2.2.6, not the source.
 
 ## Parts
 
@@ -54,3 +55,20 @@ Code (https://github.com/anomalyco/opencode, tag `v2.2.5`): part resolution
 - Under Bun the entry is a plain `import()` (TypeScript runs as is); under
   Node it is imported through `vm.Script`, with a CommonJS `module.exports`
   merged into the namespace.
+- Lazy, per Location (2.2.6, observed): a Location's plugins start loading at
+  its first request, then in the background. Right after start
+  `GET /api/reference` → `[]`; a few seconds later the plugin's entries.
+  A one-shot `opencode api --standalone ...` exits before that and sees
+  none; with a running server, poll.
+- `GET /api/plugin` (`plugin.list`) per Location: the builtins plus each
+  configured plugin, e.g. `{ id, source: { type: "local", path },
+  features: { server, tui, rpc, gui }, state: { status: "active" } }`.
+  `features` = the parts opencode found (`gui` only once the bundle is
+  built). Quickest check that a by-path plugin loaded (2.2.6, observed).
+- Log (`opencode serve --print-logs --log-level info`): `loading plugin
+  id=<dir> entrypoint=<file URL>` names the entry file picked.
+- Headless check without a model: `python scripts/plugin_probe.py <plugin-dir>`
+  starts a throwaway `opencode serve` (temp XDG folders), waits for the
+  plugin and prints its `/api/plugin` entry, agents, skills, references,
+  MCP servers and log lines; `--rpc <id>/<method> --input '{}'` calls a
+  method.

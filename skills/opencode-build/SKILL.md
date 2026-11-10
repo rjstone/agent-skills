@@ -6,7 +6,7 @@ license: MIT
 metadata:
   author: Robert Stone
   source: https://github.com/rjstone/agent-skills
-  version: "0.2.1"
+  version: "0.3.0"
 ---
 
 # opencode Build docs (v2)
@@ -38,7 +38,7 @@ When they disagree, the higher source wins.
 | Task | Read |
 | --- | --- |
 | Parts (server/TUI/GUI/RPC), `package.json` `exports`, loading, `plugins` config, publish | `references/plugins.md` |
-| How opencode finds parts and checks a plugin's default export; dependencies of a by-path plugin | `references/plugins.local.md` |
+| How opencode finds parts and checks a plugin's default export; dependencies of a by-path plugin; lazy loading; checking a plugin loaded | `references/plugins.local.md` |
 | Server part: `setup(ctx)`, tools, hooks, transforms, agents, commands, MCP | `references/plugins-server.md` |
 | Type of `ctx` (`Plugin.Context`) and of each `ctx.<domain>`, and how they derive from the client | `references/plugins-server.local.md` |
 | TUI part: commands, keymaps, slash commands, toasts, dialogs, routes, slots | `references/plugins-cli.md` |
@@ -46,11 +46,16 @@ When they disagree, the higher source wins.
 | GUI limits: no agent switch, Desktop picker vs server `switchAgent`, hiding app controls, user-only output | `references/plugins-gui.local.md` |
 | Typed methods/events between parts and clients | `references/plugins-rpc.md` |
 | Porting v1 code, or supporting v1 and v2 from one package | `references/plugins-migrate-v1.md` |
+| What a v1+v2 package did on real opencode 1.18.29 and 2.2.6; V1 config key, CLIs, sharing code | `references/plugins-migrate-v1.local.md` |
 | Effect API versions | `references/plugins-effect.md`, `references/plugins-effect-rpc.md` |
 | Driving a running server from code | `references/client.md`, `references/client-effect.md` |
 | Type of the client object (`OpenCodeClient`): every group and method | `references/client.local.md` |
 | Embedding opencode in your app | `references/sdk.md`, `references/sdk-effect.md`, `references/sdk-cloudflare.md` |
 | What the Build section covers | `references/intro.md` |
+
+Check that a plugin loads, without a model or your real config:
+`python scripts/plugin_probe.py <plugin-dir>` (needs the v2 CLI; details in
+its docstring and `references/plugins.local.md` "Load").
 
 `plugins-server.md` (~1800 lines) and `plugins-gui.md` (~3700 lines) are
 large: list their headings first (`grep -n '^##' <file>`), then read only the
