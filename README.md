@@ -41,6 +41,7 @@ npx skills add rjstone/agent-skills --list
 - **opencode-api** - call opencode's v2 server HTTP API correctly, using its OpenAPI spec cached in the skill.
 - **opencode-build** - write and port opencode v2 plugins and SDK/client code from the current docs, not v1 habits.
 - **opencode-cli** - use and script the opencode v2 command line and TUI from the current docs.
+- **pygameturbo** - help with and teach Pygame Turbo (the Pygame Zero fork) games, from its docs vendored in the skill (LGPL-3.0, see the skill's `references/README.md`).
 - **provider-onboarding** - find how to call an LLM provider or model and get ready-to-paste config for it.
 - **timestamp** - toggle time stamps with deltas at the start and/or end of each agent turn.
 

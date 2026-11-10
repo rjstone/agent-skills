@@ -1,0 +1,159 @@
+{
+  "commit": "fac38d8e0ff7a3eb3da204764f3420048312a239",
+  "license": "LGPL-3.0 (see COPYING)",
+  "pages": {
+    "COPYING": {
+      "sha256": "da7eabb7bafdf7d3ae5e9f223aa5bdc1eece45ac569dc21b3b037520b4464768",
+      "url": null
+    },
+    "deep_dives/actors.rst": {
+      "sha256": "d166268d07684df15f5acd5b19f5cbb680d5fa1856079306a4b9cd30bdfa2103",
+      "url": "https://pgturbo.readthedocs.io/deep_dives/actors.html"
+    },
+    "deep_dives/audio.rst": {
+      "sha256": "f2e3239e6c6092c1ca1a54f2b46981e55d0cf93612e96f7e86d21b625dc6a35a",
+      "url": "https://pgturbo.readthedocs.io/deep_dives/audio.html"
+    },
+    "deep_dives/clock.rst": {
+      "sha256": "c1c41e9651a0f73e05df9b36b4d783faccadb06e26de6de138ef86e7383da534",
+      "url": "https://pgturbo.readthedocs.io/deep_dives/clock.html"
+    },
+    "deep_dives/game_window.rst": {
+      "sha256": "4e02631d26040ca334df5bcd935fe9cd4f06803b04acb043c46bf2ba12b0d9b8",
+      "url": "https://pgturbo.readthedocs.io/deep_dives/game_window.html"
+    },
+    "deep_dives/hooks.rst": {
+      "sha256": "70e96286deec422838bc9a90f2875d5098a1ed324bd3249d3d8e53d76786673a",
+      "url": "https://pgturbo.readthedocs.io/deep_dives/hooks.html"
+    },
+    "deep_dives/installation_and_running.rst": {
+      "sha256": "2531966746516aa558660ba9f6c4e47637ab0584a7964ff366f0fbae887284dc",
+      "url": "https://pgturbo.readthedocs.io/deep_dives/installation_and_running.html"
+    },
+    "deep_dives/player_input.rst": {
+      "sha256": "0d58888e0bbf62ea73b719d2632bf706496fb9d48cac424580f84197338dcf40",
+      "url": "https://pgturbo.readthedocs.io/deep_dives/player_input.html"
+    },
+    "deep_dives/property_animation.rst": {
+      "sha256": "dd4ddc80feac471794d2ea8a06738aaffb8a3c1adde225a05398a9ebb33e913a",
+      "url": "https://pgturbo.readthedocs.io/deep_dives/property_animation.html"
+    },
+    "deep_dives/resources_and_storage.rst": {
+      "sha256": "e5c261d1d6696191956d9317a398aa1eef35542521ac88343fb297351e3241d8",
+      "url": "https://pgturbo.readthedocs.io/deep_dives/resources_and_storage.html"
+    },
+    "deep_dives/screen.rst": {
+      "sha256": "e256c2f7b29a12c74ff1926257c486c9975e322aa94c9fe089846d13ce5c5730",
+      "url": "https://pgturbo.readthedocs.io/deep_dives/screen.html"
+    },
+    "deep_dives/update_draw_cycle.rst": {
+      "sha256": "01d0331e388b4669d54b2aa8dc0bc26af5f73ecd1f7e3d423c4bd6dbb8c83946",
+      "url": "https://pgturbo.readthedocs.io/deep_dives/update_draw_cycle.html"
+    },
+    "examples/overview.rst": {
+      "sha256": "3bdff65de74d47f723ed7c8a844236066ddb6335271e90a491014a011c22c7d5",
+      "url": "https://pgturbo.readthedocs.io/examples/overview.html"
+    },
+    "misc/resources.rst": {
+      "sha256": "e39b12ba62467e016d3ab28893a16b3b325f763f97336b3e87b090b062ccbd68",
+      "url": "https://pgturbo.readthedocs.io/misc/resources.html"
+    },
+    "overview.rst": {
+      "sha256": "1d57c90c806d50ac3905ec89feac0ecd795d2c6f123cb645a19120df1168716c",
+      "url": "https://pgturbo.readthedocs.io/overview.html"
+    },
+    "references/actor.rst": {
+      "sha256": "290a01d0ba7b768a815470f6fa7a68340389c0a1726734162c7cad039ccfddb3",
+      "url": "https://pgturbo.readthedocs.io/references/actor.html"
+    },
+    "references/animate.rst": {
+      "sha256": "8e1f5da2ce5124c87aba12c5a89c828764405cc935638f8a1e2ba59dd5cab700",
+      "url": "https://pgturbo.readthedocs.io/references/animate.html"
+    },
+    "references/animations.rst": {
+      "sha256": "0295a8cdacb7fa39f91a9ce579dfff5acfa975eddd27fbb6b158140c09f4892a",
+      "url": "https://pgturbo.readthedocs.io/references/animations.html"
+    },
+    "references/clock.rst": {
+      "sha256": "41181746787807222ef936ab7b5859bd27ac5f079cc1825568c1b33d4e1412ec",
+      "url": "https://pgturbo.readthedocs.io/references/clock.html"
+    },
+    "references/colors_ref.rst": {
+      "sha256": "9e741a8e976f3a828bec21571a9d532b3245fac5a7537349ec4eb4734e958a58",
+      "url": "https://pgturbo.readthedocs.io/references/colors_ref.html"
+    },
+    "references/fonts.rst": {
+      "sha256": "59ceb22190587697ad0d50c13dd3b6ccd6458ffe05083ee610b1cbc3c80fa9be",
+      "url": "https://pgturbo.readthedocs.io/references/fonts.html"
+    },
+    "references/game_window.rst": {
+      "sha256": "292e0b7f5b91c7a72b7c7a2241352c1344e57a0abc11eeff5f18b3a723b76520",
+      "url": "https://pgturbo.readthedocs.io/references/game_window.html"
+    },
+    "references/hooks.rst": {
+      "sha256": "00d7520c8e254692638ecc779a72c7f4d482fe1dfe289516a1ab05ce8663ef00",
+      "url": "https://pgturbo.readthedocs.io/references/hooks.html"
+    },
+    "references/images.rst": {
+      "sha256": "c3852e04809379243dbdadacb8f5d3b8c6eeef21ea61d1ea6e4faa297df0be3f",
+      "url": "https://pgturbo.readthedocs.io/references/images.html"
+    },
+    "references/joystick.rst": {
+      "sha256": "93bfde797c76dd03349fd6932b333d1bd089141f52ab15c98997d9ae1b25b209",
+      "url": "https://pgturbo.readthedocs.io/references/joystick.html"
+    },
+    "references/keyboard.rst": {
+      "sha256": "c6f546ccbbfce436f411fc2ec8a1ad12e092493e5e68646dd30bba16bba720fd",
+      "url": "https://pgturbo.readthedocs.io/references/keyboard.html"
+    },
+    "references/mouse.rst": {
+      "sha256": "a6dfac8d9687b0acd1bf839f2dc75bb7955be65081db08a0a8304f179c9e3f7b",
+      "url": "https://pgturbo.readthedocs.io/references/mouse.html"
+    },
+    "references/music.rst": {
+      "sha256": "de1d56e15084abcc1f366c32e1670936054ef903921332fcb63314542ad87785",
+      "url": "https://pgturbo.readthedocs.io/references/music.html"
+    },
+    "references/scratch.rst": {
+      "sha256": "df74408d84096c53981322eed26b24b1f80c1cd65612c7a0428aa674a8382d55",
+      "url": "https://pgturbo.readthedocs.io/references/scratch.html"
+    },
+    "references/screen.rst": {
+      "sha256": "12d62b73550a358472b5853d3cecf6569d297f0946a97b6811b2f437ae7efd56",
+      "url": "https://pgturbo.readthedocs.io/references/screen.html"
+    },
+    "references/sounds.rst": {
+      "sha256": "20acd7594e9db00696c955316b107849573e1bcfa7ba6ca9da979afba9f13f19",
+      "url": "https://pgturbo.readthedocs.io/references/sounds.html"
+    },
+    "references/storage.rst": {
+      "sha256": "56c99f04c40b96be3742eebd27dccb425b03d8a392dee5327233dfb6471cd9b4",
+      "url": "https://pgturbo.readthedocs.io/references/storage.html"
+    },
+    "references/tone.rst": {
+      "sha256": "4ad764f24cbec0e2d5c16741f5b6d7427f21044a1550687e8f9d9b12da874ee8",
+      "url": "https://pgturbo.readthedocs.io/references/tone.html"
+    },
+    "tutorials/1_introduction.rst": {
+      "sha256": "dd115c49b95cff304b439d29448ede6ca375c2fa548dfc85ff49a397c0bc4582",
+      "url": "https://pgturbo.readthedocs.io/tutorials/1_introduction.html"
+    },
+    "tutorials/2_game_mechanics.rst": {
+      "sha256": "e8a325eb17bcce78fad96ef555434c5d5a304d6f973651d8a9ba850d11dffd1e",
+      "url": "https://pgturbo.readthedocs.io/tutorials/2_game_mechanics.html"
+    },
+    "tutorials/3_images_sounds_and_music.rst": {
+      "sha256": "da8516110d9bc76da9a13dff08d8ebc37b36344cd7eab0c6d79a969af1cbccd1",
+      "url": "https://pgturbo.readthedocs.io/tutorials/3_images_sounds_and_music.html"
+    },
+    "tutorials/4_animating_actors.rst": {
+      "sha256": "e26d8c7b80861a9fa0a8768138fdceb27633e55046c3fd35a4d1016794923f68",
+      "url": "https://pgturbo.readthedocs.io/tutorials/4_animating_actors.html"
+    },
+    "tutorials/from_scratch.rst": {
+      "sha256": "fb33e899cd5c2f28663372b5f74d5f7d84c2774bebbb91ae2a462ebcd6cea1b9",
+      "url": "https://pgturbo.readthedocs.io/tutorials/from_scratch.html"
+    }
+  },
+  "repo": "https://github.com/Mambouna/pgturbo"
+}
