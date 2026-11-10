@@ -138,6 +138,14 @@
       ]
     },
     {
+      "name": "thonny-plugin",
+      "version": "0.1.0",
+      "files": [
+        "SKILL.md",
+        "references/api-5.0.1.md"
+      ]
+    },
+    {
       "name": "timestamp",
       "version": "0.1.0",
       "files": [
