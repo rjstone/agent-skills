@@ -30,7 +30,7 @@
     },
     {
       "name": "opencode-build",
-      "version": "0.2.0",
+      "version": "0.3.0",
       "files": [
         "ERRATA.md",
         "MAINTAINING.md",
@@ -45,6 +45,7 @@
         "references/plugins-effect.md",
         "references/plugins-gui.local.md",
         "references/plugins-gui.md",
+        "references/plugins-migrate-v1.local.md",
         "references/plugins-migrate-v1.md",
         "references/plugins-rpc.md",
         "references/plugins-server.local.md",
@@ -56,6 +57,7 @@
         "references/sdk.md",
         "scripts/client_outline.py",
         "scripts/dts_decls.py",
+        "scripts/plugin_probe.py",
         "scripts/refresh_references.py"
       ]
     },
