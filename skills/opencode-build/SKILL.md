@@ -38,10 +38,12 @@ When they disagree, the higher source wins.
 | Task | Read |
 | --- | --- |
 | Parts (server/TUI/GUI/RPC), `package.json` `exports`, loading, `plugins` config, publish | `references/plugins.md` |
+| How opencode finds parts and checks a plugin's default export; dependencies of a by-path plugin | `references/plugins.local.md` |
 | Server part: `setup(ctx)`, tools, hooks, transforms, agents, commands, MCP | `references/plugins-server.md` |
 | Type of `ctx` (`Plugin.Context`) and of each `ctx.<domain>`, and how they derive from the client | `references/plugins-server.local.md` |
 | TUI part: commands, keymaps, slash commands, toasts, dialogs, routes, slots | `references/plugins-cli.md` |
 | GUI part (Desktop panels, settings, main process) | `references/plugins-gui.md` |
+| GUI limits: no agent switch, Desktop picker vs server `switchAgent`, hiding app controls, user-only output | `references/plugins-gui.local.md` |
 | Typed methods/events between parts and clients | `references/plugins-rpc.md` |
 | Porting v1 code, or supporting v1 and v2 from one package | `references/plugins-migrate-v1.md` |
 | Effect API versions | `references/plugins-effect.md`, `references/plugins-effect-rpc.md` |

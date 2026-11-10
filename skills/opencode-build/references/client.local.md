@@ -403,7 +403,11 @@ Non-obvious members only; the rest do what group + name say. Apply to
 - `session.context` → `Session.Message.*[]`: the model-visible history since
   the last compaction. Not the full transcript, not a context object.
 - `session.prompt` / `synthetic` / `compact` → the admitted inbox item, not a
-  result. `synthetic`: transcript message, no model turn, no prompt hooks.
+  result. `synthetic`: transcript message, no model turn, no prompt hooks;
+  it is part of `context`, so the model reads it on later turns.
+  `switchAgent` from outside Desktop (plugin, TUI, other client): the
+  Desktop picker may keep the old agent and switch back on the next
+  message; see `plugins-gui.local.md` ("Choose the model").
   `generate`: one-off text from the session's context; writes nothing.
   `wait`: resolves when the agent loop is idle. `message.get`: one message by
   id (union of every message kind).
