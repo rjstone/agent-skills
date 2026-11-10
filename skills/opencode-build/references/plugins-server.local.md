@@ -243,3 +243,31 @@ Name a precise type for one part of the context as `Plugin.Context["session"]`
 (or `SessionDomain` from `@opencode/plugin/promise/session`), not as the
 client's `SessionApi`: the `Pick` drops members, so `ctx.session` is not
 assignable to `OpenCodeClient["session"]`.
+
+### Domain notes
+
+Plugin-only members; non-obvious ones only.
+
+- `transform(cb)`: `cb` is replayed onto a fresh value on every registry
+  change (any registration, removal or `reload()`), so keep it sync, cheap
+  and repeatable: do file reads etc. before registering. Returns a
+  `Registration`; `dispose()` drops it.
+- `hook(name, cb)`: runtime interception; returns a `Registration`.
+  `ModelHooks` take `{ providerID }` to scope hooks whose event has a model.
+- `session.hook("prompt")`: runs once at inbox admission, before attachment
+  and skill resolution. Edits to `prompt` (text, files, skills),
+  `metadata` and `delivery` become the stored input. Not run for synthetic,
+  shell, compaction or move items. Not exactly-once: keep it retry-safe.
+- `ctx.session` lacks these client members: `fork`, `revert.*`, `diff`,
+  `inbox.*`, `message.get`, `form.*`, `shell`, `background`, `active`,
+  `environment`, `view`.
+- `storage`: per-plugin JSON key-value store that outlives sessions.
+- `tool.list()`: registered tools after every transform, keyed by effective
+  name (namespaced ids included).
+- `permission.assert(input)`: runs the session's permission rules and, if
+  needed, asks the user; resolves when allowed. Rethrow its rejection rather
+  than returning it as tool output.
+
+Members with the same name as a client method (`session.context`,
+`session.wait`, `session.instructions`, inbox `delivery`, ...) are covered
+in the Notes of `client.local.md`.

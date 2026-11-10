@@ -384,3 +384,40 @@ interface OpenCodeClient {
     }
 }
 ```
+
+### Notes
+
+Non-obvious members only; the rest do what group + name say. Apply to
+`ctx.<domain>` too (same methods). Coverage so far: `session`.
+
+- Top-level `session` also carries the experimental members (`wait`,
+  `instructions`, `stats`, `log`, ...): same as `experimental.session.*`,
+  same `ExperimentalSession*` inputs, `/api/experimental/` routes.
+- `session.context` → `Session.Message.*[]`: the model-visible history since
+  the last compaction. Not the full transcript, not a context object.
+- `session.prompt` / `synthetic` / `compact` → the admitted inbox item, not a
+  result. `synthetic`: transcript message, no model turn, no prompt hooks.
+  `generate`: one-off text from the session's context; writes nothing.
+  `wait`: resolves when the agent loop is idle. `message.get`: one message by
+  id (union of every message kind).
+- `session.inbox.*`: the durable queue of undelivered input (user, synthetic,
+  compaction, move items), in enqueue order. `delivery`:
+  - `steer` (default for `prompt`, `compact`): taken at the next step
+    boundary, so it can redirect a running loop.
+  - `queue`: waits until current work is done.
+  - `inbox.update` changes an item's mode (to `steer` wakes the loop);
+    `inbox.cancel` withdraws an undelivered item. `interrupt({ resume: true })`
+    resumes `steer` items; `queue` items stay parked.
+- `session.instructions.entry.*`: keyed `<context key="k">` blocks in the
+  session's instructions. Key `^[a-z0-9][a-z0-9._-]*$`; value any JSON up to
+  256 KiB (a string renders verbatim, anything else as indented JSON).
+  - Prompt cache: the instruction prefix holds an epoch baseline, frozen at
+    session start and re-based at each compaction. A later `put`/`remove`
+    does not edit the prefix: at the next step boundary it is appended to
+    the history as a message ("The context under "k" changed and
+    supersedes the previous value: ..." / "... no longer applies"). The
+    cached prefix survives; a same-value `put` is a no-op.
+  - Each change re-sends the whole value, so frequent large updates grow the
+    history until the next compaction.
+  - Source: opencode 2.2.5 `packages/core/src/session/instruction-state.ts`,
+    `instruction-entry.ts`.
