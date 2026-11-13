@@ -21,6 +21,25 @@ symlinks, see AGENTS.md).
 Claude Code keeps the working plan in `~/.claude/plans/`, which disappears
 with a cloud container: archive it to `docs/plans/` before the session ends.
 
+## Claude Code on the web: cloud environment
+
+A personal cloud environment named `agent-skills`, linked to this repo, was
+created for it (the user, 2026-11-13). Its network allows only package
+registries, MCP servers and an exact list of hosts the skills' scripts use;
+add a host there (environment settings, or the environment tools) when a
+script needs a new one. Its setup script:
+
+- installs `python3-tk`. That gives Tk only to the system Python 3.12; the
+  `python3` on `PATH` is 3.13 and apt has no Tk for it, so run Tk work
+  (`capturing-tk-screenshots-headless`, `thonny-plugin`) with `python3.12`.
+- links each `skills/<name>` into `~/.claude/skills/<name>`, so the repo's
+  working copies load as skills. Copies synced from claude.ai may also show
+  up under `anthropic-skills:`; the bare names are the repo versions.
+
+Pandoc, Xvfb and ImageMagick come with the base image. The environment
+picker's "Auto" setting is undocumented; it presumably picks the
+environment linked to the session's repo (to be confirmed).
+
 ## Claude Code on the web: skills CLI
 
 - `npx skills find <query>` returns "No skills found" for every query in the
