@@ -568,6 +568,9 @@ def cap_lines(lines, max_lines, hint) -> List[str]:
     return list(lines[:max_lines]) + ["... %d more lines cut; %s" % (cut, hint)]
 
 
+FUZZY_SHOWN = 5  # fuzzy hits shown when exact, prefix or substring hits exist
+
+
 def cmd_search(args):
     if not args.query:
         raise CLIError("empty search query", 2)
@@ -593,6 +596,12 @@ def cmd_search(args):
                   "rank": r} for r, _l, n, d, i, t in hits[:args.max_lines]]
         print(json.dumps(items, indent=2))
         return 0
+    real = sum(1 for h in hits if h[0] < 3)
+    if real and len(hits) - real > FUZZY_SHOWN:
+        cut = len(hits) - real - FUZZY_SHOWN
+        hits = hits[:real + FUZZY_SHOWN]
+    else:
+        cut = 0
     lines = []
     for k, (r, _l, n, d, i, t) in enumerate(hits):
         if r == 3 and (k == 0 or hits[k - 1][0] < 3):
@@ -600,6 +609,8 @@ def cmd_search(args):
                          "(letters in order, often unrelated):" if k == 0 else
                          "--- fuzzy matches (letters in order, often unrelated) ---")
         lines.append("%s:%d  %s  %s  (%s)" % (d, i, t, n, d))
+    if cut:
+        lines.append("... %d more fuzzy matches cut (letters in order only)" % cut)
     if not hits:
         lines.append("no matches for %r" % args.query)
     for line in cap_lines(lines, args.max_lines, hint):
@@ -1032,6 +1043,12 @@ def _read_notes(store, docset_name):
         return path, None
 
 
+def _short_name(name) -> str:
+    """Entry name without an argument list: 'f(a, [b])' -> 'f' (lowercased)."""
+    short = re.sub(r"\s*\(.*$", "", name).strip().lower()
+    return short or name.lower()
+
+
 def notes_for(store, docset_name, entry_name, entry_type) -> List[str]:
     path, text = _read_notes(store, docset_name)
     if text is None:
@@ -1041,13 +1058,14 @@ def notes_for(store, docset_name, entry_name, entry_type) -> List[str]:
     if any(l.strip() for l in general):
         body += ["## General"] + general
     want = entry_name.lower()
+    wants = {want, _short_name(entry_name)}
     for key, items in sections.items():
         for typ, lines in items:
-            hit = (key == want and (typ is None or typ.lower() == (entry_type or "").lower())) \
-                or (typ is not None and "%s (%s)" % (key, typ.lower()) == want)
+            named = key in wants and (typ is None or typ.lower() == (entry_type or "").lower())
+            hit = named or (typ is not None and "%s (%s)" % (key, typ.lower()) == want)
             if hit and any(l.strip() for l in lines):
-                body += ["## %s%s" % (entry_name, "" if typ is None or key != want
-                                      else " (%s)" % typ)] + lines
+                body += ["## %s%s" % (entry_name, " (%s)" % typ if named and typ else "")] \
+                    + lines
     if not body:
         return []
     return ["--- notes (%s) ---" % path] + body
@@ -1085,11 +1103,16 @@ def size_warnings(text) -> List[str]:
 def check_notes(text, entry_names) -> List[str]:
     warns = size_warnings(text)
     _, sections = parse_notes(text)
+    shorts = {_short_name(n) for n in entry_names}
     for name, items in sections.items():
         for typ, _lines in items:
             full = "%s (%s)" % (name, typ.lower()) if typ else name
-            if name not in entry_names and full not in entry_names:
-                warns.append("section %r matches no entry in the docset" % full)
+            if name not in entry_names and name not in shorts and full not in entry_names:
+                import difflib
+                close = difflib.get_close_matches(name, sorted(entry_names | shorts), 1, 0.6)
+                warns.append("section %r matches no entry in the docset; a heading is an "
+                             "entry name as search prints it, or its part before '('%s"
+                             % (full, "; did you mean %r?" % close[0] if close else ""))
     return warns
 
 
@@ -1624,8 +1647,19 @@ def cheat_index(store, refresh=False) -> dict:
     return sheets
 
 
-def _note(msg):
-    print("note: " + msg, file=sys.stderr)
+_NOTES: List[Tuple[str, str]] = []  # (source, message), printed by _flush_notes
+
+
+def _note(msg, source):
+    _NOTES.append((source, msg))
+
+
+def _flush_notes(sources=None):
+    """Print held notes about the given sources (all if None), then clear."""
+    for source, msg in _NOTES:
+        if sources is None or source in sources:
+            print("note (no action needed): " + msg, file=sys.stderr)
+    del _NOTES[:]
 
 
 def _first_version(e) -> str:
@@ -1663,11 +1697,13 @@ def _kapeli_feeds(store, refresh):
         try:
             for e in _catalog_feeds(store, "com.kapeli.dash"):
                 names.setdefault(e["name"], []).extend([e["title"]] if e.get("title") else [])
-            _note("official docset list from Zeal's catalog (other sources unavailable)")
+            _note("the official docset list came from Zeal's catalog; the other "
+                  "sources were unreachable", "kapeli")
         except _SOURCE_ERRORS as e:
             errors.append("Zeal catalog: %s" % e)
     elif github_failed[0] and len(errors) == 1:
-        _note("official docset list from Zeal's manifest (GitHub API unavailable)")
+        _note("the official docset list came from Zeal's manifest; the GitHub API "
+              "was unreachable", "kapeli")
     if not names:
         raise FetchError("; ".join(errors))
     return [Feed(n, "kapeli", "", [], sorted(set(a for a in al if a != n)))
@@ -1685,7 +1721,8 @@ def _cheat_feeds(store, refresh):
         errors.append(str(e))
     try:
         feeds = [Feed(n, "cheat", "", []) for n in _list_names(CHEAT_LIST_URL, ".rb")]
-        _note("cheat sheet list from the GitHub API (Kapeli's cheat.json unavailable)")
+        _note("the cheat sheet list came from the GitHub API; Kapeli's cheat.json "
+              "was unreachable", "cheat")
         return feeds
     except _SOURCE_ERRORS as e:
         errors.append(str(e))
@@ -1693,7 +1730,8 @@ def _cheat_feeds(store, refresh):
         feeds = [Feed(e["name"], "cheat", _first_version(e), [CHEAT_URL % quote(e["name"])],
                       [e["title"]] if e.get("title") else [])
                  for e in _catalog_feeds(store, "com.kapeli.cheatsheet")]
-        _note("cheat sheet list from Zeal's catalog (other sources unavailable)")
+        _note("the cheat sheet list came from Zeal's catalog; the other sources "
+              "were unreachable", "cheat")
         return feeds
     except _SOURCE_ERRORS as e:
         errors.append("Zeal catalog: %s" % e)
@@ -1709,7 +1747,8 @@ def _user_feeds(store):
             feeds = [Feed(str(e.get("title") or e["name"]), "user", _first_version(e),
                           [USER_BASE_URL + e["name"] + "/" + e["archive"]])
                      for e in _catalog_feeds(store, "com.kapeli.contrib") if e.get("archive")]
-            _note("user-contributed list from Zeal's catalog (Kapeli's index unavailable)")
+            _note("the user-contributed list came from Zeal's catalog; Kapeli's index "
+                  "was unreachable", "user")
             return feeds
         except _SOURCE_ERRORS as e:
             raise FetchError("%s; Zeal catalog: %s" % (first, e))
@@ -2042,6 +2081,7 @@ def install(store, spec: str, force: bool = False) -> Docset:
     failed: List[str] = []
     matches = [f for f in load_sources(store, False, failed=failed)
                if _norm(f.name) == _norm(spec)]
+    _flush_notes({f.source for f in matches} if matches else None)
     if not matches:
         where = ("the loaded source lists (the %s list could not be loaded)"
                  % " and ".join(failed) if failed else "any source list")
@@ -2069,6 +2109,7 @@ def cmd_sources(args):
             lines.append("%s:%s%s" % (f.source, f.name,
                                       "  " + f.version if f.version else ""))
     lines.sort()
+    _flush_notes({l.split(":", 1)[0] for l in lines} if lines else None)
     if not lines:
         print("no docsets match %r" % (args.query or ""))
     for line in cap_lines(lines, args.max_lines,

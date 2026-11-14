@@ -529,6 +529,17 @@ class SearchTests(unittest.TestCase):
         return run_cli("--dir", self.store_dir, *args, env={"HOME": self.tmp},
                        cwd=self.tmp)
 
+    def test_fuzzy_hits_capped_when_real_hits_exist(self):
+        entries = [("timer", "Function", "a.html")] + [
+            ("t_i_m_e_r_%d" % n, "Function", "a.html") for n in range(9)]
+        self.add("Alpha", entries)
+        r = self.cli("search", "timer", "-d", "Alpha")
+        out = r.stdout.splitlines()
+        self.assertEqual(sum(1 for l in out if "t_i_m_e_r" in l), docset.FUZZY_SHOWN)
+        self.assertEqual(out[-1], "... 4 more fuzzy matches cut (letters in order only)")
+        r = self.cli("search", "tmr", "-d", "Alpha")  # only fuzzy: none cut
+        self.assertEqual(sum(1 for l in r.stdout.splitlines() if "t_i_m_e_r" in l), 9)
+
     def test_search_ranks_across_docsets(self):
         self.add("Alpha", [("sleep_long", "Function", "a.html"),
                            ("sleep", "Function", "b.html")])
@@ -860,6 +871,18 @@ class NotesTests(unittest.TestCase):
         self.assertEqual(sections["asyncio.gather"], [("Function", ["A"])])
         self.assertEqual(sections["other"], [(None, ["B"])])
         self.assertNotIn("general", sections)
+
+    def test_notes_heading_without_arguments(self):
+        self.write_notes("Lua", "## sol.timer.start\nreturn true to repeat\n")
+        out = docset.notes_for(self.store_dir, "Lua",
+                               "sol.timer.start([context], delay, callback)", "Function")
+        self.assertIn("return true to repeat", out)
+        names = {"sol.timer.start([context], delay, callback)", "hero:freeze()"}
+        self.assertEqual(docset.check_notes("## sol.timer.start\nx\n", names), [])
+        warns = docset.check_notes("## sol.timer.stat\nx\n", names)
+        self.assertEqual(len(warns), 1)
+        self.assertIn("part before '('", warns[0])
+        self.assertIn("did you mean 'sol.timer.start", warns[0])
 
     def test_notes_match_case_and_type(self):
         self.write_notes("Py", "gen line\n## ASYNCIO.gather (function)\nfn note\n"
@@ -1778,6 +1801,18 @@ class SourcesTests(unittest.TestCase):
             with self.assertRaises(docset.AlreadyAvailable) as cm:
                 docset.install(store, "kapeli:Bar")
         self.assertIn("read-only from " + zeal, str(cm.exception))
+
+    def test_fallback_note_only_for_matching_source(self):
+        manifest = {"Foo": {"title": "Foo"}}
+        FakeNet(self, pages={docset.ZEAL_MANIFEST_URL: json.dumps(manifest),
+                             docset.USER_INDEX_URL: json.dumps(USER_INDEX)})
+        code, out, err = self.main("sources", "bar")  # only user:Bar matches
+        self.assertIn("user:Bar", out)
+        self.assertNotIn("Zeal's manifest", err)
+        code, out, err = self.main("sources", "foo", "--refresh")
+        self.assertIn("kapeli:Foo", out)
+        self.assertIn("note (no action needed): the official docset list came from "
+                      "Zeal's manifest", err)
 
     def test_sources_all_failing(self):
         FakeNet(self)

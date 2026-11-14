@@ -69,7 +69,8 @@ apps and existing docset folders. Then decide where you are running:
 
 Never pick a location yourself: the user chooses or approves it. If unsure
 which case applies, ask. Run `where --set PATH (--project|--user)
-[--read-from DIR]` with the choice; quote a `~` path
+[--read-from DIR]` with the choice (`--project` writes `.dash-docset.json`
+in the current folder; `--user` writes the user config); quote a `~` path
 (`'~/.local/share/dash-docset'`) so the config keeps the portable form.
 
 Never write into a Dash, Zeal or dasht folder; docsets found there are
@@ -91,7 +92,8 @@ from one of those folders (`--force` overrides).
    `kapeli:Python@3.12` installs the newest 3.12.x and `update` keeps the
    pin. A not-found error suggests close names and the other prefixes.
    Source lists are cached for a week; `sources --refresh` re-checks them.
-   A "note:" on stderr says when a list came from a fallback source. Cheat
+   A "note (no action needed)" on stderr says a list came from a fallback
+   source because another was unreachable; results are complete. Cheat
    sheets are short (Git's has 81 entries); prefer a full docset when one
    exists.
 2. `search QUERY` finds entries by name and prints a REF for each. Hits
@@ -122,7 +124,9 @@ Keep durable lessons (gotchas, project conventions) in the docset's notes
 file. Find it with `notes DOCSET --path` (creates the `notes/` folder; the
 file itself appears when you write it),
 and edit it with normal file tools. Format: a `## General` section, plus
-`## <entry name>` sections (optional ` (Type)` suffix to disambiguate). Only
+`## <entry name>` sections: the name as `search` prints it, or its part
+before `(` (`## sol.timer.start` covers `sol.timer.start([context], ...)`),
+with an optional ` (Type)` suffix to disambiguate. Only
 `show` prints notes: General and the matching section (General alone for
 page REFs), so many small sections are cheap and one big one is not.
 
