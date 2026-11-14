@@ -4,8 +4,11 @@ import argparse
 import json
 import os
 import sys
-from dataclasses import dataclass
-from typing import List, Mapping, Optional
+import pathlib
+import sqlite3
+import tempfile
+from dataclasses import dataclass, field
+from typing import Iterator, List, Mapping, Optional, Tuple
 
 PROJECT_FILE = ".dash-docset.json"
 GITIGNORE_LINES = ["*", "!.gitignore", "!notes/", "!notes/**"]
@@ -83,28 +86,52 @@ def find_project_file(cwd):
         d = parent
 
 
+def _try_load(path):
+    """(data, None) or ({}, CLIError) so a bad config only matters if it is used."""
+    try:
+        return _load_json(path), None
+    except CLIError as e:
+        return {}, e
+
+
 def resolve_store(cli_dir, cwd, env) -> Optional[Store]:
-    """--dir > DASH_DOCSET_DIR > project file > user config > None."""
+    """--dir > DASH_DOCSET_DIR > project file > user config > None.
+
+    A malformed config is an error only when it is the one that decides; for
+    --dir/DASH_DOCSET_DIR it is ignored (read_from then comes from the project
+    config, else the user config, whichever parses)."""
     project_path = find_project_file(cwd)
-    project = _load_json(project_path) if project_path else {}
+    project, project_err = _try_load(project_path) if project_path else ({}, None)
     project_base = os.path.dirname(project_path) if project_path else cwd
     docsets = project.get("docsets") if project_path else None
     user_path = user_config_path(env)
-    user = _load_json(user_path) if os.path.isfile(user_path) else {}
+    user, user_err = (_try_load(user_path) if os.path.isfile(user_path)
+                      else ({}, None))
+    user_base = os.path.dirname(user_path)
 
     def read_from(cfg, base):
         return [_abs(p, base, env) for p in cfg.get("read_from", [])]
 
-    if cli_dir:
-        return Store(_abs(cli_dir, cwd, env), "--dir", [], docsets)
-    if env.get("DASH_DOCSET_DIR"):
-        return Store(_abs(env["DASH_DOCSET_DIR"], cwd, env), "DASH_DOCSET_DIR", [], docsets)
+    explicit = cli_dir or env.get("DASH_DOCSET_DIR")
+    if explicit:
+        if "read_from" in project:
+            ro = read_from(project, project_base)
+        else:
+            ro = read_from(user, user_base)
+        if cli_dir:
+            return Store(_abs(cli_dir, cwd, env), "--dir", ro, docsets)
+        return Store(_abs(env["DASH_DOCSET_DIR"], cwd, env), "DASH_DOCSET_DIR",
+                     ro, docsets)
+    if project_err:
+        raise project_err
     if project.get("store"):
         return Store(_abs(project["store"], project_base, env), "project file",
                      read_from(project, project_base), docsets)
+    if user_err:
+        raise user_err
     if user.get("store"):
-        return Store(_abs(user["store"], os.path.dirname(user_path), env),
-                     "user config", read_from(user, os.path.dirname(user_path)), docsets)
+        return Store(_abs(user["store"], user_base, env),
+                     "user config", read_from(user, user_base), docsets)
     return None
 
 
@@ -194,6 +221,173 @@ def cmd_where(args):
     return 0
 
 
+FULL_SIZE_MIN_ENTRIES = 500
+
+
+@dataclass
+class Docset:
+    name: str
+    path: str
+    foreign: bool
+    source: Optional[str]
+    version: Optional[str]
+    entry_count: int
+    clashes: List[str] = field(default_factory=list)  # shadowed foreign copies
+
+    @property
+    def full_size(self) -> bool:
+        if self.source == "cheat":
+            return False
+        if (self.foreign or self.source is None) and self.entry_count < FULL_SIZE_MIN_ENTRIES:
+            return False
+        return True
+
+
+def meta_dir(store) -> str:
+    return os.path.join(store.path, ".dash-docset")
+
+
+def load_installed(store) -> dict:
+    path = os.path.join(meta_dir(store), "installed.json")
+    if not os.path.isfile(path):
+        return {}
+    return _load_json(path)
+
+
+def save_installed(store, data) -> None:
+    d = meta_dir(store)
+    os.makedirs(d, exist_ok=True)
+    fd, tmp = tempfile.mkstemp(dir=d, prefix="installed.", suffix=".tmp")
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as f:
+            json.dump(data, f, indent=2, sort_keys=True)
+            f.write("\n")
+        os.replace(tmp, os.path.join(d, "installed.json"))
+    except BaseException:
+        if os.path.exists(tmp):
+            os.unlink(tmp)
+        raise
+
+
+def index_path(docset_path) -> str:
+    return os.path.join(docset_path, "Contents", "Resources", "docSet.dsidx")
+
+
+def _open_ro(path):
+    uri = pathlib.Path(os.path.abspath(path)).as_uri() + "?mode=ro"
+    return sqlite3.connect(uri, uri=True)
+
+
+def _tables(con):
+    return {r[0] for r in con.execute("SELECT name FROM sqlite_master WHERE type='table'")}
+
+
+def count_entries(docset_path) -> int:
+    con = _open_ro(index_path(docset_path))
+    try:
+        tables = _tables(con)
+        table = "searchIndex" if "searchIndex" in tables else (
+            "ZTOKEN" if "ZTOKEN" in tables else None)
+        if table is None:
+            raise ValueError("no searchIndex or ZTOKEN table")
+        return con.execute("SELECT COUNT(*) FROM %s" % table).fetchone()[0]
+    finally:
+        con.close()
+
+
+def iter_entries(ds) -> Iterator[Tuple[int, str, str, str]]:
+    """Yield (id, name, type, path) from either index form."""
+    con = _open_ro(index_path(ds.path))
+    try:
+        if "searchIndex" in _tables(con):
+            sql = "SELECT id, name, type, path FROM searchIndex ORDER BY id"
+            for i, n, t, p in con.execute(sql):
+                yield i, n, t or "", p or ""
+        else:
+            sql = ("SELECT k.Z_PK, k.ZTOKENNAME, ty.ZTYPENAME, f.ZPATH, m.ZANCHOR "
+                   "FROM ZTOKEN k "
+                   "LEFT JOIN ZTOKENTYPE ty ON ty.Z_PK = k.ZTOKENTYPE "
+                   "LEFT JOIN ZTOKENMETAINFORMATION m ON m.Z_PK = k.ZMETAINFORMATION "
+                   "LEFT JOIN ZFILEPATH f ON f.Z_PK = m.ZFILE ORDER BY k.Z_PK")
+            for i, n, t, p, a in con.execute(sql):
+                yield i, n, t or "", (p or "") + ("#" + a if a else "")
+    finally:
+        con.close()
+
+
+def _docset_dirs(root, depth):
+    """*.docset folders directly in root (and one level down when depth=2)."""
+    try:
+        names = sorted(os.listdir(root))
+    except OSError:
+        return
+    for n in names:
+        full = os.path.join(root, n)
+        if n.endswith(".docset"):
+            if os.path.isdir(full):
+                yield full
+        elif depth > 1 and os.path.isdir(full):
+            for sub in _docset_dirs(full, depth - 1):
+                yield sub
+
+
+def _warn(msg):
+    print("warning: " + msg, file=sys.stderr)
+
+
+def _make_docset(path, foreign, source, version):
+    name = os.path.basename(path)[:-len(".docset")]
+    try:
+        count = count_entries(path)
+    except (sqlite3.Error, OSError, ValueError) as e:
+        _warn("skipping unreadable docset %s: %s" % (path, e))
+        return None
+    return Docset(name, path, foreign, source, version, count)
+
+
+def find_docsets(store) -> List[Docset]:
+    """Docsets of the store (flat), then of each read_from dir (foreign)."""
+    installed = load_installed(store)
+    result = {}
+    for path in _docset_dirs(store.path, 1):
+        name = os.path.basename(path)[:-len(".docset")]
+        meta = installed.get(name)
+        meta = meta if isinstance(meta, dict) else {}
+        ds = _make_docset(path, False, meta.get("source"), meta.get("version"))
+        if ds:
+            result[ds.name] = ds
+    for root in store.read_from:
+        for path in _docset_dirs(root, 2):
+            ds = _make_docset(path, True, None, None)
+            if ds is None:
+                continue
+            if ds.name in result:
+                if result[ds.name].foreign:
+                    continue  # first read_from copy wins
+                result[ds.name].clashes.append(os.path.dirname(path))
+                continue
+            result[ds.name] = ds
+    return list(result.values())
+
+
+def cmd_list(args):
+    store = require_store(args)
+    docs = find_docsets(store)
+    if not docs:
+        print("no docsets found in %s" % store.path)
+        return 0
+    for d in docs:
+        origin = ("foreign (%s)" % os.path.dirname(d.path) if d.foreign
+                  else d.source or "unknown")
+        line = "%s  %s  %s  %d entries  %s" % (
+            d.name, origin, d.version or "-", d.entry_count,
+            "full" if d.full_size else "small")
+        if d.clashes:
+            line += "  (also in %s; store copy used)" % ", ".join(d.clashes)
+        print(line)
+    return 0
+
+
 def not_implemented(args):
     print("not implemented: " + args.command, file=sys.stderr)
     return 2
@@ -217,6 +411,9 @@ def build_parser():
             p.add_argument("--read-from", metavar="DIR", action="append",
                            help="with --set: extra read-only docset folder (repeatable)")
             p.set_defaults(handler=cmd_where)
+            continue
+        if name == "list":
+            p.set_defaults(handler=cmd_list)
             continue
         p.add_argument("args", nargs="*")
         p.set_defaults(handler=not_implemented)
