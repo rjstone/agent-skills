@@ -28,6 +28,9 @@
         probably an embedding model (a dependency or a network service);
         the first version has only SQLite FTS5 full-text search.
       - MCP server mode for the script, once the CLI commands have settled.
+      - A flag to download and install docsets into Dash's, Zeal's or
+        dasht's folder, used only when the user asks for it. Notes still
+        stay in the script's own store (those programs don't read them).
 
 ## Automation
 

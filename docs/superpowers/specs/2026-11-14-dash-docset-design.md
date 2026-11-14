@@ -1,6 +1,6 @@
 # dash-docset skill: design
 
-Status: complete, awaiting the user's approval (2026-11-14).
+Status: approved by the user (2026-11-14).
 
 ## Intent
 
@@ -101,7 +101,10 @@ and Dash's on macOS (`~/Library/Application Support/Dash/DocSets`).
 `docset.py where --set <path> [--project|--user]` writes the config.
 
 The choices `SKILL.md` offers the user:
-- reuse an existing folder found by `--discover`;
+- also read docsets from existing folders found by `--discover` (dasht,
+  Zeal, Dash), which saves re-downloading them; this adds those folders
+  to the config's `"read_from"` list and still needs one of the store
+  choices below for the script's own files;
 - a new permanent central folder (default suggestion:
   `$XDG_DATA_HOME/dash-docset`, i.e. `~/.local/share/dash-docset`);
 - the project the user is working in (`.docsets/` at its root; the script
@@ -182,12 +185,13 @@ docset.py notes DOCSET [--check | --path]
   sources; if a name exists in more than one, it stops and asks for a
   prefix (`kapeli:`, `user:`, `cheat:`). A store never holds two docsets
   with the same folder name.
-- **Reused folders.** Docsets not in `installed.json` (from dasht, Zeal,
-  Dash) are "foreign": searchable, showable and indexable, but `update`
-  and `remove` refuse them. The script writes `notes/` and `.dash-docset/`
-  into a reused dasht or Zeal folder, but never into Dash's own macOS
-  folder; for that one it keeps them in `$XDG_DATA_HOME/dash-docset/` and
-  reads docsets from Dash's folder.
+- **Other apps' folders (the user, 2026-11-14).** The script never writes
+  into a dasht, Zeal or Dash folder. Docsets found there through
+  `"read_from"` are "foreign": searchable, showable and indexable, but
+  `update` and `remove` refuse them. Their notes (`notes/<Name>.md`) and
+  FTS indexes go in the script's own store, beside its own docsets, even
+  though the docset itself lives elsewhere. If a store docset and a
+  foreign one share a name, the store's wins and `list` shows the clash.
 - **After update.** `installed.json` records the version each FTS index
   was built from; `fts` rebuilds a stale index automatically and says so.
   `notes --check` (and `update`) list note sections whose heading matches
