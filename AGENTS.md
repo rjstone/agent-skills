@@ -195,6 +195,11 @@ metadata:
   (a best-effort public service) only when all of those fail, checked at
   most weekly with conditional requests and never retried within a day of
   a failure. Keep it that way (the user, 2026-11-14).
+  Setup order (the user, 2026-11-14): on a desktop, use Dash's or Zeal's
+  docsets (the user downloads them in the app), else suggest installing
+  one, else the script downloads; on a throwaway machine, a store that
+  persists, else on-demand installs only. Branch `skill/dash-docset` is not
+  merged until Kapeli replies about the docset terms (the user asked).
 
 ## Decisions (the user, 2026-11-08)
 

@@ -149,6 +149,48 @@ def resolve_store(cli_dir, cwd, env) -> Optional[Store]:
     return None
 
 
+def _zeal_conf_path(env) -> Optional[str]:
+    """Docset folder set in Zeal's settings file (Linux; Qt INI), if any."""
+    import configparser
+    conf_home = env.get("XDG_CONFIG_HOME") or os.path.join(_home(env), ".config")
+    for conf in (os.path.join(conf_home, "Zeal", "Zeal.conf"),
+                 os.path.join(_home(env), ".var", "app", "org.zealdocs.Zeal",
+                              "config", "Zeal", "Zeal.conf")):
+        cp = configparser.ConfigParser(interpolation=None)
+        try:
+            if cp.read(conf, encoding="utf-8") and cp.has_option("docsets", "path"):
+                path = cp.get("docsets", "path").strip().strip('"')
+                if path:
+                    return path
+        except (configparser.Error, OSError, UnicodeDecodeError):
+            continue
+    return None
+
+
+def viewer_apps(env) -> List[Tuple[str, str]]:
+    """Installed Dash or Zeal apps: (app, where found)."""
+    home = _home(env)
+    found = []
+    checks = [("Dash", p) for p in (
+        "/Applications/Dash.app", "/Applications/Setapp/Dash.app",
+        os.path.join(home, "Applications", "Dash.app"))]
+    checks += [("Zeal", p) for p in (
+        "/Applications/Zeal.app",
+        os.path.join(home, ".var", "app", "org.zealdocs.Zeal"),
+        "/var/lib/flatpak/app/org.zealdocs.Zeal")]
+    for var in ("ProgramFiles", "ProgramFiles(x86)", "LOCALAPPDATA"):
+        if env.get(var):
+            sub = ("Programs", "Zeal") if var == "LOCALAPPDATA" else ("Zeal",)
+            checks.append(("Zeal", os.path.join(env[var], *sub, "zeal.exe")))
+    for app, path in checks:
+        if os.path.exists(path) and app not in [a for a, _ in found]:
+            found.append((app, path))
+    exe = shutil.which("zeal", path=env.get("PATH"))
+    if exe and "Zeal" not in [a for a, _ in found]:
+        found.append(("Zeal", exe))
+    return found
+
+
 def discover(env) -> List[str]:
     """Existing docset folders of dasht, Zeal and Dash (read-only hints)."""
     home = _home(env)
@@ -156,7 +198,10 @@ def discover(env) -> List[str]:
     candidates = [
         env.get("DASHT_DOCSETS_DIR"),
         os.path.join(data, "dasht", "docsets"),
+        _zeal_conf_path(env),
         os.path.join(home, ".local", "share", "Zeal", "Zeal", "docsets"),
+        os.path.join(home, ".var", "app", "org.zealdocs.Zeal", "data", "Zeal", "Zeal",
+                     "docsets"),
         os.path.join(env["LOCALAPPDATA"], "Zeal", "Zeal", "docsets")
         if env.get("LOCALAPPDATA") else None,
         os.path.join(home, "Library", "Application Support", "Dash", "DocSets"),
@@ -219,8 +264,16 @@ def cmd_where(args):
         print("wrote %s (store: %s)" % (target, store_dir))
         return 0
     if args.discover:
+        apps = viewer_apps(env)
+        for app, where in apps:
+            print("app: %s (%s)" % (app, where))
+        if not apps:
+            print("no Dash or Zeal installation found")
         found = discover(env)
-        print("\n".join(found) if found else "no existing docset folders found")
+        for d in found:
+            print("docsets: %s" % d)
+        if not found:
+            print("no existing docset folders found")
         return 0
     store = resolve_store(args.dir, cwd, env)
     if store is None:
@@ -1823,10 +1876,39 @@ def _kapeli_feed(store, name, pin) -> Feed:
                                 feed_name, pin)
 
 
-def install(store, spec: str) -> Docset:
+class AlreadyAvailable(Exception):
+    """Nothing to download; the message says where the docset already is."""
+
+
+def _check_needed(store, feed: Feed, spec_name: str) -> None:
+    """AlreadyAvailable if the same version is installed, or (unpinned) a
+    Dash/Zeal/dasht folder already has the docset."""
+    key = _name_from_url(feed.urls[0], feed.source) if feed.urls else None
+    for name, meta in load_installed(store).items():
+        if (isinstance(meta, dict) and meta.get("source") == feed.source and key
+                and meta.get("url") and _name_from_url(meta["url"], feed.source) == key
+                and meta.get("version") == feed.version != UNKNOWN_VERSION
+                and meta.get("pin", "") == feed.pin
+                and os.path.isdir(os.path.join(store.path, name + ".docset"))):
+            raise AlreadyAvailable("%s %s is already installed (--force downloads "
+                                   "it again)" % (name, feed.version))
+    if feed.pin:
+        return
+    wanted = {_norm(feed.name), _norm(spec_name)}
+    for ds in find_docsets(store):
+        if ds.foreign and _norm(ds.name) in wanted:
+            raise AlreadyAvailable(
+                "%s is already available read-only from %s; use it as %s (--force "
+                "downloads a separate copy)" % (ds.name, os.path.dirname(ds.path), ds.name))
+
+
+def install(store, spec: str, force: bool = False) -> Docset:
     prefix, sep, name = spec.partition(":")
     if sep and prefix in SOURCE_NAMES and name:
-        return install_feed(store, resolve_feed(store, prefix, name))
+        feed = resolve_feed(store, prefix, name)
+        if not force:
+            _check_needed(store, feed, name.partition("@")[0])
+        return install_feed(store, feed)
     failed: List[str] = []
     matches = [f for f in load_sources(store, False, failed=failed)
                if _norm(f.name) == _norm(spec)]
@@ -1840,7 +1922,10 @@ def install(store, spec: str) -> Docset:
                             % (spec, ", ".join("%s:%s" % (f.source, f.name)
                                                for f in matches)))
     f = matches[0]
-    return install_feed(store, resolve_feed(store, f.source, f.name))
+    feed = resolve_feed(store, f.source, f.name)
+    if not force:
+        _check_needed(store, feed, spec)
+    return install_feed(store, feed)
 
 
 def cmd_sources(args):
@@ -1872,7 +1957,10 @@ def cmd_install(args):
     failed = 0
     for spec in args.specs:
         try:
-            ds = install(store, spec)
+            ds = install(store, spec, args.force)
+        except AlreadyAvailable as e:
+            print("%s: %s" % (spec, e))
+            continue
         except CLIError as e:
             if len(args.specs) == 1:
                 raise
@@ -2004,6 +2092,9 @@ def build_parser():
             p.add_argument("specs", nargs="+", metavar="SPEC",
                            help="[kapeli:|user:|cheat:]Name; a prefix is needed when "
                            "several sources offer the name")
+            p.add_argument("--force", action="store_true",
+                           help="download even if this version is installed or a "
+                           "Dash/Zeal/dasht folder already has the docset")
             p.set_defaults(handler=cmd_install)
             continue
         if name == "update":

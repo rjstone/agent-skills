@@ -266,6 +266,31 @@ class StoreTests(unittest.TestCase):
                                               USERPROFILE=self.tmp,
                                               XDG_DATA_HOME=self.tmp)), [])
 
+    def test_viewer_apps_and_zeal_conf(self):
+        bin_dir = os.path.join(self.tmp, "bin")
+        os.makedirs(bin_dir)
+        exe = os.path.join(bin_dir, "zeal")
+        with open(exe, "w") as f:
+            f.write("#!/bin/sh\n")
+        os.chmod(exe, 0o755)
+        env = dict(self.env, PATH=bin_dir)
+        if sys.platform != "win32":
+            self.assertIn(("Zeal", exe), docset.viewer_apps(env))
+        flat = os.path.join(self.env["HOME"], ".var", "app", "org.zealdocs.Zeal")
+        os.makedirs(flat)
+        self.assertIn(("Zeal", flat), docset.viewer_apps(dict(self.env, PATH="")))
+        custom = os.path.join(self.tmp, "my-docsets")
+        os.makedirs(custom)
+        conf = os.path.join(self.env["HOME"], ".config", "Zeal", "Zeal.conf")
+        os.makedirs(os.path.dirname(conf))
+        with open(conf, "w") as f:
+            f.write("[docsets]\npath=%s\n" % custom)
+        env = dict(self.env)
+        env.pop("XDG_CONFIG_HOME", None)
+        self.assertIn(custom, docset.discover(env))
+        r = run_cli("where", "--discover", env=dict(self.cli_env(), PATH=""), cwd=self.sub)
+        self.assertIn("app: Zeal", r.stdout)
+
     def test_unset_exits_3_and_lists_discovered(self):
         dasht = os.path.join(self.env["XDG_DATA_HOME"], "dasht", "docsets")
         os.makedirs(dasht)
@@ -1708,6 +1733,31 @@ class SourcesTests(unittest.TestCase):
             with self.assertRaises(docset.FetchError):
                 docset.cached_get(self.store, "k", "https://x.example/a", 10)
         self.assertEqual(net.fetched, ["https://x.example/a"])
+
+    def test_install_skips_same_version_and_foreign(self):
+        net = self.net()
+        self.assertEqual(self.main("install", "kapeli:Foo")[0], 0)
+        n = len(net.downloaded)
+        code, out, err = self.main("install", "kapeli:Foo")
+        self.assertEqual(code, 0, err)
+        self.assertIn("already installed", out)
+        self.assertEqual(len(net.downloaded), n)  # no second download
+        code, out, err = self.main("install", "--force", "kapeli:Foo")
+        self.assertEqual(code, 0, err)
+        self.assertGreater(len(net.downloaded), n)
+        # a docset in a Zeal folder is used instead of downloading a copy
+        zeal = os.path.join(self.tmp, "zeal")
+        make_docset(zeal, "Bar")
+        cfg = os.path.join(self.tmp, "cfg.json")
+        with open(cfg, "w") as f:
+            json.dump({"store": self.store_dir, "read_from": [zeal]}, f)
+        bar_url = docset.KAPELI_FEED_URL % "Bar"
+        net.pages[bar_url] = FEED_XML.replace("Foo", "Bar") % "1"
+        with mock.patch.dict(os.environ, {"DASH_DOCSET_DIR": ""}):
+            store = docset.Store(self.store_dir, "flag", [zeal], None)
+            with self.assertRaises(docset.AlreadyAvailable) as cm:
+                docset.install(store, "kapeli:Bar")
+        self.assertIn("read-only from " + zeal, str(cm.exception))
 
     def test_sources_all_failing(self):
         FakeNet(self)

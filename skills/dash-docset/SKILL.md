@@ -34,27 +34,42 @@ Kapeli's permission. If the use looks non-personal (a product, a service,
 a shared team tool), point the user to those terms. User-contributed
 docsets carry their own licences.
 
-## First run: choose a storage location
+## First run: pick a setup
 
-1. Run `python scripts/docset.py where`. If it prints a location, go on.
-2. Otherwise run `where --discover` to find existing dasht, Zeal and Dash
-   folders.
-3. Never pick a location yourself. Offer the user these choices:
-   - Also read docsets from the existing folders found (saves re-downloading;
-     read-only, add with `--read-from DIR`). Still needs one of the stores
-     below for notes and indexes.
-   - A new permanent central folder (suggest `~/.local/share/dash-docset`).
-   - `.docsets/` in the user's project: docsets are large, the script writes a
-     `.gitignore` that ignores them but keeps `notes/` so notes can be
-     committed. Warn about the size.
-   - A temporary folder (lost on reboot; one-off sessions, CI). The user
-     names or approves the path.
-4. Run `where --set PATH [--project|--user] [--read-from DIR]` with the choice.
-   Quote a `~` path (`'~/.local/share/dash-docset'`): the script expands it
-   and the config keeps the portable form.
+Run `python scripts/docset.py where`. If it prints a location, skip to the
+workflow. Otherwise run `where --discover`: it lists installed Dash or Zeal
+apps and existing docset folders. Then decide where you are running:
+
+1. **The user's own computer (a desktop):**
+   - A. Dash or Zeal installed: use their docsets. Add the folder with
+     `where --set STORE --user --read-from DIR`. STORE still holds notes and
+     search indexes; suggest `~/.local/share/dash-docset`. When a needed
+     docset is missing, ask the user to download it in the app (Dash:
+     Settings > Downloads; Zeal: Tools > Docsets), not with this script.
+     With Dash, also suggest Kapeli's Dash MCP server (see "Other options").
+   - B. Neither installed: suggest installing Zeal (Linux, Windows) or
+     Dash (macOS), downloading the docsets there, then continuing as in A.
+   - C. The user declines: the script downloads docsets itself. Offer a
+     permanent central folder (suggest `~/.local/share/dash-docset`) or
+     `.docsets/` in their project (the script writes a `.gitignore` that
+     keeps only `notes/`; warn that docsets are large).
+2. **A cloud sandbox, CI or other throwaway machine** (no desktop apps, a
+   fresh home folder each session):
+   - A. If some folder survives between sessions (a mounted volume, a
+     cache the platform keeps), ask the user and use it as the store.
+   - B. If nothing persists, use a temporary folder and install only the
+     docsets the current task needs, one at a time, when needed. Prefer a
+     cheat sheet when it answers the question; skip `update`.
+
+Never pick a location yourself: the user chooses or approves it. If unsure
+which case applies, ask. Run `where --set PATH (--project|--user)
+[--read-from DIR]` with the choice; quote a `~` path
+(`'~/.local/share/dash-docset'`) so the config keeps the portable form.
 
 Never write into a Dash, Zeal or dasht folder; docsets found there are
-read-only to the script (`update` and `remove` refuse them).
+read-only to the script (`update` and `remove` refuse them). `install` skips
+a docset that is already installed at that version, or already available
+from one of those folders (`--force` overrides).
 
 ## Workflow
 
@@ -115,7 +130,7 @@ covers.
 Mention these to the user when they fit better:
 
 - Dash installed (macOS): Kapeli's MCP servers talk to the Dash app and use
-  its docsets directly: https://github.com/Kapeli/dash-mcp-server (Python)
+  its docsets and search directly: https://github.com/Kapeli/dash-mcp-server (Python)
   or https://github.com/Kapeli/dash-mcp-server-node (Node.js).
 - An MCP server instead of a CLI, without Dash or Zeal:
   https://github.com/keturn/ZDocsetMCP.
