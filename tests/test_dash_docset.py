@@ -529,6 +529,21 @@ class SearchTests(unittest.TestCase):
         return run_cli("--dir", self.store_dir, *args, env={"HOME": self.tmp},
                        cwd=self.tmp)
 
+    def test_multi_word_queries(self):
+        self.add("Alpha", [("hero:get_walking_speed()", "Method", "a.html"),
+                           ("hero:set_walking_speed(speed)", "Method", "a.html"),
+                           ("walking", "Guide", "b.html")])
+        r = self.cli("search", "walking", "speed", "-d", "Alpha")  # unquoted
+        self.assertEqual(r.returncode, 0, r.stderr)
+        out = r.stdout.splitlines()
+        self.assertEqual(len(out), 2, out)
+        self.assertTrue(all("walking_speed" in l for l in out))
+        r = self.cli("search", "speed walking", "-d", "Alpha")  # any word order
+        self.assertEqual(len(r.stdout.splitlines()), 2)
+        if docset.fts_available():
+            r = self.cli("fts", "walking", "speed", "-d", "Alpha")
+            self.assertEqual(r.returncode, 0, r.stderr)
+
     def test_fuzzy_hits_capped_when_real_hits_exist(self):
         entries = [("timer", "Function", "a.html")] + [
             ("t_i_m_e_r_%d" % n, "Function", "a.html") for n in range(9)]
@@ -554,7 +569,7 @@ class SearchTests(unittest.TestCase):
         r = self.cli("search", "slp", "-d", "Alpha")
         self.assertTrue(r.stdout.startswith("no exact, prefix or substring matches"))
         r = self.cli("search", "qqq", "-d", "Alpha")
-        self.assertEqual(r.stdout.strip(), "no matches for 'qqq'")
+        self.assertTrue(r.stdout.startswith("no matches for 'qqq' (entry names only"))
         first = out[0].split("  ")
         self.assertEqual(first[1], "Guide")
         self.assertEqual(first[3], "(Beta)")
@@ -1617,8 +1632,8 @@ class SourcesTests(unittest.TestCase):
         self.assertEqual(code, 7)
         self.assertIn("overwrite", err)
         self.assertEqual(docset.load_installed(self.store)["Other"]["version"], "1")
-        self.assertEqual(self.main("search", "zzz", "-d", "Other")[1].strip(),
-                         "no matches for 'zzz'")
+        self.assertTrue(self.main("search", "zzz", "-d", "Other")[1].startswith(
+            "no matches for 'zzz'"))
 
     def test_http_client_errors_become_fetch_errors(self):
         import http.client

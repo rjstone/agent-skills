@@ -96,7 +96,9 @@ from one of those folders (`--force` overrides).
    source because another was unreachable; results are complete. Cheat
    sheets are short (Git's has 81 entries); prefer a full docset when one
    exists.
-2. `search QUERY` finds entries by name and prints a REF for each. Hits
+2. `search QUERY` finds entries by name and prints a REF for each. Several
+   words need no quotes; a name must contain all of them (`search walking
+   speed` finds `hero:get_walking_speed()`). Hits
    below the "fuzzy matches" line only share letters in order; treat them
    as misses. No hits prints "no matches" and exits 0 (exit 5 means a
    named docset or REF doesn't exist).

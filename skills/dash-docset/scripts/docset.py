@@ -571,12 +571,22 @@ def cap_lines(lines, max_lines, hint) -> List[str]:
 FUZZY_SHOWN = 5  # fuzzy hits shown when exact, prefix or substring hits exist
 
 
+def _join_query(args):
+    """QUERY may be given as several words; join them with single spaces."""
+    q = args.query
+    args.query = " ".join(q).strip() if isinstance(q, list) else (q or "")
+
+
 def cmd_search(args):
+    _join_query(args)
     if not args.query:
         raise CLIError("empty search query", 2)
     store = require_store(args)
     docs = select_docsets(store, find_docsets(store), args.docset or [], args.all)
-    like = like_pattern(args.query)
+    words = args.query.lower().split()
+    # several words: prefilter on the longest; a name holding all of them in
+    # any order ranks like a substring hit (2)
+    like = like_pattern(max(words, key=len) if len(words) > 1 else args.query)
     want_type = args.type.lower() if args.type else None
     hits = []
     for ds in docs:
@@ -585,6 +595,9 @@ def cmd_search(args):
                 if want_type is not None and typ.lower() != want_type:
                     continue
                 r = rank(args.query, name)
+                if (r is None or r == 3) and len(words) > 1 \
+                        and all(w in name.lower() for w in words):
+                    r = 2
                 if r is not None:
                     hits.append((r, len(name), name, ds.name, i, typ))
         except sqlite3.Error as e:
@@ -612,7 +625,8 @@ def cmd_search(args):
     if cut:
         lines.append("... %d more fuzzy matches cut (letters in order only)" % cut)
     if not hits:
-        lines.append("no matches for %r" % args.query)
+        lines.append("no matches for %r (entry names only; fts searches the text "
+                     "inside pages)" % args.query)
     for line in cap_lines(lines, args.max_lines, hint):
         print(line)
     return 0
@@ -1349,6 +1363,7 @@ def cmd_index_text(args):
 
 
 def cmd_fts(args):
+    _join_query(args)
     if not args.query.strip():
         raise CLIError("empty search query", 2)
     _need_fts()
@@ -2099,6 +2114,7 @@ def install(store, spec: str, force: bool = False) -> Docset:
 
 
 def cmd_sources(args):
+    _join_query(args)
     store = require_store(args)
     failed: List[str] = []
     feeds = load_sources(store, args.refresh, failed=failed)
@@ -2251,7 +2267,7 @@ def build_parser():
             p.set_defaults(handler=cmd_list)
             continue
         if name == "sources":
-            p.add_argument("query", nargs="?", metavar="QUERY",
+            p.add_argument("query", nargs="*", metavar="QUERY",
                            help="only docsets whose name, title or keywords contain this text")
             p.add_argument("--refresh", action="store_true",
                            help="refetch the source lists (cached for 7 days)")
@@ -2288,7 +2304,7 @@ def build_parser():
             p.set_defaults(handler=cmd_show)
             continue
         if name == "search":
-            p.add_argument("query", metavar="QUERY")
+            p.add_argument("query", nargs="+", metavar="QUERY")
             p.add_argument("-d", "--docset", metavar="NAME", action="append",
                            help="search only this docset (repeatable)")
             p.add_argument("--all", action="store_true",
@@ -2303,7 +2319,7 @@ def build_parser():
             p.set_defaults(handler=cmd_search)
             continue
         if name == "fts":
-            p.add_argument("query", metavar="QUERY")
+            p.add_argument("query", nargs="+", metavar="QUERY")
             p.add_argument("-d", "--docset", metavar="NAME", action="append",
                            help="search only this docset (repeatable)")
             p.add_argument("--all", action="store_true",
