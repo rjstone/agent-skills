@@ -51,6 +51,8 @@ plan:
 | `9e6abd6` | Setup order: Dash/Zeal first, then script downloads (see "Setup"). `where --discover` lists installed apps. `install` skips a docset already installed at that version or available from Dash/Zeal/dasht, unless `--force`. | the user |
 | `0b7c3e6` | Zeal and Dash docset folders on Linux, macOS and Windows (see "Facts"). | the user |
 | `ebfa8bd` | Pages are read from tarix docsets (Dash's compact storage). GNU Texinfo `¶` links are stripped. | the user |
+| `32b9fad` | Fixes from the Solarus trials: notes headings also match an entry name without its argument list (`## sol.timer.start`), and an unmatched heading gets a hint and a "did you mean"; at most 5 fuzzy hits when real hits exist; fallback notes print only when their source is in the results, worded "no action needed". | Solarus trials |
+| `bcc0085` | `search`, `fts` and `sources` take several words without quotes; a search name must contain all of them, in any order. "No matches" points to `fts`. | Solarus rerun |
 
 ## What the plan and design say that no longer holds
 
@@ -164,6 +166,20 @@ GitHub API is blocked. Each asked for:
 | 1 (after the plan) | 3 failed attempts plus an out-of-skill curl to find the feed name `Python` | ~130 lines | unhelpful not-found errors; a silently partial `sources`; fts REF format didn't match the docs; silent outputs |
 | 2 (`5adc973`) | first try with prefixes | ~230 lines | fts REFs pointed to unrelated entries; navigation chrome in pages; fuzzy hits unmarked |
 | 3 (`dc640e3`) | first try, no warnings | ~175 lines | one wrong fts anchor (literal brackets in the docs); notes on `search`; doc mismatches |
+
+A second set of trials used an obscure user-contributed docset, Solarus 1.6.0
+(a game engine's Lua API, 837 entries), on the sandbox path (2B, nothing
+persists). Sonnet and Haiku ran at default effort, and both got all three
+answers right:
+- (a) a timer repeats when its callback returns `true`; a timer owned by an
+  enemy is canceled when the enemy is hurt, immobilized or restarts
+- (b) `enemy:set_attack_consequence("arrow", "protected")`
+- (c) the hero's default walking speed is 88 pixels per second
+
+Each used about 190 lines of output for lookups. Haiku's note heading
+`## sol.timer.start` silently matched nothing, because entry names include
+their arguments, which led to `32b9fad`. The Haiku rerun used about 160
+lines and found unquoted multi-word queries failing, which led to `bcc0085`.
 
 The "keep changes staged" question can't be answered from Kapeli's Git cheat
 sheet, which has no `reset --soft`. That's a content gap, not a skill bug.
