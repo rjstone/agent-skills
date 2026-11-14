@@ -686,15 +686,19 @@ def cmd_show(args):
     file_part, anchor = entry_location(path)
     docs = os.path.join(ds.path, "Contents", "Resources", "Documents")
     page = os.path.normpath(os.path.join(docs, *file_part.split("/")))
-    if os.path.commonpath([docs, page]) != docs or not os.path.isfile(page):
+    try:
+        inside = os.path.commonpath([docs, page]) == docs
+    except ValueError:
+        inside = False
+    if not inside or not os.path.isfile(page):
         raise CLIError("page file not found: %s" % page, 5)
     with open(page, "rb") as f:
         html = f.read().decode("utf-8", errors="replace")
     blocks = html_to_text(html)
-    lines = trim_to_anchor(blocks, None if args.full else anchor)
+    lines = trim_to_anchor(blocks, anchor)
     if not args.full:
         lines = cap_lines(lines, args.max_lines,
-                          "raise --max-lines or use --full for the whole page")
+                          "raise --max-lines or use --full for the whole section")
     for line in lines:
         print(line)
     return 0
@@ -748,7 +752,7 @@ def build_parser():
         if name == "show":
             p.add_argument("ref", metavar="REF", help="<Docset>:<id> from search")
             p.add_argument("--full", action="store_true",
-                           help="print the whole page, untrimmed and uncapped")
+                           help="print the whole trimmed section, without the line cap")
             p.add_argument("--max-lines", type=positive_int, default=150, metavar="N",
                            help="print at most N lines (default 150)")
             p.add_argument("--no-notes", action="store_true",

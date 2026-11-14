@@ -609,7 +609,19 @@ class ShowTests(unittest.TestCase):
         r = self.cli("show", "Py:3")  # no anchor: whole page
         self.assertIn("# Guide", r.stdout)
         r = self.cli("show", "Py:1", "--full")
-        self.assertIn("Block for", r.stdout)
+        self.assertIn("Run awaitables concurrently.", r.stdout)
+        self.assertNotIn("Block for", r.stdout)
+
+    def test_show_full_lifts_cap_on_long_section(self):
+        body = "".join("<p>row %d</p>" % i for i in range(300))
+        self.add("L", [("sec", "Section", "p.html#s")],
+                 {"p.html": "<h2 id='s'>Sec</h2>" + body + "<h2 id='t'>Next</h2><p>other</p>"})
+        r = self.cli("show", "L:1")
+        self.assertEqual(len(r.stdout.splitlines()), 151)
+        r = self.cli("show", "L:1", "--full")
+        lines = r.stdout.splitlines()
+        self.assertEqual(len(lines), 301)
+        self.assertNotIn("other", r.stdout)
 
     def test_show_tr_and_dt_anchors(self):
         self.add("Git", [("Clone", "Entry",
