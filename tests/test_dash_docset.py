@@ -1112,8 +1112,10 @@ class FakeNet:
         self.archives = dict(archives or {})  # url -> local .tgz path
         self.heads = dict(heads or {})
         self.fetched, self.downloaded = [], []
+        self.cond = []  # (url, etag, last_modified) of conditional requests
         for name, fn in (("fetch", self.fetch), ("download", self.download),
-                         ("head_last_modified", self.head)):
+                         ("head_last_modified", self.head),
+                         ("fetch_cond", self.fetch_cond)):
             p = mock.patch.object(docset, name, fn)
             p.start()
             test.addCleanup(p.stop)
@@ -1124,6 +1126,14 @@ class FakeNet:
             raise docset.FetchError("HTTP 404 for " + url, 404)
         v = self.pages[url]
         return v if isinstance(v, bytes) else v.encode()
+
+    def fetch_cond(self, url, etag=None, last_modified=None):
+        self.cond.append((url, etag, last_modified))
+        body = self.fetch(url)
+        tag = self.etags.get(url) if hasattr(self, "etags") else None
+        if tag and etag == tag:
+            return None, etag, last_modified
+        return body, tag, None
 
     def download(self, url, dest):
         self.downloaded.append(url)
@@ -1203,7 +1213,8 @@ class SourcesTests(unittest.TestCase):
         inst = docset.load_installed(self.store)["Foo"]
         self.assertEqual((inst["source"], inst["version"], inst["url"]),
                          ("cheat", "Wed, 01 Jan 2025 00:00:00 GMT", url))
-        self.assertEqual(net.fetched, [])
+        # only the cheat-sheet index was tried (it 404s here), no GitHub API
+        self.assertEqual(net.fetched, [docset.CHEAT_INDEX_URL])
 
     def test_install_user_prefix(self):
         url = docset.USER_BASE_URL + "Foo/Foo.tgz"
@@ -1451,7 +1462,13 @@ class SourcesTests(unittest.TestCase):
         self.main("sources", "git")
         self.assertEqual(len(net.fetched), n)  # served from the cache
         self.main("sources", "git", "--refresh")
-        self.assertEqual(len(net.fetched), 2 * n)
+        again = net.fetched[n:]
+        for url in (docset.KAPELI_LIST_URL, docset.CHEAT_LIST_URL, docset.USER_INDEX_URL):
+            self.assertIn(url, again)
+        # lists that failed (404) less than a day ago are not retried
+        self.assertNotIn(docset.ZEAL_MANIFEST_URL, again)
+        self.assertNotIn(docset.CHEAT_INDEX_URL, again)
+        n = len(net.fetched)
         # a cache older than 7 days is refetched
         path = os.path.join(self.store_dir, ".dash-docset", "cache", "sources.json")
         with open(path) as f:
@@ -1461,7 +1478,8 @@ class SourcesTests(unittest.TestCase):
         with open(path, "w") as f:
             json.dump(data, f)
         self.main("sources", "git")
-        self.assertEqual(len(net.fetched), 3 * n)
+        for url in (docset.KAPELI_LIST_URL, docset.CHEAT_LIST_URL, docset.USER_INDEX_URL):
+            self.assertIn(url, net.fetched[n:])
         # a failing source falls back to the stale cache
         for entry in data.values():
             entry["fetched"] -= 8 * 86400
@@ -1581,6 +1599,87 @@ class SourcesTests(unittest.TestCase):
         self.assertEqual(code, 7)
         self.assertIn("user:Foo", out)
         self.assertIn("incomplete list: the kapeli and cheat list", out)
+
+    CHEAT_JSON = ('{"cheatsheets": {"Foo": {"version": "1.0.2", "name": "Foo Sheet",'
+                  ' "aliases": ["shell",],},},}')  # trailing commas, as served
+
+    def test_cheat_index_versions_and_aliases(self):
+        url = docset.CHEAT_URL % "Foo"
+        net = FakeNet(self, pages={docset.CHEAT_INDEX_URL: self.CHEAT_JSON},
+                      archives={url: self.tgz})
+        code, out, err = self.main("install", "cheat:foo")
+        self.assertEqual(code, 0, err)
+        self.assertEqual(docset.load_installed(self.store)["Foo"]["version"], "1.0.2")
+        code, out, err = self.main("sources", "shell")
+        self.assertIn("cheat:Foo  1.0.2", out)
+        self.assertNotIn(docset.CHEAT_LIST_URL, net.fetched)  # index served it
+
+    def test_zeal_name_and_pin(self):
+        xml = ("<entry><version>3.15.0</version>"
+               "<url>http://one.example.com/feeds/Foo.tgz</url>"
+               "<other-versions><version><name>3.15.0</name></version>"
+               "<version><name>3.12.6</name></version>"
+               "<version><name>2.7.18</name></version></other-versions></entry>")
+        old = docset.VERSIONED_PATH % ("Foo", "2.7.18", "Foo")
+        pinned = docset.VERSIONED_PATH % ("Foo", "3.12.6", "Foo")
+        manifest = {"Foo_2": {"title": "Foo 2", "source": "Foo", "versionPrefix": "2."}}
+        FakeNet(self, pages={FEED_URL: xml,
+                             docset.ZEAL_MANIFEST_URL: json.dumps(manifest)},
+                archives={"https://one.example.com" + old: self.tgz,
+                          "https://one.example.com" + pinned: self.tgz})
+        code, out, err = self.main("install", "kapeli:Foo_2")
+        self.assertEqual(code, 0, err)
+        inst = docset.load_installed(self.store)["Foo"]
+        self.assertEqual((inst["version"], inst["pin"]), ("2.7.18", "2."))
+        code, out, err = self.main("install", "kapeli:Foo@3.12")
+        self.assertEqual(code, 0, err)
+        inst = docset.load_installed(self.store)["Foo"]
+        self.assertEqual((inst["version"], inst["pin"]), ("3.12.6", "3.12"))
+        code, out, err = self.main("update", "Foo")  # keeps the pin
+        self.assertIn("up to date (3.12.6)", out)
+        code, out, err = self.main("install", "kapeli:Foo@3.1")
+        self.assertEqual(code, 5)  # 3.1 is not 3.12 or 3.15
+        self.assertIn("no version 3.1", err)
+        code, out, err = self.main("install", "cheat:Foo@1")
+        self.assertEqual(code, 2)
+
+    def test_zeal_catalog_last_resort_and_polite(self):
+        catalog = json.dumps([
+            {"name": "Foo", "title": "Foo", "sourceId": "com.kapeli.dash",
+             "versions": ["1"], "icon": "x" * 100},
+            {"name": "Sheet", "title": "Sheet", "sourceId": "com.kapeli.cheatsheet",
+             "versions": ["2"]},
+            {"name": "Bar_Key", "title": "Bar", "sourceId": "com.kapeli.contrib",
+             "versions": ["3"], "archive": "Bar.tgz"}])
+        net = FakeNet(self, pages={docset.ZEAL_CATALOG_URL: catalog})
+        net.etags = {docset.ZEAL_CATALOG_URL: '"v1"'}
+        code, out, err = self.main("sources")
+        self.assertEqual(code, 0, err)
+        for line in ("kapeli:Foo", "cheat:Sheet  2", "user:Bar  3"):
+            self.assertIn(line, out)
+        zeal = lambda: sum(u == docset.ZEAL_CATALOG_URL for u, _e, _l in net.cond)
+        self.assertEqual(zeal(), 1)  # one request served all three sources
+        body = os.path.join(self.store_dir, ".dash-docset", "cache", "zeal-catalog.body")
+        with open(body) as f:
+            self.assertNotIn("icon", f.read())  # cached without icons
+        self.main("sources", "--refresh")
+        self.assertEqual(zeal(), 1)  # --refresh does not re-check Zeal within the week
+        meta_p = body[:-len(".body")] + ".meta.json"
+        with open(meta_p) as f:
+            meta = json.load(f)
+        meta["checked"] -= 8 * 86400
+        with open(meta_p, "w") as f:
+            json.dump(meta, f)
+        self.main("sources", "--refresh")
+        self.assertEqual(net.cond[-1], (docset.ZEAL_CATALOG_URL, '"v1"', None))
+        self.assertTrue(os.path.getsize(body) > 0)  # 304 kept the cached body
+
+    def test_failed_fetch_not_retried_within_a_day(self):
+        net = FakeNet(self)
+        for _ in range(2):
+            with self.assertRaises(docset.FetchError):
+                docset.cached_get(self.store, "k", "https://x.example/a", 10)
+        self.assertEqual(net.fetched, ["https://x.example/a"])
 
     def test_sources_all_failing(self):
         FakeNet(self)

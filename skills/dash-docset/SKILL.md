@@ -1,7 +1,7 @@
 ---
 name: dash-docset
 description: Use when you need exact API, framework or library reference from Dash docsets (Kapeli, user-contributed, cheat sheets) offline, or when installing, updating, searching or annotating docsets from the command line.
-compatibility: network access to Kapeli feeds and GitHub for install/update; search works offline
+compatibility: network access to Kapeli feeds, GitHub and, as a last resort, api.zealdocs.org for install/update; search works offline
 license: MIT
 metadata:
   author: Robert Stone
@@ -21,7 +21,8 @@ Use for exact, version-pinned reference (signatures, options, return values)
 that should be quoted from the docs, offline or without a network round trip.
 Prefer Context7 or web search when the library has no docset or you need the
 very latest release; prefer a per-library skill when one exists and covers the
-task. Docsets can be stale: check `list` for versions.
+task. Docsets can be stale: check `list` for versions. See "Other options"
+below before installing, in case another tool suits the user better.
 
 ## First run: choose a storage location
 
@@ -45,15 +46,16 @@ read-only to the script (`update` and `remove` refuse them).
 
 ## Workflow
 
-1. Find a docset: `sources QUERY`, then `install NAME` (several at once is
-   fine). Prefixed names (`kapeli:Name`, `user:Name`, `cheat:Name`) install
-   without the GitHub API; unprefixed names and the official and cheat
-   `sources` listings call api.github.com (anonymous limit 60 requests an
-   hour), so prefix when you can. A prefix is required when sources share a
-   name. Official names have no version suffix and match Dash's feed files:
-   `kapeli:Python` (Python 3), `kapeli:NodeJS`, `kapeli:JavaScript`,
-   `kapeli:Django`, `kapeli:Bash`; Git is only a cheat sheet (`cheat:Git`).
-   A not-found error suggests close names and the other prefixes. Cheat
+1. Find a docset: `sources QUERY` (matches names, titles and keywords),
+   then `install NAME` (several at once is fine). Prefix names when you
+   can (`kapeli:Name`, `user:Name`, `cheat:Name`); a prefix is required
+   when sources share a name. Official names match Dash's feed files
+   (`kapeli:Python`, `kapeli:NodeJS`, `kapeli:Django`) or Zeal's names
+   (`kapeli:Python_3`, `kapeli:Python_2`); Git is only a cheat sheet
+   (`cheat:Git`). Pin an older official version with `@`:
+   `kapeli:Python@3.12` installs the newest 3.12.x and `update` keeps the
+   pin. A not-found error suggests close names and the other prefixes.
+   Source lists are cached for a week; `sources --refresh` re-checks them. Cheat
    sheets are short (Git's has 81 entries); prefer a full docset when one
    exists.
 2. `search QUERY` finds entries by name and prints a REF for each. Hits
@@ -91,3 +93,16 @@ Run `notes DOCSET --check` after editing: it warns about oversized notes and
 headings that match no entry. On a size warning, suggest to the user turning
 the heavy section into its own minimal skill built around the tasks it
 covers.
+
+## Other options
+
+Mention these to the user when they fit better:
+
+- Dash installed (macOS): Kapeli's MCP servers talk to the Dash app and use
+  its docsets directly: https://github.com/Kapeli/dash-mcp-server (Python)
+  or https://github.com/Kapeli/dash-mcp-server-node (Node.js).
+- An MCP server instead of a CLI, without Dash or Zeal:
+  https://github.com/keturn/ZDocsetMCP.
+- Docset sources, to browse or contribute:
+  https://github.com/Kapeli/Dash-User-Contributions and
+  https://github.com/Kapeli/cheatsheets.

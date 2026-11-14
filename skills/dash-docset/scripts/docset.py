@@ -16,7 +16,7 @@ import urllib.error
 import urllib.request
 import xml.etree.ElementTree as ET
 from html.parser import HTMLParser
-from urllib.parse import quote, unquote
+from urllib.parse import quote, unquote, urlsplit
 from dataclasses import dataclass, field
 from typing import Iterator, List, Mapping, Optional, Tuple
 
@@ -1188,6 +1188,24 @@ USER_INDEX_URL = USER_BASE_URL + "index.json"
 CHEAT_LIST_URL = "https://api.github.com/repos/Kapeli/cheatsheets/contents/cheatsheets"
 CHEAT_URL = "https://kapeli.com/feeds/zzz/cheatsheets/%s.tgz"
 
+# Cheat-sheet index (Kapeli's own; trailing commas must be stripped):
+# {"cheatsheets": {Key: {name, version, aliases}}}; download = CHEAT_URL % Key.
+CHEAT_INDEX_URL = "https://kapeli.com/feeds/zzz/cheatsheets/cheat.json"
+# Older official versions (from zealdocs/backend src/mirror-url.ts):
+# https://<mirror>/feeds/zzz/versions/<Feed>/<version>/<Feed>.tgz
+VERSIONED_PATH = "/feeds/zzz/versions/%s/%s/%s.tgz"
+# Zeal's docset manifest (raw GitHub): {ZealName: {title, source?: feed name,
+# versionPrefix?, extra?: {keywords}}}; e.g. Python_3 = feed Python, "3.".
+ZEAL_MANIFEST_URL = "https://raw.githubusercontent.com/zealdocs/backend/main/docsets.json"
+# Zeal's combined catalog: a best-effort public service with no stability
+# promise. Used only when every other source of a list has failed, checked
+# at most weekly (conditional request), never retried within a day of a
+# failure, and cached without its icons. Entries: {name, title, sourceId
+# (com.kapeli.dash|.contrib|.cheatsheet), versions, archive?}.
+ZEAL_CATALOG_URL = "https://api.zealdocs.org/_api/v1/catalog.json"
+ZEAL_MAX_AGE = 7 * 86400
+RETRY_AFTER_FAILURE = 86400
+
 SOURCE_NAMES = ("kapeli", "user", "cheat")
 CACHE_MAX_AGE = 7 * 86400
 USER_AGENT = f"dash-docset/{VERSION}"
@@ -1216,13 +1234,20 @@ class Feed:
     source: str
     version: str
     urls: List[str]
+    aliases: List[str] = field(default_factory=list)  # titles, search keywords
+    pin: str = ""  # version prefix the user asked for (kapeli only)
 
 
 def _https(url):
     return "https://" + url[len("http://"):] if url.lower().startswith("http://") else url
 
 
-def parse_kapeli_xml(text: str, name: str) -> Feed:
+def _pin_matches(version, pin) -> bool:
+    return version == pin or version.startswith(pin if pin.endswith(".") else pin + ".")
+
+
+def parse_kapeli_xml(text: str, name: str, pin: str = "") -> Feed:
+    """Feed for the newest version, or the newest matching the pin prefix."""
     try:
         root = ET.fromstring(text)
     except ET.ParseError as e:
@@ -1231,7 +1256,19 @@ def parse_kapeli_xml(text: str, name: str) -> Feed:
     urls = [_https(u.text.strip()) for u in root.findall("url") if u.text and u.text.strip()]
     if not urls:
         raise ValueError("feed %s lists no download URL" % name)
-    return Feed(name, "kapeli", version, urls)
+    if not pin or _pin_matches(version, pin):
+        return Feed(name, "kapeli", version, urls, pin=pin)
+    others = [(v.findtext("name") or "").strip()
+              for v in root.findall("other-versions/version")]
+    picked = next((v for v in others if v and _pin_matches(v, pin)), None)
+    if picked is None:
+        shown = ", ".join(v for v in others[:12] if v) or "none listed"
+        raise CLIError("kapeli docset %s has no version %s (versions: %s%s)" % (
+            name, pin, shown, ", ..." if len(others) > 12 else ""), 5)
+    hosts = list(dict.fromkeys(urlsplit(u).netloc for u in urls))
+    return Feed(name, "kapeli", picked,
+                ["https://" + h + VERSIONED_PATH % (name, picked, name) for h in hosts],
+                pin=pin)
 
 
 def parse_index_json(data: dict, source: str, base_url: str) -> List[Feed]:
@@ -1244,8 +1281,9 @@ def parse_index_json(data: dict, source: str, base_url: str) -> List[Feed]:
     return feeds
 
 
-def _request(url, method="GET"):
-    req = urllib.request.Request(url, method=method, headers={"User-Agent": USER_AGENT})
+def _request(url, method="GET", headers=None):
+    req = urllib.request.Request(url, method=method,
+                                 headers=dict(headers or {}, **{"User-Agent": USER_AGENT}))
     try:
         return urllib.request.urlopen(req, timeout=NET_TIMEOUT)
     except urllib.error.HTTPError as e:
@@ -1261,6 +1299,27 @@ def fetch(url: str) -> bytes:
             return r.read()
         except (OSError, http.client.HTTPException) as e:
             raise FetchError("download of %s failed: %s" % (url, e))
+
+
+def fetch_cond(url: str, etag=None, last_modified=None):
+    """Conditional GET: (body, etag, last_modified); body None on 304."""
+    headers = {}
+    if etag:
+        headers["If-None-Match"] = etag
+    if last_modified:
+        headers["If-Modified-Since"] = last_modified
+    try:
+        r = _request(url, headers=headers)
+    except FetchError as e:
+        if e.status == 304:
+            return None, etag, last_modified
+        raise
+    with r:
+        try:
+            body = r.read()
+        except (OSError, http.client.HTTPException) as e:
+            raise FetchError("download of %s failed: %s" % (url, e))
+        return body, r.headers.get("ETag"), r.headers.get("Last-Modified")
 
 
 def download(url: str, dest: str) -> None:
@@ -1295,13 +1354,177 @@ def _list_names(url, suffix):
                   and str(i.get("name", "")).endswith(suffix))
 
 
-def _fetch_source(source):
-    if source == "kapeli":
-        return [Feed(n, "kapeli", "", []) for n in _list_names(KAPELI_LIST_URL, ".xml")]
-    if source == "cheat":
+def cached_get(store, key, url, max_age, force=False, transform=None) -> bytes:
+    """Body of url, kept in the cache with its ETag/Last-Modified.
+
+    Re-checked at most every max_age seconds (force skips that wait), with a
+    conditional request so an unchanged file is not downloaded again; after
+    a failure, not retried for RETRY_AFTER_FAILURE (the cached copy, if any,
+    is used meanwhile). transform(bytes) shrinks a new body before saving."""
+    d = os.path.join(meta_dir(store), "cache")
+    body_p = os.path.join(d, key + ".body")
+    meta_p = os.path.join(d, key + ".meta.json")
+    try:
+        meta = _load_json(meta_p) if os.path.isfile(meta_p) else {}
+    except CLIError:
+        meta = {}
+    have = os.path.isfile(body_p)
+    now = time.time()
+
+    def cached():
+        with open(body_p, "rb") as f:
+            return f.read()
+
+    if have and not force and 0 <= now - meta.get("checked", -max_age - 1) < max_age:
+        return cached()
+    failed = meta.get("failed")
+    if isinstance(failed, (int, float)) and 0 <= now - failed < RETRY_AFTER_FAILURE:
+        if have:
+            return cached()
+        raise FetchError("%s failed less than a day ago (%s); not retrying yet"
+                         % (url, meta.get("error", "")))
+    os.makedirs(d, exist_ok=True)
+    try:
+        body, etag, lm = fetch_cond(url, meta.get("etag") if have else None,
+                                    meta.get("last_modified") if have else None)
+        if body is not None and transform:
+            body = transform(body)
+    except (FetchError, ValueError) as e:
+        meta.update(failed=now, error=str(e))
+        _write_json(meta_p, meta)
+        if have:
+            _warn("using the cached copy of %s; refresh failed: %s" % (url, e))
+            return cached()
+        raise
+    if body is not None:
+        tmp = body_p + ".tmp"
+        with open(tmp, "wb") as f:
+            f.write(body)
+        os.replace(tmp, body_p)
+        meta = {"etag": etag, "last_modified": lm}
+    meta.pop("failed", None)
+    meta.pop("error", None)
+    meta["checked"] = now
+    _write_json(meta_p, meta)
+    return body if body is not None else cached()
+
+
+def _slim_catalog(body: bytes) -> bytes:
+    """Zeal catalog without icons and other fields we never read."""
+    data = json.loads(body.decode("utf-8"))
+    if not isinstance(data, list):
+        raise ValueError("Zeal catalog is not a list")
+    keep = ("name", "title", "sourceId", "versions", "archive")
+    return json.dumps([{k: e.get(k) for k in keep if k in e}
+                       for e in data if isinstance(e, dict) and e.get("name")]).encode()
+
+
+def zeal_catalog(store) -> List[dict]:
+    """Last resort only (see ZEAL_CATALOG_URL); never forced to refresh."""
+    return json.loads(cached_get(store, "zeal-catalog", ZEAL_CATALOG_URL,
+                                 ZEAL_MAX_AGE, transform=_slim_catalog).decode("utf-8"))
+
+
+def zeal_manifest(store, refresh=False) -> dict:
+    data = json.loads(cached_get(store, "zeal-manifest", ZEAL_MANIFEST_URL,
+                                 CACHE_MAX_AGE, force=refresh).decode("utf-8"))
+    if not isinstance(data, dict):
+        raise ValueError("Zeal manifest is not an object")
+    return data
+
+
+def cheat_index(store, refresh=False) -> dict:
+    text = cached_get(store, "cheat-index", CHEAT_INDEX_URL, CACHE_MAX_AGE,
+                      force=refresh).decode("utf-8")
+    data = json.loads(re.sub(r",(\s*[}\]])", r"\1", text))
+    sheets = data.get("cheatsheets") if isinstance(data, dict) else None
+    if not isinstance(sheets, dict):
+        raise ValueError("cheat sheet index has an unexpected shape")
+    return sheets
+
+
+def _first_version(e) -> str:
+    return next((str(v) for v in e.get("versions") or [] if v), "")
+
+
+def _catalog_feeds(store, source_id):
+    return [e for e in zeal_catalog(store) if e.get("sourceId") == source_id]
+
+
+_SOURCE_ERRORS = (FetchError, ValueError, KeyError, TypeError, AttributeError, CLIError)
+
+
+def _kapeli_feeds(store, refresh):
+    names: dict = {}
+    errors = []
+    try:
+        for n in _list_names(KAPELI_LIST_URL, ".xml"):
+            names.setdefault(n, [])
+    except _SOURCE_ERRORS as e:
+        errors.append(str(e))
+    try:
+        for key, m in zeal_manifest(store, refresh).items():
+            if not isinstance(m, dict):
+                continue
+            al = [m.get("title")] + list((m.get("extra") or {}).get("keywords") or [])
+            names.setdefault(key, []).extend(str(a) for a in al if a)
+            if m.get("source"):
+                names.setdefault(str(m["source"]), [])
+    except _SOURCE_ERRORS as e:
+        errors.append(str(e))
+    if not names:
+        try:
+            for e in _catalog_feeds(store, "com.kapeli.dash"):
+                names.setdefault(e["name"], []).extend([e["title"]] if e.get("title") else [])
+        except _SOURCE_ERRORS as e:
+            errors.append("Zeal catalog: %s" % e)
+    if not names:
+        raise FetchError("; ".join(errors))
+    return [Feed(n, "kapeli", "", [], sorted(set(a for a in al if a != n)))
+            for n, al in names.items()]
+
+
+def _cheat_feeds(store, refresh):
+    errors = []
+    try:
+        return [Feed(k, "cheat", str(v.get("version") or ""), [CHEAT_URL % quote(k)],
+                     [str(a) for a in [v.get("name")] + list(v.get("aliases") or [])
+                      if a and a != k])
+                for k, v in cheat_index(store, refresh).items() if isinstance(v, dict)]
+    except _SOURCE_ERRORS as e:
+        errors.append(str(e))
+    try:
         return [Feed(n, "cheat", "", []) for n in _list_names(CHEAT_LIST_URL, ".rb")]
-    data = json.loads(fetch(USER_INDEX_URL).decode("utf-8"))
-    return parse_index_json(data, "user", USER_BASE_URL)
+    except _SOURCE_ERRORS as e:
+        errors.append(str(e))
+    try:
+        return [Feed(e["name"], "cheat", _first_version(e), [CHEAT_URL % quote(e["name"])],
+                     [e["title"]] if e.get("title") else [])
+                for e in _catalog_feeds(store, "com.kapeli.cheatsheet")]
+    except _SOURCE_ERRORS as e:
+        errors.append("Zeal catalog: %s" % e)
+    raise FetchError("; ".join(errors))
+
+
+def _user_feeds(store):
+    try:
+        data = json.loads(fetch(USER_INDEX_URL).decode("utf-8"))
+        return parse_index_json(data, "user", USER_BASE_URL)
+    except _SOURCE_ERRORS as first:
+        try:
+            return [Feed(str(e.get("title") or e["name"]), "user", _first_version(e),
+                         [USER_BASE_URL + e["name"] + "/" + e["archive"]])
+                    for e in _catalog_feeds(store, "com.kapeli.contrib") if e.get("archive")]
+        except _SOURCE_ERRORS as e:
+            raise FetchError("%s; Zeal catalog: %s" % (first, e))
+
+
+def _fetch_source(store, source, refresh):
+    if source == "kapeli":
+        return _kapeli_feeds(store, refresh)
+    if source == "cheat":
+        return _cheat_feeds(store, refresh)
+    return _user_feeds(store)
 
 
 def load_sources(store, refresh: bool, sources=SOURCE_NAMES,
@@ -1323,7 +1546,7 @@ def load_sources(store, refresh: bool, sources=SOURCE_NAMES,
         if not fresh:
             try:
                 entry = {"fetched": now,
-                         "feeds": [vars(f) for f in _fetch_source(source)]}
+                         "feeds": [vars(f) for f in _fetch_source(store, source, refresh)]}
                 cache[source] = entry
                 changed = True
             except (FetchError, ValueError, KeyError, TypeError) as e:
@@ -1335,7 +1558,8 @@ def load_sources(store, refresh: bool, sources=SOURCE_NAMES,
                     if failed is not None:
                         failed.append(source)
                     continue
-        feeds.extend(Feed(f["name"], f["source"], f["version"], list(f["urls"]))
+        feeds.extend(Feed(f["name"], f["source"], f["version"], list(f["urls"]),
+                          list(f.get("aliases") or []))
                      for f in entry["feeds"])
     if changed:
         os.makedirs(os.path.dirname(path), exist_ok=True)
@@ -1388,15 +1612,30 @@ def _suggest(store, source, name) -> List[str]:
 
 
 def resolve_feed(store, source, name, user_feeds=None) -> Feed:
-    """Complete feed for source:name without listing the whole source (Ruling 8)."""
+    """Complete feed for source:name without listing the whole source (Ruling 8).
+
+    kapeli names may end in @VERSION (a prefix such as 3.12) and may be Zeal
+    names (Python_3 = the Python feed limited to 3.x)."""
+    name, at, pin = name.partition("@")
+    if at and (source != "kapeli" or not re.match(r"^[0-9A-Za-z][0-9A-Za-z._-]*$", pin)):
+        raise CLIError("a version pin (NAME@VERSION) works only for kapeli: names, "
+                       "and VERSION must look like 3.12", 2)
     if source in ("kapeli", "cheat") and (
             not re.match(r"^[A-Za-z0-9][A-Za-z0-9._ +-]*$", name) or ".." in name):
         raise CLIError("invalid docset name %r" % name, 2)
     try:
         if source == "kapeli":
-            return parse_kapeli_xml(fetch(KAPELI_FEED_URL % quote(name)).decode("utf-8"), name)
+            return _kapeli_feed(store, name, pin)
         if source == "cheat":
             url = CHEAT_URL % quote(name)
+            try:
+                sheets = cheat_index(store)
+                key = next((k for k in sheets if k.lower() == name.lower()), None)
+                if key and isinstance(sheets[key], dict) and sheets[key].get("version"):
+                    return Feed(key, "cheat", str(sheets[key]["version"]),
+                                [CHEAT_URL % quote(key)])
+            except _SOURCE_ERRORS:
+                pass  # fall back to the archive's Last-Modified date
             return Feed(name, "cheat", head_last_modified(url) or UNKNOWN_VERSION, [url])
         if user_feeds is None:
             user_feeds = load_sources(store, False, ("user",))
@@ -1539,6 +1778,8 @@ def install_feed(store, feed: Feed) -> Docset:
         installed = load_installed(store)
         installed[name] = {"source": feed.source, "version": feed.version, "url": used,
                            "installed": time.strftime("%Y-%m-%d")}
+        if feed.pin:
+            installed[name]["pin"] = feed.pin
         save_installed(store, installed)
     finally:
         shutil.rmtree(work, ignore_errors=True)
@@ -1546,6 +1787,27 @@ def install_feed(store, feed: Feed) -> Docset:
     if ds is None:
         raise CLIError("installed %s but its index is unreadable" % name, 7)
     return ds
+
+
+def _kapeli_feed(store, name, pin) -> Feed:
+    try:
+        return parse_kapeli_xml(fetch(KAPELI_FEED_URL % quote(name)).decode("utf-8"),
+                                name, pin)
+    except FetchError as e:
+        if e.status != 404:
+            raise
+        try:
+            man = zeal_manifest(store)
+        except _SOURCE_ERRORS:
+            raise e
+        key = next((k for k in man if k.lower() == name.lower()), None)
+        m = man.get(key) if key else None
+        if not isinstance(m, dict) or not (m.get("source") or m.get("versionPrefix")):
+            raise e
+        feed_name = str(m.get("source") or key)
+        pin = pin or str(m.get("versionPrefix") or "")
+        return parse_kapeli_xml(fetch(KAPELI_FEED_URL % quote(feed_name)).decode("utf-8"),
+                                feed_name, pin)
 
 
 def install(store, spec: str) -> Docset:
@@ -1575,7 +1837,7 @@ def cmd_sources(args):
     q = _norm(args.query) if args.query else ""
     lines = []
     for f in feeds:
-        if q in _norm(f.name):
+        if q in _norm(f.name) or any(q in _norm(a) for a in f.aliases):
             lines.append("%s:%s%s" % (f.source, f.name,
                                       "  " + f.version if f.version else ""))
     lines.sort()
@@ -1636,6 +1898,8 @@ def cmd_update(args):
             if source not in SOURCE_NAMES or not meta.get("url"):
                 raise CLIError("%s has no usable source record" % name, 2)
             feed_name = _name_from_url(meta["url"], source)
+            if source == "kapeli" and meta.get("pin"):
+                feed_name += "@" + meta["pin"]
             if source == "user" and user_feeds is None:
                 user_feeds = load_sources(store, True, ("user",))
             feed = next((f for f in (user_feeds or []) if meta["url"] in f.urls), None) \

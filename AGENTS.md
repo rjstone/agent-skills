@@ -189,6 +189,12 @@ metadata:
   `scripts/docset.py` has its own `VERSION` (used in `--version`,
   `--help` and the User-Agent), bumped only when the script changes; it
   may lag `metadata.version` but never lead it (a test checks).
+  Source lists, in order: GitHub API and Zeal's manifest (raw GitHub) for
+  official docsets, Kapeli's `cheat.json` for cheat sheets, Kapeli's
+  `index.json` for user-contributed; Zeal's catalog at api.zealdocs.org
+  (a best-effort public service) only when all of those fail, checked at
+  most weekly with conditional requests and never retried within a day of
+  a failure. Keep it that way (the user, 2026-11-14).
 
 ## Decisions (the user, 2026-11-08)
 

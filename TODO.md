@@ -28,6 +28,8 @@
         probably an embedding model (a dependency or a network service);
         the first version has only SQLite FTS5 full-text search.
       - MCP server mode for the script, once the CLI commands have settled.
+        Examine https://github.com/keturn/ZDocsetMCP for ideas first (an
+        MCP server over docsets that needs neither Dash nor Zeal).
       - A flag to download and install docsets into Dash's, Zeal's or
         dasht's folder, used only when the user asks for it. Notes still
         stay in the script's own store (those programs don't read them).
@@ -45,6 +47,12 @@
         - duplicate names across `read_from` dirs are silently dropped.
         - FTS tests for the cap, notes on `fts` and page-REF output, and
           the mtime-based rebuild.
+
+- [ ] `gen-docset`, a separate skill for generating docsets (the user,
+      2026-11-14): building a Dash docset from a project's documentation
+      and contributing it. Start from Kapeli's guide
+      (https://kapeli.com/docsets) and the contribution rules in
+      https://github.com/Kapeli/Dash-User-Contributions.
 
 ## Automation
 
