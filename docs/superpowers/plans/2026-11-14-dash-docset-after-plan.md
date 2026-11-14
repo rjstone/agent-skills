@@ -53,6 +53,9 @@ plan:
 | `ebfa8bd` | Pages are read from tarix docsets (Dash's compact storage). GNU Texinfo `¶` links are stripped. | the user |
 | `32b9fad` | Fixes from the Solarus trials: notes headings also match an entry name without its argument list (`## sol.timer.start`), and an unmatched heading gets a hint and a "did you mean"; at most 5 fuzzy hits when real hits exist; fallback notes print only when their source is in the results, worded "no action needed". | Solarus trials |
 | `bcc0085` | `search`, `fts` and `sources` take several words without quotes; a search name must contain all of them, in any order. "No matches" points to `fts`. | Solarus rerun |
+| `3301f12` | `search` treats `f(a, b)` as an exact match for `f` and lists anchored entries before whole-page entries; `show` starts an entry without an anchor at a heading named like it. Some docsets (DuckDB) have both kinds for one function. | DuckDB trial prep |
+| `4fb4c1e` | `SKILL.md`: the user config path, a warning when a "permanent" folder is temporary, and that options and settings are found with `fts`. | DuckDB trial |
+| (next) | `fts` prints the short entry REF when the matched section is an entry's, trying every id on the block (DuckDB headings carry a Dash `//apple_ref` id plus the entry's id). | DuckDB trial |
 
 ## What the plan and design say that no longer holds
 
@@ -180,6 +183,16 @@ Each used about 190 lines of output for lookups. Haiku's note heading
 `## sol.timer.start` silently matched nothing, because entry names include
 their arguments, which led to `32b9fad`. The Haiku rerun used about 160
 lines and found unquoted multi-word queries failing, which led to `bcc0085`.
+
+A Haiku trial on DuckDB 1.5.0 (user-contributed, 8,208 entries, many
+generic "Syntax"/"Parameters" headings) used the desktop path 1B → 1C. It
+answered all three questions correctly:
+- (a) `date_diff` = 2 vs `date_sub` = 1 months for 1992-09-15 → 1992-11-14
+- (b) `read_csv` `skip`: BIGINT, default 0
+- (c) `count_if`, an alias of `countif`
+
+It used about 320 lines, the most of any run. About 80 were a parameters
+table it needed, and 40 a page it opened by mistake.
 
 The "keep changes staged" question can't be answered from Kapeli's Git cheat
 sheet, which has no `reset --soft`. That's a content gap, not a skill bug.

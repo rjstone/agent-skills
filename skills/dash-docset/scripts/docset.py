@@ -1294,9 +1294,9 @@ def _snippet_phrases(snippet) -> List[str]:
     return [p for p in dict.fromkeys([clean(before + after), clean(after)]) if p]
 
 
-def match_anchor(ds, path, query, snippet="") -> Optional[str]:
-    """The id nearest before the block the match is in (via the FTS snippet,
-    else the first block holding the query words), if any."""
+def match_anchor(ds, path, query, snippet="") -> Optional[List[str]]:
+    """Ids of the nearest block with ids at or before the match (located via
+    the FTS snippet, else the first block holding the query words), if any."""
     try:
         blocks = read_page_blocks(ds, path)
     except (CLIError, OSError):
@@ -1308,7 +1308,7 @@ def match_anchor(ds, path, query, snippet="") -> Optional[str]:
     last_id, anchor_at = None, []
     for b in blocks:  # nearest id at or before each block
         if b.ids:
-            last_id = b.ids[0]
+            last_id = list(b.ids)  # every id of the block: any may be an entry's
         anchor_at.append(last_id)
     texts = [" ".join(t.split()) for t in texts]
     tests = [(lambda t, p=p: p in t) for p in _snippet_phrases(snippet)]
@@ -1320,12 +1320,35 @@ def match_anchor(ds, path, query, snippet="") -> Optional[str]:
     return None
 
 
+def _unquote_all(text) -> str:
+    """URL-decode until stable (Dash anchors are sometimes encoded twice)."""
+    for _ in range(3):
+        decoded = unquote(text)
+        if decoded == text:
+            break
+        text = decoded
+    return text
+
+
+def _anchor_entries(ds) -> dict:
+    """{(page file, decoded anchor): lowest entry id} for the docset's entries."""
+    found: dict = {}
+    for entry_id, _n, _t, path in iter_entries(ds):
+        file_part, anchor = entry_location(path)
+        if anchor:
+            key = (file_part, _unquote_all(anchor))
+            if key not in found or entry_id < found[key]:
+                found[key] = entry_id
+    return found
+
+
 def fts_search(store, docsets, query, limit) -> List[dict]:
     expr = fts_match_expr(query)
     if not expr:
         return []
     scored = []
     for ds in docsets:
+        entry_at = None  # built on the first hit with an anchor
         db = fts_path(store, ds.name)
         try:
             con = _open_ro(db)
@@ -1337,9 +1360,15 @@ def fts_search(store, docsets, query, limit) -> List[dict]:
                     (expr, limit)).fetchall()
                 for path, snip, score in rows:
                     ref = "%s:page:%s" % (ds.name, path)
-                    anchor = match_anchor(ds, path, query, snip)  # \x02 marks matches
-                    if anchor:
-                        ref += "#" + quote(anchor, safe=":/()$")
+                    ids = match_anchor(ds, path, query, snip)  # \x02 marks matches
+                    if ids:
+                        if entry_at is None:
+                            entry_at = _anchor_entries(ds)
+                        entry_id = next((entry_at[(path, _unquote_all(a))] for a in ids
+                                         if (path, _unquote_all(a)) in entry_at), None)
+                        # an anchor that is an entry's: the short entry REF
+                        ref = ("%s:%d" % (ds.name, entry_id) if entry_id is not None
+                               else ref + "#" + quote(ids[0], safe=":/()$"))
                     scored.append((score, ds.name, path, {
                         "ref": ref, "docset": ds.name, "path": path,
                         "snippet": " ".join(snip.split()).replace(

@@ -112,8 +112,10 @@ from one of those folders (`--force` overrides).
    Function options, parameters and settings are often only in page text
    (e.g. `read_csv`'s `skip` is a row in a table), so look for them with
    `fts`.
-   Each hit prints `<Name>:page:<path>#<anchor>`: `show` on it prints the
-   section around the match (without `#<anchor>`, the whole page). The
+   Each hit prints a REF for the section around the match: an entry REF
+   (`<Name>:<id>`) when that section is an entry's, else
+   `<Name>:page:<path>#<anchor>` (without `#<anchor>`, `show` prints the
+   whole page). The
    first `fts` on a docset builds its index (seconds for large docsets);
    `index-text NAME` builds it ahead of time.
 5. Manage: `list` shows installed docsets and versions, `update [NAME]`

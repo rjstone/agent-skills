@@ -1048,7 +1048,7 @@ class FtsTests(unittest.TestCase):
     def test_fts_finds_text_in_page(self):
         r = self.cli("fts", "b()", "-d", "Py")  # only in <pre>, with FTS syntax
         self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
-        self.assertIn("Py:page:library/asyncio.html#asyncio.gather\n", r.stdout)
+        self.assertIn("Py:1\n", r.stdout)  # the match is at entry 1's anchor
         self.assertIn("gather", r.stdout)
         r = self.cli("show", "Py:page:library/asyncio.html#asyncio.gather")
         self.assertEqual(r.returncode, 0, r.stderr)
@@ -1062,6 +1062,21 @@ class FtsTests(unittest.TestCase):
         r = self.cli("fts", "zzzznothing", "-d", "Py")
         self.assertEqual(r.returncode, 0)
         self.assertEqual(r.stdout.strip(), "no matches for 'zzzznothing'")
+
+    def test_fts_entry_ref_via_second_id(self):
+        page = ("<html><body><h2><a name='//apple_ref/cpp/Guide/Params'></a>"
+                "<span id='params'>Params</span></h2><p>skip lines at the start</p>"
+                "</body></html>")
+        make_docset(self.store_dir, "Duck", entries=[("Params", "Guide", "p.html#params")],
+                    pages={"p.html": page})
+        r = self.cli("fts", "skip", "lines", "-d", "Duck")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertEqual(r.stdout.splitlines()[0], "Duck:1")
+
+    def test_unquote_all_matches_double_encoded_anchors(self):
+        self.assertEqual(docset._unquote_all("Guide/Out%2520of%2520Memory"),
+                         "Guide/Out of Memory")
+        self.assertEqual(docset._unquote_all("plain"), "plain")
 
     def test_snippet_phrases(self):
         self.assertEqual(docset._snippet_phrases(
@@ -1932,7 +1947,7 @@ class TarixTests(unittest.TestCase):
         if docset.fts_available():
             self.assertGreater(docset.build_fts(store, ds), 0)
             hits = docset.fts_search(store, [ds], "gather", 5)
-            self.assertTrue(any(h["ref"].startswith("Py:page:library/asyncio.html") for h in hits), hits)
+            self.assertIn("Py:1", [h["ref"] for h in hits])
 
     def test_bad_index_entry_is_exit_7(self):
         res = os.path.join(self.dash, "Py.docset", "Contents", "Resources")
