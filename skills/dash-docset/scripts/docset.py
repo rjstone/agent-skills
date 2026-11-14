@@ -38,7 +38,7 @@ SUBCOMMANDS = {
     "show": "show a documentation page",
     "fts": "full-text search a docset",
     "index-text": "build the full-text index",
-    "notes": "read or write notes for a docset",
+    "notes": "print a docset's notes, their path (to edit) or a size check",
 }
 
 
@@ -496,7 +496,15 @@ def cmd_search(args):
                   "rank": r} for r, _l, n, d, i, t in hits[:args.max_lines]]
         print(json.dumps(items, indent=2))
         return 0
-    lines = ["%s:%d  %s  %s  (%s)" % (d, i, t, n, d) for r, _l, n, d, i, t in hits]
+    lines = []
+    for k, (r, _l, n, d, i, t) in enumerate(hits):
+        if r == 3 and (k == 0 or hits[k - 1][0] < 3):
+            lines.append("no exact, prefix or substring matches; fuzzy matches "
+                         "(letters in order, often unrelated):" if k == 0 else
+                         "--- fuzzy matches (letters in order, often unrelated) ---")
+        lines.append("%s:%d  %s  %s  (%s)" % (d, i, t, n, d))
+    if not hits:
+        lines.append("no matches for %r" % args.query)
     for line in cap_lines(lines, args.max_lines, hint):
         print(line)
     for dname in dict.fromkeys(h[3] for h in hits):
@@ -514,7 +522,19 @@ class Block:
     depth: int        # open dl/table/ul/ol containers
 
 
-SKIP_TAGS = {"script", "style", "nav", "header", "footer"}
+SKIP_TAGS = {"script", "style", "nav", "header", "footer", "form", "select",
+             "noscript", "template"}
+SKIP_ROLES = {"navigation", "search", "banner", "contentinfo"}
+# Navigation chrome of common doc generators (Sphinx, Read the Docs, ...);
+# "headerlink" is the pilcrow link after Sphinx headings.
+SKIP_CLASSES = {"related", "mobile-nav", "sphinxsidebar", "sphinxsidebarwrapper",
+                "breadcrumbs", "breadcrumb", "wy-nav-side", "rst-versions",
+                "headerlink", "toc-drawer", "sidebar-drawer", "skip-link"}
+
+
+def _skippable(tag, a) -> bool:
+    return (tag in SKIP_TAGS or a.get("role") in SKIP_ROLES
+            or bool(SKIP_CLASSES.intersection((a.get("class") or "").split())))
 CONTAINER_TAGS = {"dl", "table", "ul", "ol"}
 BLOCK_TAGS = {"p", "div", "li", "dt", "dd", "tr", "pre", "ul", "ol", "dl", "table",
               "section", "article", "blockquote", "caption", "details", "summary",
@@ -539,6 +559,7 @@ class _TextParser(HTMLParser):
         self.ids: List[str] = []
         self.id_tag = ""
         self.start_depth = 0
+        self.skip_tag = ""
 
     def _top(self):
         return self.stack[-1] if self.stack else ""
@@ -567,14 +588,15 @@ class _TextParser(HTMLParser):
 
     def handle_starttag(self, tag, attrs):
         if self.skip:
-            if tag in SKIP_TAGS:
+            if tag == self.skip_tag:
                 self.skip += 1
             return
-        if tag in SKIP_TAGS:
-            self.flush()
-            self.skip = 1
-            return
         a = dict(attrs)
+        if _skippable(tag, a):
+            if tag in BLOCK_TAGS or tag in SKIP_TAGS:
+                self.flush()
+            self.skip, self.skip_tag = 1, tag
+            return
         if tag in BLOCK_TAGS:
             self.flush()
             if self.stack and self.stack[-1] in CLOSES_SAME.get(tag, ()):
@@ -593,7 +615,7 @@ class _TextParser(HTMLParser):
             self.buf.append(" | ")
         elif tag == "br":
             self.buf.append("\n" if self.in_pre else " ")
-        if a.get("id"):
+        if a.get("id") and tag not in ("link", "meta"):
             self.ids.append(a["id"])
             if tag in BLOCK_TAGS and not self.id_tag:
                 self.id_tag = tag
@@ -604,7 +626,7 @@ class _TextParser(HTMLParser):
 
     def handle_endtag(self, tag):
         if self.skip:
-            if tag in SKIP_TAGS:
+            if tag == self.skip_tag:
                 self.skip -= 1
             return
         if tag in BLOCK_TAGS:
@@ -686,7 +708,7 @@ def positive_int(text):
 
 
 def parse_page_ref(ref: str) -> Optional[Tuple[str, str]]:
-    """'<Docset>:page:<path>' -> (name, path), else None."""
+    """'<Docset>:page:<path>[#anchor]' -> (name, path[#anchor]), else None."""
     name, sep, path = ref.partition(":page:")
     if not sep or not name or not path:
         return None
@@ -727,8 +749,9 @@ def cmd_show(args):
     if ds is None:
         raise CLIError("unknown docset %r (see: docset.py list)" % name, 5)
     if page_ref:
-        blocks = read_page_blocks(ds, entry_id)
-        _print_lines(trim_to_anchor(blocks, None), args)
+        file_part, sep, anchor = entry_id.partition("#")
+        blocks = read_page_blocks(ds, file_part)
+        _print_lines(trim_to_anchor(blocks, anchor if sep and anchor else None), args)
         if not args.no_notes:
             for line in general_notes(store, name):
                 print(line)
@@ -1028,6 +1051,43 @@ def fts_match_expr(query) -> str:
     return " AND ".join('"%s"' % t.replace('"', '""') for t in query.split())
 
 
+def _snippet_phrase(snippet) -> Optional[str]:
+    """Up to 3 words from the first [match] of an FTS snippet, for locating it."""
+    m = re.search(r"\[[^\]]+\][^.\[\]`]*", snippet)
+    if not m:
+        return None
+    words = re.sub(r"[\[\]]", "", m.group(0)).split()[:3]
+    return " ".join(words).lower() if words else None
+
+
+def match_anchor(ds, path, query, snippet="") -> Optional[str]:
+    """The id nearest before the block the match is in (via the FTS snippet,
+    else the first block holding the query words), if any."""
+    try:
+        blocks = read_page_blocks(ds, path)
+    except (CLIError, OSError):
+        return None
+    words = [w.lower() for w in query.split()]
+    if not words:
+        return None
+    texts = [b.text.lower() for b in blocks]
+    last_id, anchor_at = None, []
+    for b in blocks:  # nearest id at or before each block
+        if b.ids:
+            last_id = b.ids[0]
+        anchor_at.append(last_id)
+    texts = [" ".join(t.split()) for t in texts]
+    phrase = _snippet_phrase(snippet)
+    tests = [lambda t: all(w in t for w in words), lambda t: words[0] in t]
+    if phrase:
+        tests.insert(0, lambda t: phrase in t)
+    for test in tests:
+        for i, t in enumerate(texts):
+            if anchor_at[i] and test(t):
+                return anchor_at[i]
+    return None
+
+
 def fts_search(store, docsets, query, limit) -> List[dict]:
     expr = fts_match_expr(query)
     if not expr:
@@ -1044,11 +1104,10 @@ def fts_search(store, docsets, query, limit) -> List[dict]:
                     "ORDER BY bm25(pages) LIMIT ?" % FTS_SNIPPET_TOKENS,
                     (expr, limit)).fetchall()
                 for path, snip, score in rows:
-                    first = con.execute(
-                        "SELECT MIN(entry_id) FROM page_entries WHERE path = ?",
-                        (path,)).fetchone()[0]
-                    ref = ("%s:%d" % (ds.name, first) if first is not None
-                           else "%s:page:%s" % (ds.name, path))
+                    ref = "%s:page:%s" % (ds.name, path)
+                    anchor = match_anchor(ds, path, query, snip)
+                    if anchor:
+                        ref += "#" + quote(anchor, safe=":/()$")
                     scored.append((score, ds.name, path, {
                         "ref": ref, "docset": ds.name, "path": path,
                         "snippet": " ".join(snip.split())}))
@@ -1101,7 +1160,7 @@ def cmd_fts(args):
         return 0
     lines = []
     for h in hits:
-        lines.append("%s  (%s)  %s" % (h["ref"], h["docset"], h["path"]))
+        lines.append(h["ref"])
         lines.append("    " + h["snippet"])
     for line in cap_lines(lines, args.max_lines,
                           "raise --max-lines or narrow the query or -d"):
@@ -1627,7 +1686,12 @@ def cmd_remove(args):
 
 def build_parser():
     parser = argparse.ArgumentParser(
-        prog="docset.py", description=f"dash-docset {VERSION}: {__doc__}")
+        prog="docset.py", description=f"dash-docset {VERSION}: {__doc__}",
+        epilog="exit codes: 0 ok; 1 notes --check found problems; 2 usage, "
+               "unknown name or no FTS5; 3 storage location not set; 4 search "
+               "scope too wide (use -d, a project list or --all); 5 not "
+               "found; 6 ambiguous name (add a prefix); 7 network, archive or "
+               "incomplete source list")
     parser.add_argument("--version", action="version",
                         version=f"dash-docset {VERSION}")
     parser.add_argument("--dir", metavar="PATH",
@@ -1675,7 +1739,7 @@ def build_parser():
             p.set_defaults(handler=cmd_remove)
             continue
         if name == "show":
-            p.add_argument("ref", metavar="REF", help="<Docset>:<id> from search, or <Docset>:page:<path> from fts")
+            p.add_argument("ref", metavar="REF", help="<Docset>:<id> from search, or <Docset>:page:<path>[#anchor] from fts")
             p.add_argument("--full", action="store_true",
                            help="print the whole trimmed section, without the line cap")
             p.add_argument("--max-lines", type=positive_int, default=150, metavar="N",
@@ -1724,7 +1788,8 @@ def build_parser():
                            help="warn about oversized notes and headings matching "
                            "no entry; exit 1 if any")
             g.add_argument("--path", action="store_true",
-                           help="print the notes file path (not created)")
+                           help="print the notes file path, creating notes/ (edit the file "
+                                "with normal tools)")
             p.set_defaults(handler=cmd_notes)
             continue
     return parser

@@ -53,21 +53,26 @@ read-only to the script (`update` and `remove` refuse them).
    name. Official names have no version suffix and match Dash's feed files:
    `kapeli:Python` (Python 3), `kapeli:NodeJS`, `kapeli:JavaScript`,
    `kapeli:Django`, `kapeli:Bash`; Git is only a cheat sheet (`cheat:Git`).
-   A not-found error suggests close names and the other prefixes.
-2. `search QUERY` finds entries by name and prints a REF for each.
+   A not-found error suggests close names and the other prefixes. Cheat
+   sheets are short (Git's has 81 entries); prefer a full docset when one
+   exists.
+2. `search QUERY` finds entries by name and prints a REF for each. Hits
+   below the "fuzzy matches" line only share letters in order; treat them
+   as misses.
 3. `show REF` prints that entry's trimmed section plus your notes. The
    default cap is 150 lines; `--full` lifts it (page REFs from `fts` are
    capped the same way). Respect `--max-lines` on
    `search`, `fts` and `show` instead of dumping everything.
 4. `fts QUERY` searches the text inside pages when entry names don't match.
-   Each hit prints a REF and the page path: the REF is the first entry on that
-   page (`<Name>:<id>`), or `<Name>:page:<path>` when no entry points there.
-   `show <Name>:page:<path>` prints the whole page, capped at `--max-lines`
-   unless `--full`. The first `fts` on a docset builds its index (seconds
-   for large docsets); `index-text NAME` builds it ahead of time.
+   Each hit prints `<Name>:page:<path>#<anchor>`: `show` on it prints the
+   section around the match (without `#<anchor>`, the whole page). The
+   first `fts` on a docset builds its index (seconds for large docsets);
+   `index-text NAME` builds it ahead of time.
 5. Manage: `list` shows installed docsets and versions, `update [NAME]`
    refreshes one or all, `remove NAME` deletes one (notes are kept).
-6. Scope: a project `"docsets"` list in `.dash-docset.json` limits searches to
+6. Exit codes are listed at the end of `--help` (3: location not set,
+   5: not found, 7: network or incomplete source list).
+7. Scope: a project `"docsets"` list in `.dash-docset.json` limits searches to
    those docsets. Without one, searches cover every docset unless more than 4
    are full-size; then narrow with `-d NAME` (repeatable), set the list, or
    pass `--all`.

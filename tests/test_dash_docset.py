@@ -414,6 +414,18 @@ class ReadingTests(unittest.TestCase):
         self.assertIn("warning", r.stderr)
 
 
+class NavSkipTests(unittest.TestCase):
+    def test_navigation_chrome_dropped(self):
+        html = ('<div class="related" role="navigation"><h3>Navigation</h3>'
+                '<ul><li>index</li><li><div>nested</div></li></ul></div>'
+                '<div class="mobile-nav"><form><input></form>'
+                '<select><option>Dark</option></select></div>'
+                '<div role="main"><h1 id="t">Title<a class="headerlink">\u00b6</a></h1>'
+                '<p>Body</p></div><div role="search">Quick search</div>')
+        text = [b.text for b in docset.html_to_text(html)]
+        self.assertEqual(text, ["# Title", "Body"])
+
+
 class RankTests(unittest.TestCase):
     def test_rank_order(self):
         r = docset.rank
@@ -468,13 +480,19 @@ class SearchTests(unittest.TestCase):
                           ("s_l_e_e_p", "Guide", "e.html")], form="ztoken")
         r = self.cli("search", "sleep")
         self.assertEqual(r.returncode, 0, r.stderr)
-        names = [l.split("  ")[2] for l in r.stdout.splitlines()]
+        out = r.stdout.splitlines()
+        self.assertEqual(out[4], "--- fuzzy matches (letters in order, often unrelated) ---")
+        names = [l.split("  ")[2] for l in out if not l.startswith("---")]
         self.assertEqual(names, ["Sleep", "sleep", "sleep_long", "xsleepx", "s_l_e_e_p"])
-        first = r.stdout.splitlines()[0].split("  ")
+        r = self.cli("search", "slp", "-d", "Alpha")
+        self.assertTrue(r.stdout.startswith("no exact, prefix or substring matches"))
+        r = self.cli("search", "qqq", "-d", "Alpha")
+        self.assertEqual(r.stdout.strip(), "no matches for 'qqq'")
+        first = out[0].split("  ")
         self.assertEqual(first[1], "Guide")
         self.assertEqual(first[3], "(Beta)")
         self.assertRegex(first[0], r"^Beta:\d+$")
-        self.assertTrue(r.stdout.splitlines()[1].startswith("Alpha:2  "))
+        self.assertTrue(out[1].startswith("Alpha:2  "))
 
     def test_search_type_filter_case_insensitive(self):
         self.add("Alpha", [("sleep", "Function", "a.html"), ("sleep2", "Guide", "b.html")])
@@ -911,11 +929,15 @@ class FtsTests(unittest.TestCase):
     def test_fts_finds_text_in_page(self):
         r = self.cli("fts", "b()", "-d", "Py")  # only in <pre>, with FTS syntax
         self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
-        self.assertIn("Py:1  (Py)  library/asyncio.html", r.stdout)
+        self.assertIn("Py:page:library/asyncio.html#asyncio.gather\n", r.stdout)
         self.assertIn("gather", r.stdout)
+        r = self.cli("show", "Py:page:library/asyncio.html#asyncio.gather")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertIn("asyncio.gather", r.stdout)
+        self.assertNotIn("Block for", r.stdout)  # trimmed to the matched section
         r = self.cli("fts", "Gather things", "-d", "Py", "--json")
         items = json.loads(r.stdout)
-        self.assertEqual(items[0]["ref"], "Py:3")
+        self.assertTrue(items[0]["ref"].startswith("Py:page:guide.html"))
         self.assertEqual(sorted(items[0]), ["docset", "path", "ref", "snippet"])
         self.assertEqual(items[0]["path"], "guide.html")
         r = self.cli("fts", "zzzznothing", "-d", "Py")
@@ -1481,7 +1503,8 @@ class SourcesTests(unittest.TestCase):
         self.assertEqual(code, 7)
         self.assertIn("overwrite", err)
         self.assertEqual(docset.load_installed(self.store)["Other"]["version"], "1")
-        self.assertEqual(self.main("search", "zzz", "-d", "Other")[1].strip(), "")
+        self.assertEqual(self.main("search", "zzz", "-d", "Other")[1].strip(),
+                         "no matches for 'zzz'")
 
     def test_http_client_errors_become_fetch_errors(self):
         import http.client
