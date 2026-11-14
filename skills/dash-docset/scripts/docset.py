@@ -8,6 +8,7 @@ import pathlib
 import re
 import shutil
 import sqlite3
+import http.client
 import tarfile
 import tempfile
 import time
@@ -15,7 +16,7 @@ import urllib.error
 import urllib.request
 import xml.etree.ElementTree as ET
 from html.parser import HTMLParser
-from urllib.parse import unquote
+from urllib.parse import quote, unquote
 from dataclasses import dataclass, field
 from typing import Iterator, List, Mapping, Optional, Tuple
 
@@ -1169,7 +1170,7 @@ def _request(url, method="GET"):
         return urllib.request.urlopen(req, timeout=NET_TIMEOUT)
     except urllib.error.HTTPError as e:
         raise FetchError("HTTP %d for %s" % (e.code, url), e.code)
-    except (urllib.error.URLError, OSError, ValueError) as e:
+    except (urllib.error.URLError, OSError, ValueError, http.client.HTTPException) as e:
         raise FetchError("cannot reach %s: %s" % (url, getattr(e, "reason", e)))
 
 
@@ -1178,7 +1179,7 @@ def fetch(url: str) -> bytes:
     with _request(url) as r:
         try:
             return r.read()
-        except OSError as e:
+        except (OSError, http.client.HTTPException) as e:
             raise FetchError("download of %s failed: %s" % (url, e))
 
 
@@ -1188,15 +1189,18 @@ def download(url: str, dest: str) -> None:
         try:
             with open(dest, "wb") as out:
                 shutil.copyfileobj(r, out, 1 << 20)
-        except OSError as e:
+        except (OSError, http.client.HTTPException) as e:
             raise FetchError("download of %s failed: %s" % (url, e))
 
 
 def head_last_modified(url: str) -> Optional[str]:
+    """Last-Modified of url, None when unavailable; FetchError only for a 404."""
     try:
         with _request(url, "HEAD") as r:
             return r.headers.get("Last-Modified")
-    except FetchError:
+    except FetchError as e:
+        if e.status == 404:
+            raise
         return None
 
 
@@ -1270,11 +1274,14 @@ def _name_from_url(url, source):
 
 def resolve_feed(store, source, name, user_feeds=None) -> Feed:
     """Complete feed for source:name without listing the whole source (Ruling 8)."""
+    if source in ("kapeli", "cheat") and (
+            not re.match(r"^[A-Za-z0-9][A-Za-z0-9._ +-]*$", name) or ".." in name):
+        raise CLIError("invalid docset name %r" % name, 2)
     try:
         if source == "kapeli":
-            return parse_kapeli_xml(fetch(KAPELI_FEED_URL % name).decode("utf-8"), name)
+            return parse_kapeli_xml(fetch(KAPELI_FEED_URL % quote(name)).decode("utf-8"), name)
         if source == "cheat":
-            url = CHEAT_URL % name
+            url = CHEAT_URL % quote(name)
             return Feed(name, "cheat", head_last_modified(url) or UNKNOWN_VERSION, [url])
         if user_feeds is None:
             user_feeds = load_sources(store, False, ("user",))
@@ -1358,14 +1365,17 @@ def safe_extract(tgz_path: str, dest: str) -> str:
 
 
 def _download_any(urls, dest):
-    errors = []
+    errors, statuses = [], []
     for url in urls:
         try:
             download(_https(url), dest)
             return _https(url)
         except FetchError as e:
             errors.append(str(e))
+            statuses.append(e.status)
             _warn("mirror failed: %s" % e)
+    if errors and all(st == 404 for st in statuses):
+        raise CLIError("not found: %s" % "; ".join(errors), 5)
     raise CLIError("download failed on every mirror: %s" % "; ".join(errors), 7)
 
 
@@ -1383,6 +1393,18 @@ def install_feed(store, feed: Feed) -> Docset:
         except ArchiveError as e:
             raise CLIError("bad archive from %s: %s" % (used, e), 7)
         name = os.path.basename(extracted)[:-len(".docset")]
+        if not os.path.isdir(extracted) or _make_docset(extracted, False, None, None) is None:
+            raise CLIError("bad archive from %s: %s.docset has no readable index"
+                           % (used, name), 7)
+        old_meta = load_installed(store).get(name)
+        exists = os.path.isdir(os.path.join(store.path, name + ".docset")) or old_meta
+        same = (_norm(name) == _norm(feed.name)
+                or (isinstance(old_meta, dict) and old_meta.get("url")
+                    and _name_from_url(old_meta["url"], feed.source)
+                    == _name_from_url(used, feed.source)))
+        if exists and not same:
+            raise CLIError("archive for %s holds %s.docset, which would overwrite a "
+                           "different docset; not installed" % (feed.name, name), 7)
         final = os.path.join(store.path, name + ".docset")
         backup = os.path.join(work, "old")
         had = os.path.isdir(final)
@@ -1487,7 +1509,8 @@ def cmd_update(args):
             feed_name = _name_from_url(meta["url"], source)
             if source == "user" and user_feeds is None:
                 user_feeds = load_sources(store, True, ("user",))
-            feed = resolve_feed(store, source, feed_name, user_feeds)
+            feed = next((f for f in (user_feeds or []) if meta["url"] in f.urls), None) \
+                or resolve_feed(store, source, feed_name, user_feeds)
             if feed.version == meta.get("version"):
                 print("%s: up to date (%s)" % (name, feed.version or "-"))
                 continue

@@ -1365,6 +1365,93 @@ class SourcesTests(unittest.TestCase):
         self.assertIn("cheat:Git", out)
         self.assertIn("warning", err)
 
+    def test_install_invalid_docset_keeps_old(self):
+        self.net("1.0")
+        self.assertEqual(self.main("install", "kapeli:Foo")[0], 0)
+        bad = {
+            "no-index": lambda t: add_file(t, "Foo.docset/Contents/Info.plist"),
+            "plain-file": lambda t: add_file(t, "Foo.docset"),
+        }
+        for label, build in bad.items():
+            with self.subTest(label):
+                tgz = bad_tgz(os.path.join(self.tmp, label + ".tgz"), build)
+                self.net("2.0", archives={MIRROR1: tgz})
+                code, out, err = self.main("install", "kapeli:Foo")
+                self.assertEqual(code, 7, err)
+                self.assertEqual(docset.load_installed(self.store)["Foo"]["version"], "1.0")
+                self.assertEqual(self.main("search", "gather", "-d", "Foo")[0], 0)
+                self.assertTrue(os.path.isfile(os.path.join(
+                    self.store_dir, "Foo.docset", "Contents", "Resources", "docSet.dsidx")))
+
+    def test_install_refuses_overwriting_other_docset(self):
+        make_docset(self.store_dir, "Other")
+        docset.save_installed(self.store, {"Other": {
+            "source": "user", "version": "1", "url": "https://h.example/b/Other/O.tgz",
+            "installed": "2026-01-01"}})
+        other = make_tgz(os.path.join(self.tmp, "Other.tgz"), "Other",
+                         entries=[("zzz", "Function", "guide.html")])
+        self.net(archives={MIRROR1: other})
+        code, out, err = self.main("install", "kapeli:Foo")
+        self.assertEqual(code, 7)
+        self.assertIn("overwrite", err)
+        self.assertEqual(docset.load_installed(self.store)["Other"]["version"], "1")
+        self.assertEqual(self.main("search", "zzz", "-d", "Other")[1].strip(), "")
+
+    def test_http_client_errors_become_fetch_errors(self):
+        import http.client
+
+        class Resp:
+            headers = {}
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *a):
+                return False
+
+            def read(self, *a):
+                raise http.client.IncompleteRead(b"ab")
+        with mock.patch.object(docset.urllib.request, "urlopen", lambda *a, **k: Resp()):
+            with self.assertRaises(docset.FetchError):
+                docset.fetch("https://x.example/a")
+            with self.assertRaises(docset.FetchError):
+                docset.download("https://x.example/a", os.path.join(self.tmp, "d"))
+        with mock.patch.object(docset.urllib.request, "urlopen",
+                               side_effect=http.client.BadStatusLine("x")):
+            with self.assertRaises(docset.FetchError):
+                docset.fetch("https://x.example/a")
+        # through install: exit 7, not a traceback
+        FakeNet(self, pages={FEED_URL: FEED_XML % "1"})
+        with mock.patch.object(docset, "download",
+                               side_effect=docset.FetchError("IncompleteRead")):
+            self.assertEqual(self.main("install", "kapeli:Foo")[0], 7)
+
+    def test_unsafe_names_refused(self):
+        net = FakeNet(self)
+        for spec in ("kapeli:../x", "cheat:a/b", "kapeli:a/../b", "cheat:%2e%2e"):
+            with self.subTest(spec):
+                code, out, err = self.main("install", spec)
+                self.assertEqual(code, 2, err)
+        self.assertEqual(net.fetched, [])
+        self.assertEqual(net.downloaded, [])
+
+    def test_cheat_not_found_is_exit_5(self):
+        def head404(url):
+            raise docset.FetchError("HTTP 404 for " + url, 404)
+        FakeNet(self)
+        with mock.patch.object(docset, "head_last_modified", head404):
+            code, out, err = self.main("install", "cheat:Nonexistent")
+        self.assertEqual(code, 5)
+        self.assertIn("not found", err)
+        # a download that 404s on every mirror is also "not found"
+        class N(FakeNet):
+            def download(self, url, dest):
+                raise docset.FetchError("HTTP 404", 404)
+        N(self, heads={docset.CHEAT_URL % "Zed": "x"})
+        code, out, err = self.main("install", "cheat:Zed")
+        self.assertEqual(code, 5)
+        self.assertIn("not found", err)
+
     def test_sources_all_failing(self):
         FakeNet(self)
         code, out, err = self.main("sources")
