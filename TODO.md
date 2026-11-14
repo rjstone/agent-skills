@@ -23,6 +23,49 @@
 - [ ] `opencode-build` `ERRATA.md`: record the doc mistakes already seen
       (verify each against the installed `@opencode/plugin` types).
 
+- [ ] `dash-docset`, after its first version (the user, 2026-11-14):
+      - semantic search, which needs its own index over page text and
+        probably an embedding model (a dependency or a network service);
+        the first version has only SQLite FTS5 full-text search.
+      - MCP server mode for the script, once the CLI commands have settled.
+        Examine https://github.com/keturn/ZDocsetMCP for ideas first (an
+        MCP server over docsets that needs neither Dash nor Zeal).
+      - A flag to download and install docsets into Dash's, Zeal's or
+        dasht's folder, used only when the user asks for it. Notes still
+        stay in the script's own store (those programs don't read them).
+      - Bundled starter lists in `assets/` (names, titles, versions,
+        archive files for official, cheat-sheet and user-contributed
+        docsets, plus Zeal's MIT `docsets.json`), used when a list can't be
+        fetched, with a refresh script. On hold (the user, 2026-11-14):
+        Kapeli's feeds README allows its docsets only for personal use or
+        with Dash or Zeal; the user has asked Kapeli about redistributing
+        the metadata. Wait for the answer.
+      - Optional tarix storage for our own installs: keep the downloaded
+        `.tgz` as `tarix.tgz` and fetch `<archive>.tgz.tarix` (a small .tgz
+        holding the SQLite index) instead of unpacking. Reading already
+        works (Dash stores docsets this way); this would save disk space
+        and file count in persistent stores, for one extra small download.
+      - Deferred from the final review (2026-11-14):
+        - downloads: a size cap, and refusing https to http redirects.
+        - a fixed `.tmp` name for FTS builds breaks concurrent builds.
+        - `search` prints General notes for docsets whose hits were all cut.
+        - `show` reads the notes file twice.
+        - online-only entries skip notes.
+        - `user:` update matches the display name, not the index key.
+        - the unprefixed-install ambiguity check is incomplete when a
+          source fails to load.
+        - update's stored-url match also applies to kapeli and cheat docsets.
+        - non-ASCII case in the LIKE prefilter.
+        - duplicate names across `read_from` dirs are silently dropped.
+        - FTS tests for the cap, notes on `fts` and page-REF output, and
+          the mtime-based rebuild.
+
+- [ ] `gen-docset`, a separate skill for generating docsets (the user,
+      2026-11-14): building a Dash docset from a project's documentation
+      and contributing it. Start from Kapeli's guide
+      (https://kapeli.com/docsets) and the contribution rules in
+      https://github.com/Kapeli/Dash-User-Contributions.
+
 ## Automation
 
 - [ ] Scheduled workflow: run each skill's `refresh_references.py` weekly and

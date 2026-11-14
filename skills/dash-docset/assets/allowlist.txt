@@ -1,0 +1,22 @@
+# Hosts scripts/docset.py contacts, for a network allowlist.
+# Searching installed docsets needs no network.
+
+# Docset downloads, the cheat sheet and user-contributed lists
+kapeli.com
+# Mirrors listed in Kapeli's official feeds (they redirect to kapeli.com)
+sanfrancisco.kapeli.com
+london.kapeli.com
+newyork.kapeli.com
+tokyo.kapeli.com
+frankfurt.kapeli.com
+
+# Official feed files (raw.githubusercontent.com) and the lists of official
+# docsets and cheat sheets (api.github.com)
+raw.githubusercontent.com
+api.github.com
+
+# Last resort when every other list fails (checked at most weekly)
+api.zealdocs.org
+
+# Downloads redirect to kapeli.com today. If a download is blocked, the error
+# names the host to add.

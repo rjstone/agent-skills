@@ -181,6 +181,25 @@ metadata:
 - `opencode-api` - opencode v2 server HTTP API: the published OpenAPI spec
   cached in `references/openapi.json`, searched with `scripts/api_lookup.py`
   (too large to read whole); calls via `opencode api` or Basic auth.
+- `dash-docset` - install Dash docsets (Kapeli, user-contributed, cheat
+  sheets) and search them offline with `scripts/docset.py` (stdlib only):
+  entry search, page text, full-text search and per-docset notes. The user
+  picks the storage location; the script never writes into Dash, Zeal or
+  dasht folders.
+  `scripts/docset.py` has its own `VERSION` (used in `--version`,
+  `--help` and the User-Agent), bumped only when the script changes; it
+  may lag `metadata.version` but never lead it (a test checks).
+  Source lists, in order: GitHub API and Zeal's manifest (raw GitHub) for
+  official docsets, Kapeli's `cheat.json` for cheat sheets, Kapeli's
+  `index.json` for user-contributed; Zeal's catalog at api.zealdocs.org
+  (a best-effort public service) only when all of those fail, checked at
+  most weekly with conditional requests and never retried within a day of
+  a failure. Keep it that way (the user, 2026-11-14).
+  Setup order (the user, 2026-11-14): on a desktop, use Dash's or Zeal's
+  docsets (the user downloads them in the app), else suggest installing
+  one, else the script downloads; on a throwaway machine, a store that
+  persists, else on-demand installs only. Branch `skill/dash-docset` is not
+  merged until Kapeli replies about the docset terms (the user asked).
 
 ## Decisions (the user, 2026-11-08)
 
