@@ -319,7 +319,8 @@ def iter_entries(ds, like: Optional[str] = None,
     entry_id: optional id; only that entry is read (a keyed lookup)."""
     con = _open_ro(index_path(ds.path))
     try:
-        if "searchIndex" in _tables(con):
+        has_search_index = "searchIndex" in _tables(con)
+        if has_search_index:
             sql = "SELECT id, name, type, path FROM searchIndex"
             id_col, name_col = "id", "name"
         else:
@@ -339,7 +340,7 @@ def iter_entries(ds, like: Optional[str] = None,
         if where:
             sql += " WHERE " + " AND ".join(where)
         sql += " ORDER BY " + id_col
-        if "searchIndex" in _tables(con):
+        if has_search_index:
             for i, n, t, p in con.execute(sql, params):
                 yield i, n, t or "", p or ""
         else:
@@ -774,6 +775,9 @@ _TYPED = re.compile(r"^(.*?)\s+\(([^()]+)\)$")  # needs a space and a type
 
 def notes_path(store, docset_name) -> str:
     """Notes always live in the script's own store, also for foreign docsets."""
+    if (not docset_name or "/" in docset_name or "\\" in docset_name
+            or ".." in docset_name):
+        raise CLIError("invalid docset name %r" % (docset_name,), 2)
     root = store if isinstance(store, str) else store.path
     return os.path.join(root, "notes", docset_name + ".md")
 
@@ -882,6 +886,7 @@ def check_notes(text, entry_names) -> List[str]:
 
 def cmd_notes(args):
     store = require_store(args)
+    notes_path(store, args.docset)  # rejects names that are not plain names
     ds = next((d for d in find_docsets(store) if d.name == args.docset), None)
     if ds is None:
         raise CLIError("unknown docset %r (see: docset.py list)" % args.docset, 5)
@@ -1511,7 +1516,9 @@ def cmd_update(args):
                 user_feeds = load_sources(store, True, ("user",))
             feed = next((f for f in (user_feeds or []) if meta["url"] in f.urls), None) \
                 or resolve_feed(store, source, feed_name, user_feeds)
-            if feed.version == meta.get("version"):
+            if UNKNOWN_VERSION in (feed.version, meta.get("version")):
+                print("%s: version unknown; re-downloading" % name)
+            elif feed.version == meta.get("version"):
                 print("%s: up to date (%s)" % (name, feed.version or "-"))
                 continue
             ds = install_feed(store, feed)
@@ -1533,8 +1540,13 @@ def cmd_remove(args):
     store = require_store(args)
     _managed(store, args.name)
     path = os.path.join(store.path, args.name + ".docset")
-    if os.path.isdir(path):
-        shutil.rmtree(path)
+    try:
+        if os.path.islink(path):
+            os.unlink(path)
+        elif os.path.isdir(path):
+            shutil.rmtree(path)
+    except OSError as e:
+        raise CLIError("cannot remove %s: %s" % (path, e), 7)
     try:
         os.unlink(fts_path(store, args.name))
     except OSError:
@@ -1546,11 +1558,6 @@ def cmd_remove(args):
     if os.path.exists(notes_path(store, args.name)):
         print("notes kept: " + notes_path(store, args.name))
     return 0
-
-
-def not_implemented(args):
-    print("not implemented: " + args.command, file=sys.stderr)
-    return 2
 
 
 def build_parser():
@@ -1652,8 +1659,6 @@ def build_parser():
                            help="print the notes file path (not created)")
             p.set_defaults(handler=cmd_notes)
             continue
-        p.add_argument("args", nargs="*")
-        p.set_defaults(handler=not_implemented)
     return parser
 
 

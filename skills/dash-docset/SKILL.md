@@ -36,7 +36,8 @@ task. Docsets can be stale: check `list` for versions.
    - `.docsets/` in the user's project: docsets are large, the script writes a
      `.gitignore` that ignores them but keeps `notes/` so notes can be
      committed. Warn about the size.
-   - A temporary folder (lost on reboot; one-off sessions, CI).
+   - A temporary folder (lost on reboot; one-off sessions, CI). The user
+     names or approves the path.
 4. Run `where --set PATH [--project|--user] [--read-from DIR]` with the choice.
 
 Never write into a Dash, Zeal or dasht folder; docsets found there are
@@ -52,11 +53,15 @@ read-only to the script (`update` and `remove` refuse them).
    name.
 2. `search QUERY` finds entries by name and prints a REF for each.
 3. `show REF` prints that entry's trimmed section plus your notes. The
-   default cap is 150 lines; `--full` lifts it. Respect `--max-lines` on
+   default cap is 150 lines; `--full` lifts it (page REFs from `fts` are
+   capped the same way). Respect `--max-lines` on
    `search`, `fts` and `show` instead of dumping everything.
 4. `fts QUERY` searches the text inside pages when entry names don't match.
-   It prints `<Name>:page:<path>` REFs; `show` on one prints the whole page.
-5. Scope: a project `"docsets"` list in `.dash-docset.json` limits searches to
+   It prints `<Name>:page:<path>` REFs; `show` on one prints the page, capped
+   at `--max-lines` unless `--full`.
+5. Manage: `list` shows installed docsets and versions, `update [NAME]`
+   refreshes one or all, `remove NAME` deletes one (notes are kept).
+6. Scope: a project `"docsets"` list in `.dash-docset.json` limits searches to
    those docsets. Without one, searches cover every docset unless more than 4
    are full-size; then narrow with `-d NAME` (repeatable), set the list, or
    pass `--all`.

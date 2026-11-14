@@ -31,6 +31,20 @@
       - A flag to download and install docsets into Dash's, Zeal's or
         dasht's folder, used only when the user asks for it. Notes still
         stay in the script's own store (those programs don't read them).
+      - Deferred from the final review (2026-11-14):
+        - downloads: a size cap, and refusing https to http redirects.
+        - a fixed `.tmp` name for FTS builds breaks concurrent builds.
+        - `search` prints General notes for docsets whose hits were all cut.
+        - `show` reads the notes file twice.
+        - online-only entries skip notes.
+        - `user:` update matches the display name, not the index key.
+        - the unprefixed-install ambiguity check is incomplete when a
+          source fails to load.
+        - update's stored-url match also applies to kapeli and cheat docsets.
+        - non-ASCII case in the LIKE prefilter.
+        - duplicate names across `read_from` dirs are silently dropped.
+        - FTS tests for the cap, notes on `fts` and page-REF output, and
+          the mtime-based rebuild.
 
 ## Automation
 

@@ -1327,6 +1327,51 @@ class SourcesTests(unittest.TestCase):
         self.assertTrue(os.path.exists(notes))
         self.assertIn("notes", out)
 
+    def test_cheat_unknown_version_always_redownloads(self):
+        url = docset.CHEAT_URL % "Foo"
+        self.net(pages={}, archives={url: self.tgz}, heads={})
+        self.assertEqual(self.main("install", "cheat:Foo")[0], 0)
+        self.assertEqual(docset.load_installed(self.store)["Foo"]["version"],
+                         docset.UNKNOWN_VERSION)
+        net = self.net(pages={}, archives={url: self.tgz}, heads={})
+        code, out, err = self.main("update", "Foo")
+        self.assertEqual(code, 0, err)
+        self.assertIn("version unknown", out)
+        self.assertNotIn("up to date", out)
+        self.assertEqual(net.downloaded, [url])
+
+    def test_notes_rejects_path_names(self):
+        self.net()
+        self.main("install", "kapeli:Foo")
+        for bad in ("../../x", "a/b", "a\\b", ".."):
+            with self.subTest(bad=bad):
+                code, out, err = self.main("notes", bad, "--path")
+                self.assertEqual(code, 2, err)
+        with self.assertRaises(docset.CLIError):
+            docset.notes_path(self.store, "")
+
+    def test_remove_symlinked_docset(self):
+        target = os.path.join(self.tmp, "real")
+        os.makedirs(target)
+        make_docset(target, "Foo")
+        os.symlink(os.path.join(target, "Foo.docset"),
+                   os.path.join(self.store_dir, "Foo.docset"))
+        docset.save_installed(self.store, {"Foo": {
+            "source": "kapeli", "version": "1.0", "url": MIRROR1,
+            "installed": "2026-11-14"}})
+        code, out, err = self.main("remove", "Foo")
+        self.assertEqual(code, 0, err)
+        self.assertFalse(os.path.lexists(os.path.join(self.store_dir, "Foo.docset")))
+        self.assertTrue(os.path.isdir(os.path.join(target, "Foo.docset")))
+
+    def test_remove_oserror_is_cli_error_7(self):
+        self.net()
+        self.main("install", "kapeli:Foo")
+        with mock.patch.object(docset.shutil, "rmtree", side_effect=OSError("boom")):
+            code, out, err = self.main("remove", "Foo")
+        self.assertEqual(code, 7)
+        self.assertIn("boom", err)
+
     def test_sources_cache_and_filter(self):
         names = lambda a: json.dumps([{"name": n, "type": "file"} for n in a])
         net = self.net(pages={
