@@ -1,6 +1,6 @@
 # dash-docset skill: design
 
-Status: draft for review (2026-11-14).
+Status: complete, awaiting the user's approval (2026-11-14).
 
 ## Intent
 
@@ -199,9 +199,23 @@ docset.py notes DOCSET [--check | --path]
   trimming and ignoring case; a trailing ` (Type)` in the heading limits
   it to that entry type.
 
-## Open question for the user
+### Search scope (the user, 2026-11-14)
 
-- **Default search scope** (see message).
+Applies to `search` and `fts` when no `-d` is given.
+
+- The project's `.dash-docset.json` may list `"docsets": [...]`; search
+  uses that list.
+- With no list, search uses all installed docsets, unless more than 4
+  are "full size". Then it stops with an error listing them and pointing to
+  `-d`, the project list, or `--all`. `--all` overrides.
+- "Full size" (Claude's call): anything not from the cheat-sheet source,
+  except a foreign docset whose index has fewer than 500 entries, which is
+  treated as cheat-sheet sized.
+- Output cap: `--max-lines N` on `search`, `fts` and `show`. Defaults
+  (Claude's call): 40 for `search` and `fts`, 150 for `show`. Truncated
+  output ends with a line saying how much was cut and how to see more.
+  With `--all` the default is the same; results are ranked across
+  docsets before the cap, so the best matches survive.
 
 ## Left to the builder
 
