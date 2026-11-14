@@ -589,12 +589,18 @@ def cmd_search(args):
     like = like_pattern(max(words, key=len) if len(words) > 1 else args.query)
     want_type = args.type.lower() if args.type else None
     hits = []
+    no_anchor = set()  # (docset, id) of entries that point at a whole page
+    q_lower = args.query.lower()
     for ds in docs:
         try:
-            for i, name, typ, _path in iter_entries(ds, like):
+            for i, name, typ, path in iter_entries(ds, like):
                 if want_type is not None and typ.lower() != want_type:
                     continue
                 r = rank(args.query, name)
+                if r and _short_name(name) == q_lower:
+                    r = 0  # 'f(a, b)' for query 'f' is an exact match
+                if "#" not in path and not re.match(r"https?://", path, re.I):
+                    no_anchor.add((ds.name, i))
                 if (r is None or r == 3) and len(words) > 1 \
                         and all(w in name.lower() for w in words):
                     r = 2
@@ -602,7 +608,8 @@ def cmd_search(args):
                     hits.append((r, len(name), name, ds.name, i, typ))
         except sqlite3.Error as e:
             _warn("skipping %s: %s" % (ds.name, e))
-    hits.sort(key=lambda h: h[:4] + (h[4],))
+    # within a rank, entries with an anchor (a section) before whole pages
+    hits.sort(key=lambda h: (h[0], (h[3], h[4]) in no_anchor) + h[1:5])
     hint = "raise --max-lines or narrow the query, -d or --type"
     if args.json:
         items = [{"ref": "%s:%d" % (d, i), "docset": d, "type": t, "name": n,
@@ -969,7 +976,12 @@ def cmd_show(args):
         print("online-only entry: " + path)
         return 0
     file_part, anchor = entry_location(path)
-    lines = trim_to_anchor(read_page_blocks(ds, file_part), anchor)
+    blocks = read_page_blocks(ds, file_part)
+    if anchor is None:  # no anchor: start at a heading named like the entry
+        want = _short_name(entry_name)
+        anchor = next((b.ids[0] for b in blocks if b.level and b.ids
+                       and _short_name(b.text.lstrip("#").strip()) == want), None)
+    lines = trim_to_anchor(blocks, anchor)
     _print_lines(lines, args)
     if not args.no_notes:
         for line in notes_for(store, name, entry_name, entry_type):

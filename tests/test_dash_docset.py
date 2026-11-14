@@ -529,6 +529,14 @@ class SearchTests(unittest.TestCase):
         return run_cli("--dir", self.store_dir, *args, env={"HOME": self.tmp},
                        cwd=self.tmp)
 
+    def test_anchored_signature_beats_bare_page_entry(self):
+        self.add("Alpha", [("date_sub", "Function", "date.html"),
+                           ("date_sub(part, a, b)", "Function", "date.html#sub"),
+                           ("date_subx", "Function", "date.html#x")])
+        out = self.cli("search", "date_sub", "-d", "Alpha").stdout.splitlines()
+        names = [l.split("  ")[2] for l in out]
+        self.assertEqual(names, ["date_sub(part, a, b)", "date_sub", "date_subx"])
+
     def test_multi_word_queries(self):
         self.add("Alpha", [("hero:get_walking_speed()", "Method", "a.html"),
                            ("hero:set_walking_speed(speed)", "Method", "a.html"),
@@ -837,6 +845,24 @@ class ShowTests(unittest.TestCase):
         self.assertEqual(texts[3], "```\n  x = 1\n  y = 2\n```")
         self.assertNotIn("skip", "".join(texts))
         self.assertNotIn("bye", "".join(texts))
+
+
+class AnchorlessShowTests(unittest.TestCase):
+    def test_show_starts_at_heading_named_like_entry(self):
+        tmp = tmp_dir(self)
+        store = os.path.join(tmp, "store")
+        page = ("<html><body><h1>Date Functions</h1><p>intro</p>"
+                "<h4 id='date_subpart'>date_sub(part, a, b)</h4><p>signed length</p>"
+                "<h4 id='other'>other()</h4><p>nope</p></body></html>")
+        make_docset(store, "Duck", entries=[("date_sub", "Function", "d.html")],
+                    pages={"d.html": page})
+        r = run_cli("--dir", store, "show", "Duck:1", "--no-notes",
+                    env={"HOME": tmp}, cwd=tmp)
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertTrue(r.stdout.startswith("#### date_sub(part, a, b)"), r.stdout)
+        self.assertIn("signed length", r.stdout)
+        self.assertNotIn("intro", r.stdout)
+        self.assertNotIn("nope", r.stdout)
 
 
 class NotesTests(unittest.TestCase):
