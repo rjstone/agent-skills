@@ -50,15 +50,21 @@ read-only to the script (`update` and `remove` refuse them).
    without the GitHub API; unprefixed names and the official and cheat
    `sources` listings call api.github.com (anonymous limit 60 requests an
    hour), so prefix when you can. A prefix is required when sources share a
-   name.
+   name. Official names have no version suffix and match Dash's feed files:
+   `kapeli:Python` (Python 3), `kapeli:NodeJS`, `kapeli:JavaScript`,
+   `kapeli:Django`, `kapeli:Bash`; Git is only a cheat sheet (`cheat:Git`).
+   A not-found error suggests close names and the other prefixes.
 2. `search QUERY` finds entries by name and prints a REF for each.
 3. `show REF` prints that entry's trimmed section plus your notes. The
    default cap is 150 lines; `--full` lifts it (page REFs from `fts` are
    capped the same way). Respect `--max-lines` on
    `search`, `fts` and `show` instead of dumping everything.
 4. `fts QUERY` searches the text inside pages when entry names don't match.
-   It prints `<Name>:page:<path>` REFs; `show` on one prints the page, capped
-   at `--max-lines` unless `--full`.
+   Each hit prints a REF and the page path: the REF is the first entry on that
+   page (`<Name>:<id>`), or `<Name>:page:<path>` when no entry points there.
+   `show <Name>:page:<path>` prints the whole page, capped at `--max-lines`
+   unless `--full`. The first `fts` on a docset builds its index (seconds
+   for large docsets); `index-text NAME` builds it ahead of time.
 5. Manage: `list` shows installed docsets and versions, `update [NAME]`
    refreshes one or all, `remove NAME` deletes one (notes are kept).
 6. Scope: a project `"docsets"` list in `.dash-docset.json` limits searches to
@@ -69,7 +75,8 @@ read-only to the script (`update` and `remove` refuse them).
 ## Notes
 
 Keep durable lessons (gotchas, project conventions) in the docset's notes
-file. Find it with `notes DOCSET --path` (not created until you write it),
+file. Find it with `notes DOCSET --path` (creates the `notes/` folder; the
+file itself appears when you write it),
 and edit it with normal file tools. Format: a `## General` section, plus
 `## <entry name>` sections (optional ` (Type)` suffix to disambiguate). `show`
 appends General and the matching section, so many small sections are cheap

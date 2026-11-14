@@ -225,7 +225,7 @@ def cmd_where(args):
     store = resolve_store(args.dir, cwd, env)
     if store is None:
         print("storage location not set (use where --set PATH --project|--user)")
-        return 0
+        return 3
     print("store: %s" % store.path)
     print("source: %s" % store.source)
     for r in store.read_from:
@@ -834,16 +834,18 @@ def notes_for(store, docset_name, entry_name, entry_type) -> List[str]:
     if text is None:
         return []
     general, sections = parse_notes(text)
-    body = list(general)
+    body = []
+    if any(l.strip() for l in general):
+        body += ["## General"] + general
     want = entry_name.lower()
     for key, items in sections.items():
         for typ, lines in items:
-            if key == want:
-                if typ is None or typ.lower() == (entry_type or "").lower():
-                    body.extend(lines)
-            elif typ is not None and "%s (%s)" % (key, typ.lower()) == want:
-                body.extend(lines)  # entry name itself ends in "(...)"
-    if not any(l.strip() for l in body):
+            hit = (key == want and (typ is None or typ.lower() == (entry_type or "").lower())) \
+                or (typ is not None and "%s (%s)" % (key, typ.lower()) == want)
+            if hit and any(l.strip() for l in lines):
+                body += ["## %s%s" % (entry_name, "" if typ is None or key != want
+                                      else " (%s)" % typ)] + lines
+    if not body:
         return []
     return ["--- notes (%s) ---" % path] + body
 
@@ -855,7 +857,7 @@ def general_notes(store, docset_name) -> List[str]:
     general, _ = parse_notes(text)
     if not any(l.strip() for l in general):
         return []
-    return ["--- notes (%s) ---" % path] + general
+    return ["--- notes (%s) ---" % path, "## General"] + general
 
 
 def size_warnings(text) -> List[str]:
@@ -896,6 +898,7 @@ def cmd_notes(args):
         raise CLIError("unknown docset %r (see: docset.py list)" % args.docset, 5)
     path = notes_path(store, ds.name)
     if args.path:
+        os.makedirs(os.path.dirname(path), exist_ok=True)
         print(path)
         return 0
     _, text = _read_notes(store, ds.name)
@@ -907,6 +910,8 @@ def cmd_notes(args):
         warns = check_notes(text, names)
         for w in warns:
             print("warning: " + w)
+        if not warns:
+            print("ok: %s" % path)
         return 1 if warns else 0
     if text is None:
         print("no notes file yet for %s (it would be %s)" % (ds.name, path))
@@ -1009,6 +1014,10 @@ def ensure_fts(store, ds) -> None:
     stored = _stored_stamp(fts_path(store, ds.name))
     if stored == docset_stamp(ds):
         return
+    if stored is None:
+        print("note: building the full-text index for %s (first use; large "
+              "docsets take a while; index-text builds it ahead)" % ds.name,
+              file=sys.stderr)
     build_fts(store, ds)
     if stored is not None:
         _warn("rebuilt index for %s" % ds.name)
@@ -1086,6 +1095,9 @@ def cmd_fts(args):
     hits = fts_search(store, docs, args.query, limit)
     if args.json:
         print(json.dumps(hits, indent=2))
+        return 0
+    if not hits:
+        print("no matches for %r" % args.query)
         return 0
     lines = []
     for h in hits:
@@ -1233,8 +1245,11 @@ def _fetch_source(source):
     return parse_index_json(data, "user", USER_BASE_URL)
 
 
-def load_sources(store, refresh: bool, sources=SOURCE_NAMES) -> List[Feed]:
-    """Feeds of each source, cached per source for 7 days; stale cache on failure."""
+def load_sources(store, refresh: bool, sources=SOURCE_NAMES,
+                 failed: Optional[list] = None) -> List[Feed]:
+    """Feeds of each source, cached per source for 7 days; stale cache on failure.
+
+    Sources with neither a fresh list nor a cache are appended to `failed`."""
     path = _cache_path(store)
     try:
         cache = _load_json(path) if os.path.isfile(path) else {}
@@ -1258,6 +1273,8 @@ def load_sources(store, refresh: bool, sources=SOURCE_NAMES) -> List[Feed]:
                     _warn("using the cached %s list; refresh failed: %s" % (source, e))
                 else:
                     _warn("cannot load the %s list: %s" % (source, e))
+                    if failed is not None:
+                        failed.append(source)
                     continue
         feeds.extend(Feed(f["name"], f["source"], f["version"], list(f["urls"]))
                      for f in entry["feeds"])
@@ -1281,6 +1298,36 @@ def _name_from_url(url, source):
     return parts[-1][:-len(".tgz")] if parts[-1].endswith(".tgz") else parts[-1]
 
 
+PREFIX_HINT = ("kapeli:Name for official docsets (no version suffix: "
+               "kapeli:Python, kapeli:NodeJS, kapeli:Django), cheat:Name for "
+               "cheat sheets (cheat:Git), user:Name for user-contributed")
+
+
+def _suggest(store, source, name) -> List[str]:
+    """Likely intended names for a missing kapeli/cheat feed."""
+    out = []
+    try:
+        cache = _load_json(_cache_path(store))
+        names = [f["name"] for f in cache.get(source, {}).get("feeds", [])]
+    except (CLIError, OSError, KeyError, TypeError, AttributeError):
+        names = []
+    if names:
+        import difflib
+        out += difflib.get_close_matches(name, names, n=3, cutoff=0.6)
+    base = re.sub(r"[\s_-]*\d+(\.\d+)*$", "", name)
+    if base and base != name and base not in out:
+        if names:
+            if base in names:
+                out.insert(0, base)
+        elif source == "kapeli":
+            try:
+                fetch(KAPELI_FEED_URL % quote(base))
+                out.insert(0, base)
+            except (FetchError, ValueError, OSError):
+                pass
+    return ["%s:%s" % (source, n) for n in out]
+
+
 def resolve_feed(store, source, name, user_feeds=None) -> Feed:
     """Complete feed for source:name without listing the whole source (Ruling 8)."""
     if source in ("kapeli", "cheat") and (
@@ -1301,7 +1348,12 @@ def resolve_feed(store, source, name, user_feeds=None) -> Feed:
                        % (source, name, name), 5)
     except FetchError as e:
         if e.status == 404:
-            raise CLIError("%s docset %r not found (%s)" % (source, name, e), 5)
+            sugg = _suggest(store, source, name)
+            others = [s for s in SOURCE_NAMES if s != source]
+            raise CLIError("%s docset %r not found (%s). %s" % (
+                source, name, e,
+                ("Did you mean %s? " % " or ".join(sugg) if sugg else "")
+                + "Or try %s:%s or %s:%s." % (others[0], name, others[1], name)), 5)
         raise CLIError(str(e), 7)
     except ValueError as e:
         raise CLIError(str(e), 7)
@@ -1441,10 +1493,14 @@ def install(store, spec: str) -> Docset:
     prefix, sep, name = spec.partition(":")
     if sep and prefix in SOURCE_NAMES and name:
         return install_feed(store, resolve_feed(store, prefix, name))
-    matches = [f for f in load_sources(store, False) if _norm(f.name) == _norm(spec)]
+    failed: List[str] = []
+    matches = [f for f in load_sources(store, False, failed=failed)
+               if _norm(f.name) == _norm(spec)]
     if not matches:
-        raise CLIError("no docset named %r in any source (see: docset.py sources %s)"
-                       % (spec, spec), 5)
+        where = ("the loaded source lists (the %s list could not be loaded)"
+                 % " and ".join(failed) if failed else "any source list")
+        raise CLIError("no docset named %r in %s. Try a prefix: %s; or "
+                       "docset.py sources %s" % (spec, where, PREFIX_HINT, spec), 5)
     if len(matches) > 1:
         raise AmbiguousName("%r is offered by several sources; name one: %s"
                             % (spec, ", ".join("%s:%s" % (f.source, f.name)
@@ -1455,7 +1511,8 @@ def install(store, spec: str) -> Docset:
 
 def cmd_sources(args):
     store = require_store(args)
-    feeds = load_sources(store, args.refresh)
+    failed: List[str] = []
+    feeds = load_sources(store, args.refresh, failed=failed)
     q = _norm(args.query) if args.query else ""
     lines = []
     for f in feeds:
@@ -1465,10 +1522,14 @@ def cmd_sources(args):
     lines.sort()
     if not lines:
         print("no docsets match %r" % (args.query or ""))
-        return 0
     for line in cap_lines(lines, args.max_lines,
                           "raise --max-lines or give a QUERY"):
         print(line)
+    if failed:
+        print("note: incomplete list: the %s list could not be loaded. "
+              "Prefixed installs still work: %s" % (
+                  " and ".join(failed), PREFIX_HINT))
+        return 7
     return 0
 
 

@@ -259,7 +259,7 @@ class StoreTests(unittest.TestCase):
         dasht = os.path.join(self.env["XDG_DATA_HOME"], "dasht", "docsets")
         os.makedirs(dasht)
         r = run_cli("where", env=self.cli_env(), cwd=self.sub)
-        self.assertEqual(r.returncode, 0, r.stderr)  # where itself reports unset
+        self.assertEqual(r.returncode, 3, r.stderr)  # same code as other commands
         self.assertIn("not set", r.stdout)
         r = run_cli("where", "--discover", env=self.cli_env(), cwd=self.sub)
         self.assertEqual(r.returncode, 0, r.stderr)
@@ -756,6 +756,24 @@ class NotesTests(unittest.TestCase):
             f.write(text)
         return path
 
+    def test_notes_path_creates_dir_and_check_ok(self):
+        make_docset(self.store_dir, "Py")
+        r = self.cli("notes", "Py", "--path")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertTrue(os.path.isdir(os.path.dirname(r.stdout.strip())))
+        self.write_notes("Py", "## General\nok\n")
+        r = self.cli("notes", "Py", "--check")
+        self.assertEqual(r.returncode, 0, r.stdout)
+        self.assertTrue(r.stdout.startswith("ok: "))
+
+    def test_notes_output_keeps_headings(self):
+        self.write_notes("Py", "gen\n## asyncio.gather (Function)\nfn\n")
+        out = docset.notes_for(self.store_dir, "Py", "asyncio.gather", "Function")
+        self.assertEqual(out[1:], ["## General", "gen",
+                                   "## asyncio.gather (Function)", "fn"])
+        self.assertEqual(docset.general_notes(self.store_dir, "Py")[1:],
+                         ["## General", "gen"])
+
     def test_notes_path(self):
         self.assertEqual(docset.notes_path(self.store_dir, "Py"),
                          os.path.join(self.store_dir, "notes", "Py.md"))
@@ -902,7 +920,13 @@ class FtsTests(unittest.TestCase):
         self.assertEqual(items[0]["path"], "guide.html")
         r = self.cli("fts", "zzzznothing", "-d", "Py")
         self.assertEqual(r.returncode, 0)
-        self.assertEqual(r.stdout.strip(), "")
+        self.assertEqual(r.stdout.strip(), "no matches for 'zzzznothing'")
+
+    def test_fts_first_build_says_so(self):
+        r = self.cli("fts", "gather", "-d", "Py")
+        self.assertIn("building the full-text index for Py", r.stderr)
+        r = self.cli("fts", "gather", "-d", "Py")
+        self.assertNotIn("building", r.stderr)
 
     def test_fts_index_layout_and_unreferenced_pages(self):
         with open(os.path.join(self.store_dir, "Py.docset", "Contents", "Resources",
@@ -918,7 +942,7 @@ class FtsTests(unittest.TestCase):
         self.assertEqual(keys, {"docset_version", "built_at"})
         con.close()
         r = self.cli("fts", "orphanword", "-d", "Py")
-        self.assertEqual(r.stdout.strip(), "")
+        self.assertTrue(r.stdout.startswith("no matches"))
 
     def test_fts_rebuilds_stale(self):
         self.set_version("1")
@@ -1513,6 +1537,27 @@ class SourcesTests(unittest.TestCase):
         code, out, err = self.main("install", "cheat:Zed")
         self.assertEqual(code, 5)
         self.assertIn("not found", err)
+
+    def test_kapeli_404_suggests_unversioned_name(self):
+        self.net()
+        code, out, err = self.main("install", "kapeli:Foo_3")
+        self.assertEqual(code, 5)
+        self.assertIn("Did you mean kapeli:Foo?", err)
+        self.assertIn("cheat:Foo_3", err)
+
+    def test_unprefixed_not_found_hints_prefixes(self):
+        FakeNet(self, pages={docset.USER_INDEX_URL: json.dumps(USER_INDEX)})
+        code, out, err = self.main("install", "Zed")
+        self.assertEqual(code, 5)
+        self.assertIn("could not be loaded", err)
+        self.assertIn("kapeli:Name", err)
+
+    def test_sources_partial_list_says_so(self):
+        FakeNet(self, pages={docset.USER_INDEX_URL: json.dumps(USER_INDEX)})
+        code, out, err = self.main("sources")
+        self.assertEqual(code, 7)
+        self.assertIn("user:Foo", out)
+        self.assertIn("incomplete list: the kapeli and cheat list", out)
 
     def test_sources_all_failing(self):
         FakeNet(self)
