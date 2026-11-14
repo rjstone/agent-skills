@@ -68,9 +68,11 @@ apps and existing docset folders. Then decide where you are running:
      cheat sheet when it answers the question; skip `update`.
 
 Never pick a location yourself: the user chooses or approves it. If unsure
-which case applies, ask. Run `where --set PATH (--project|--user)
+which case applies, ask. If a folder meant to be permanent is under a
+temporary location (`/tmp`, `%TEMP%`), say it may be cleared. Run `where --set PATH (--project|--user)
 [--read-from DIR]` with the choice (`--project` writes `.dash-docset.json`
-in the current folder; `--user` writes the user config); quote a `~` path
+in the current folder; `--user` writes `~/.config/dash-docset/config.json`,
+or `%APPDATA%\dash-docset\config.json` on Windows); quote a `~` path
 (`'~/.local/share/dash-docset'`) so the config keeps the portable form.
 
 Never write into a Dash, Zeal or dasht folder; docsets found there are
@@ -107,6 +109,9 @@ from one of those folders (`--force` overrides).
    capped the same way). Respect `--max-lines` on
    `search`, `fts` and `show` instead of dumping everything.
 4. `fts QUERY` searches the text inside pages when entry names don't match.
+   Function options, parameters and settings are often only in page text
+   (e.g. `read_csv`'s `skip` is a row in a table), so look for them with
+   `fts`.
    Each hit prints `<Name>:page:<path>#<anchor>`: `show` on it prints the
    section around the match (without `#<anchor>`, the whole page). The
    first `fts` on a docset builds its index (seconds for large docsets);
