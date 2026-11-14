@@ -127,6 +127,23 @@ class SkeletonTests(unittest.TestCase):
         for name in SUBCOMMANDS:
             self.assertIn(name, r.stdout)
 
+    def test_version(self):
+        import re
+        self.assertRegex(docset.VERSION, r"^\d+\.\d+\.\d+$")
+        self.assertEqual(docset.USER_AGENT, f"dash-docset/{docset.VERSION}")
+        r = run_cli("--version")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertIn(docset.VERSION, r.stdout)
+        self.assertIn(docset.VERSION, run_cli("--help").stdout)
+        # The script may lag SKILL.md's version but never lead it.
+        skill_md = os.path.join(os.path.dirname(os.path.dirname(SCRIPT)), "SKILL.md")
+        with open(skill_md, encoding="utf-8") as f:
+            m = re.search(r'^\s*version:\s*"(\d+)\.(\d+)\.(\d+)"', f.read(), re.M)
+        self.assertIsNotNone(m)
+        skill = tuple(int(x) for x in m.groups())
+        script = tuple(int(x) for x in docset.VERSION.split("."))
+        self.assertLessEqual(script, skill)
+
     def test_fixture_both_forms(self):
         import tempfile
         for form in ("searchIndex", "ztoken"):

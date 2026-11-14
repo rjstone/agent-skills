@@ -186,6 +186,9 @@ metadata:
   entry search, page text, full-text search and per-docset notes. The user
   picks the storage location; the script never writes into Dash, Zeal or
   dasht folders.
+  `scripts/docset.py` has its own `VERSION` (used in `--version`,
+  `--help` and the User-Agent), bumped only when the script changes; it
+  may lag `metadata.version` but never lead it (a test checks).
 
 ## Decisions (the user, 2026-11-08)
 

@@ -20,6 +20,10 @@ from urllib.parse import quote, unquote
 from dataclasses import dataclass, field
 from typing import Iterator, List, Mapping, Optional, Tuple
 
+# Script version. Bump it (and SKILL.md's metadata.version to at least the
+# same value) only when this script changes; SKILL.md may run ahead of it.
+VERSION = "0.1.0"
+
 PROJECT_FILE = ".dash-docset.json"
 GITIGNORE_LINES = ["*", "!.gitignore", "!notes/", "!notes/**"]
 
@@ -1115,7 +1119,7 @@ CHEAT_URL = "https://kapeli.com/feeds/zzz/cheatsheets/%s.tgz"
 
 SOURCE_NAMES = ("kapeli", "user", "cheat")
 CACHE_MAX_AGE = 7 * 86400
-USER_AGENT = "dash-docset/0.1"
+USER_AGENT = f"dash-docset/{VERSION}"
 NET_TIMEOUT = 60
 UNKNOWN_VERSION = "unknown"
 
@@ -1561,7 +1565,10 @@ def cmd_remove(args):
 
 
 def build_parser():
-    parser = argparse.ArgumentParser(prog="docset.py", description=__doc__)
+    parser = argparse.ArgumentParser(
+        prog="docset.py", description=f"dash-docset {VERSION}: {__doc__}")
+    parser.add_argument("--version", action="version",
+                        version=f"dash-docset {VERSION}")
     parser.add_argument("--dir", metavar="PATH",
                         help="use this docset store (overrides DASH_DOCSET_DIR and config)")
     sub = parser.add_subparsers(dest="command", metavar="COMMAND")
