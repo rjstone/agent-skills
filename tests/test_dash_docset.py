@@ -482,6 +482,16 @@ class NavSkipTests(unittest.TestCase):
         self.assertEqual(text, ["# Title", "Body"])
 
 
+class TableSpanTests(unittest.TestCase):
+    def test_colspan_cells_labelled(self):
+        html = ("<table><tr><td>31</td><td>30</td><td>29</td></tr>"
+                "<tr><td>1</td><td colspan='2'>Rm</td></tr>"
+                "<tr><td colspan='3'></td></tr></table>")
+        text = [b.text for b in docset.html_to_text(html)]
+        self.assertIn("1 | Rm (2 cols)", text)
+        self.assertFalse(any("cols" in t and "Rm" not in t for t in text))  # empty span
+
+
 class RankTests(unittest.TestCase):
     def test_rank_order(self):
         r = docset.rank
@@ -559,7 +569,8 @@ class SearchTests(unittest.TestCase):
         r = self.cli("search", "timer", "-d", "Alpha")
         out = r.stdout.splitlines()
         self.assertEqual(sum(1 for l in out if "t_i_m_e_r" in l), docset.FUZZY_SHOWN)
-        self.assertEqual(out[-1], "... 4 more fuzzy matches cut (letters in order only)")
+        self.assertEqual(out[-1], "... 9 fuzzy matches hidden (letters in order only, "
+                                  "often unrelated)")
         r = self.cli("search", "tmr", "-d", "Alpha")  # only fuzzy: none cut
         self.assertEqual(sum(1 for l in r.stdout.splitlines() if "t_i_m_e_r" in l), 9)
 
@@ -571,9 +582,11 @@ class SearchTests(unittest.TestCase):
         r = self.cli("search", "sleep")
         self.assertEqual(r.returncode, 0, r.stderr)
         out = r.stdout.splitlines()
-        self.assertEqual(out[4], "--- fuzzy matches (letters in order, often unrelated) ---")
-        names = [l.split("  ")[2] for l in out if not l.startswith("---")]
-        self.assertEqual(names, ["Sleep", "sleep", "sleep_long", "xsleepx", "s_l_e_e_p"])
+        # fuzzy hits are hidden when real hits exist
+        self.assertEqual(out[4], "... 1 fuzzy matches hidden (letters in order only, "
+                                 "often unrelated)")
+        names = [l.split("  ")[2] for l in out[:4]]
+        self.assertEqual(names, ["Sleep", "sleep", "sleep_long", "xsleepx"])
         r = self.cli("search", "slp", "-d", "Alpha")
         self.assertTrue(r.stdout.startswith("no exact, prefix or substring matches"))
         r = self.cli("search", "qqq", "-d", "Alpha")
@@ -1832,6 +1845,14 @@ class SourcesTests(unittest.TestCase):
             with self.assertRaises(docset.FetchError):
                 docset.cached_get(self.store, "k", "https://x.example/a", 10)
         self.assertEqual(net.fetched, ["https://x.example/a"])
+
+    def test_install_says_name_when_it_differs(self):
+        url = docset.USER_BASE_URL + "Bar_Key/Bar.tgz"  # archive holds Foo.docset
+        FakeNet(self, pages={docset.USER_INDEX_URL: json.dumps(USER_INDEX)},
+                archives={url: self.tgz})
+        code, out, err = self.main("install", "user:Bar")
+        self.assertEqual(code, 0, err)
+        self.assertIn("use it as Foo (for -d and REFs)", out)
 
     def test_install_skips_same_version_and_foreign(self):
         net = self.net()

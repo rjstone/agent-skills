@@ -12,8 +12,9 @@ metadata:
 # Dash docsets
 
 Install Dash docsets and search them offline with `python scripts/docset.py`
-(stdlib only). The script's `--help` and `<command> --help` are the command
-reference; this file covers only what they don't.
+(stdlib only; the path is relative to this skill's folder, so from elsewhere
+give its full path). The script's `--help` and `<command> --help` are the
+command reference; this file covers only what they don't.
 
 ## When to use
 
@@ -69,10 +70,11 @@ apps and existing docset folders. Then decide where you are running:
 
 Never pick a location yourself: the user chooses or approves it. If unsure
 which case applies, ask. If a folder meant to be permanent is under a
-temporary location (`/tmp`, `%TEMP%`), say it may be cleared. Run `where --set PATH (--project|--user)
-[--read-from DIR]` with the choice (`--project` writes `.dash-docset.json`
-in the current folder; `--user` writes `~/.config/dash-docset/config.json`,
-or `%APPDATA%\dash-docset\config.json` on Windows); quote a `~` path
+temporary location (`/tmp`, `%TEMP%`), say it may be cleared. Run
+`where --set PATH (--project|--user) [--read-from DIR]` with the choice
+(`--project` writes `.dash-docset.json` in the current folder; `--user`
+writes `~/.config/dash-docset/config.json`, or
+`%APPDATA%\dash-docset\config.json` on Windows); quote a `~` path
 (`'~/.local/share/dash-docset'`) so the config keeps the portable form.
 
 Never write into a Dash, Zeal or dasht folder; docsets found there are
@@ -89,10 +91,13 @@ from one of those folders (`--force` overrides).
    (`kapeli:Python`, `kapeli:NodeJS`, `kapeli:Django`) or Zeal's names
    (`kapeli:Python_3`, `kapeli:Python_2`). `kapeli:Python` is the newest
    Python; `kapeli:Python_3` is the same feed limited to 3.x (and
-   `Python_2` to 2.x), so `update` never crosses that line. Git is only a cheat sheet
-   (`cheat:Git`). Pin an older official version with `@`:
+   `Python_2` to 2.x), so `update` never crosses that line. Git is only a
+   cheat sheet (`cheat:Git`). Pin an older official version with `@`:
    `kapeli:Python@3.12` installs the newest 3.12.x and `update` keeps the
    pin. A not-found error suggests close names and the other prefixes.
+   A docset's name for `-d` and REFs is the one `install` and `list` print,
+   which can differ from the source name (`user:Arm Morello A64 ISA`
+   installs as `arm64morello`).
    Source lists are cached for a week; `sources --refresh` re-checks them.
    A "note (no action needed)" on stderr says a list came from a fallback
    source because another was unreachable; results are complete. Cheat
@@ -100,10 +105,10 @@ from one of those folders (`--force` overrides).
    exists.
 2. `search QUERY` finds entries by name and prints a REF for each. Several
    words need no quotes; a name must contain all of them (`search walking
-   speed` finds `hero:get_walking_speed()`). Hits
-   below the "fuzzy matches" line only share letters in order; treat them
-   as misses. No hits prints "no matches" and exits 0 (exit 5 means a
-   named docset or REF doesn't exist).
+   speed` finds `hero:get_walking_speed()`). Hits below the "fuzzy matches"
+   line only share letters in order; treat them as misses (when real hits
+   exist, fuzzy ones are hidden). No hits prints "no matches" and exits 0
+   (exit 5 means a named docset or REF doesn't exist).
 3. `show REF` prints that entry's trimmed section plus your notes. The
    default cap is 150 lines; `--full` lifts it (page REFs from `fts` are
    capped the same way). Respect `--max-lines` on
@@ -134,7 +139,8 @@ file. Find it with `notes DOCSET --path` (creates the `notes/` folder; the
 file itself appears when you write it),
 and edit it with normal file tools. Format: a `## General` section, plus
 `## <entry name>` sections: the name as `search` prints it, or its part
-before `(` (`## sol.timer.start` covers `sol.timer.start([context], ...)`),
+before `(` (`## sol.timer.start` covers `sol.timer.start([context], ...)`;
+`## SCBNDS (register)` covers that one entry, `## SCBNDS` all its variants),
 with an optional ` (Type)` suffix to disambiguate. Only
 `show` prints notes: General and the matching section (General alone for
 page REFs), so many small sections are cheap and one big one is not.
@@ -149,8 +155,9 @@ covers.
 Mention these to the user when they fit better:
 
 - Dash installed (macOS): Kapeli's MCP servers talk to the Dash app and use
-  its docsets and search directly: https://github.com/Kapeli/dash-mcp-server (Python)
-  or https://github.com/Kapeli/dash-mcp-server-node (Node.js).
+  its docsets and search directly:
+  https://github.com/Kapeli/dash-mcp-server (Python) or
+  https://github.com/Kapeli/dash-mcp-server-node (Node.js).
 - An MCP server instead of a CLI, without Dash or Zeal:
   https://github.com/keturn/ZDocsetMCP.
 - Reading docs directly in a viewer app: Zeal (Linux, Windows;

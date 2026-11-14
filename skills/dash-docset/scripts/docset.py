@@ -568,7 +568,7 @@ def cap_lines(lines, max_lines, hint) -> List[str]:
     return list(lines[:max_lines]) + ["... %d more lines cut; %s" % (cut, hint)]
 
 
-FUZZY_SHOWN = 5  # fuzzy hits shown when exact, prefix or substring hits exist
+FUZZY_SHOWN = 0  # fuzzy hits shown when exact, prefix or substring hits exist
 
 
 def _join_query(args):
@@ -630,7 +630,8 @@ def cmd_search(args):
                          "--- fuzzy matches (letters in order, often unrelated) ---")
         lines.append("%s:%d  %s  %s  (%s)" % (d, i, t, n, d))
     if cut:
-        lines.append("... %d more fuzzy matches cut (letters in order only)" % cut)
+        lines.append("... %d fuzzy matches hidden (letters in order only, often "
+                     "unrelated)" % cut)
     if not hits:
         lines.append("no matches for %r (entry names only; fts searches the text "
                      "inside pages)" % args.query)
@@ -687,11 +688,13 @@ class _TextParser(HTMLParser):
         self.id_tag = ""
         self.start_depth = 0
         self.skip_tag = ""
+        self.cell = None  # (buf index, colspan) of the open table cell
 
     def _top(self):
         return self.stack[-1] if self.stack else ""
 
     def flush(self):
+        self._end_cell()
         raw = "".join(self.buf)
         self.buf = []
         if self.in_pre:
@@ -738,8 +741,15 @@ class _TextParser(HTMLParser):
                 self.prefix = "- "
             elif tag == "pre":
                 self.in_pre = True
-        elif tag in ("td", "th") and self.buf and not self.in_pre:
-            self.buf.append(" | ")
+        elif tag in ("td", "th") and not self.in_pre:
+            self._end_cell()
+            if self.buf:
+                self.buf.append(" | ")
+            try:
+                span = int(a.get("colspan") or 1)
+            except ValueError:
+                span = 1
+            self.cell = (len(self.buf), span)
         elif tag == "br":
             self.buf.append("\n" if self.in_pre else " ")
         if a.get("id") and tag not in ("link", "meta"):
@@ -751,11 +761,21 @@ class _TextParser(HTMLParser):
         if not self.buf:
             self.start_depth = self.depth
 
+    def _end_cell(self):
+        """Label a non-empty cell spanning several columns: 'Rm (5 cols)'."""
+        if self.cell:
+            start, span = self.cell
+            self.cell = None
+            if span > 1 and "".join(self.buf[start:]).strip():
+                self.buf.append(" (%d cols)" % span)
+
     def handle_endtag(self, tag):
         if self.skip:
             if tag == self.skip_tag:
                 self.skip -= 1
             return
+        if tag in ("td", "th"):
+            self._end_cell()
         if tag in BLOCK_TAGS:
             self.flush()
             self.in_pre = self.in_pre and tag != "pre"
@@ -2195,7 +2215,11 @@ def cmd_install(args):
             print("%s: %s" % (spec, e), file=sys.stderr)
             failed = e.code
             continue
-        print("installed %s %s (%d entries)" % (ds.name, ds.version or "", ds.entry_count))
+        asked = spec.partition(":")[2] if ":" in spec else spec
+        hint = ("; use it as %s (for -d and REFs)" % ds.name
+                if _norm(asked.partition("@")[0]) != _norm(ds.name) else "")
+        print("installed %s %s (%d entries%s)" % (ds.name, ds.version or "",
+                                                 ds.entry_count, hint))
     return failed
 
 

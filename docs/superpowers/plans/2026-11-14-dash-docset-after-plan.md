@@ -56,6 +56,7 @@ plan:
 | `3301f12` | `search` treats `f(a, b)` as an exact match for `f` and lists anchored entries before whole-page entries; `show` starts an entry without an anchor at a heading named like it. Some docsets (DuckDB) have both kinds for one function. | DuckDB trial prep |
 | `4fb4c1e` | `SKILL.md`: the user config path, a warning when a "permanent" folder is temporary, and that options and settings are found with `fts`. | DuckDB trial |
 | `dff734b` | `fts` prints the short entry REF when the matched section is an entry's, trying every id on the block (DuckDB headings carry a Dash `//apple_ref` id plus the entry's id). | DuckDB trial |
+| (next) | Fixes from the Morello trials: `install` says the name to use when it differs from the source name (`user:Arm Morello A64 ISA` → `arm64morello`); fuzzy search hits are hidden when real hits exist; table cells spanning several columns are labelled (`Rm (5 cols)`), so encoding diagrams can be read as text; `SKILL.md`: the script path is relative to the skill folder, and note headings for variants. Navigation footers are left alone: nothing identifies them reliably, and stripping must never remove real docs (the user, 2026-11-14). | Morello trials |
 
 ## What the plan and design say that no longer holds
 
@@ -193,6 +194,23 @@ answered all three questions correctly:
 
 It used about 320 lines, the most of any run. About 80 were a parameters
 table it needed, and 40 a page it opened by mistake.
+
+Haiku at default and at low effort ran the same task on the Arm Morello A64
+ISA (user-contributed, 3,905 entries, CHERI capability instructions). Both
+answered all three questions correctly:
+- the `SCBNDS`/`SCBNDSE` exact-bounds difference
+- `GCBASE` syntax and CSP for register 31
+- encoding bit positions, inferred from a rendered bit table
+
+| | Default | Low |
+|---|---|---|
+| Lookup output | ~130 lines | ~230 lines |
+| Path | direct | explored more |
+| Bit positions | flagged its answer as an inference | stated without a caveat |
+| Notes | correct first time | first wrote a claim from memory, then corrected it |
+
+Both flagged the mismatch between the source name and the installed name,
+and the fuzzy noise.
 
 The "keep changes staged" question can't be answered from Kapeli's Git cheat
 sheet, which has no `reset --soft`. That's a content gap, not a skill bug.
