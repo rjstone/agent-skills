@@ -33,6 +33,13 @@
       - A flag to download and install docsets into Dash's, Zeal's or
         dasht's folder, used only when the user asks for it. Notes still
         stay in the script's own store (those programs don't read them).
+      - Bundled starter lists in `assets/` (names, titles, versions,
+        archive files for official, cheat-sheet and user-contributed
+        docsets, plus Zeal's MIT `docsets.json`), used when a list can't be
+        fetched, with a refresh script. On hold (the user, 2026-11-14):
+        Kapeli's feeds README allows its docsets only for personal use or
+        with Dash or Zeal; the user has asked Kapeli about redistributing
+        the metadata. Wait for the answer.
       - Deferred from the final review (2026-11-14):
         - downloads: a size cap, and refusing https to http redirects.
         - a fixed `.tmp` name for FTS builds breaks concurrent builds.
