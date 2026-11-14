@@ -858,5 +858,114 @@ class NotesTests(unittest.TestCase):
         self.assertEqual(r.returncode, 5)
 
 
+class FtsTests(unittest.TestCase):
+    def setUp(self):
+        self.tmp = tmp_dir(self)
+        self.store_dir = os.path.join(self.tmp, "store")
+        os.makedirs(self.store_dir)
+        make_docset(self.store_dir, "Py", pages={
+            "library/asyncio.html": DEFAULT_PAGES["library/asyncio.html"],
+            "guide.html": DEFAULT_PAGES["guide.html"]})
+
+    def cli(self, *args):
+        return run_cli("--dir", self.store_dir, *args, env={"HOME": self.tmp},
+                       cwd=self.tmp)
+
+    def set_version(self, v):
+        d = os.path.join(self.store_dir, ".dash-docset")
+        os.makedirs(d, exist_ok=True)
+        with open(os.path.join(d, "installed.json"), "w") as f:
+            json.dump({"Py": {"source": "kapeli", "version": v, "url": "u",
+                              "installed": "2026-01-01"}}, f)
+
+    def test_fts_finds_text_in_page(self):
+        r = self.cli("fts", "b()", "-d", "Py")  # only in <pre>, with FTS syntax
+        self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+        self.assertIn("Py:1  (Py)  library/asyncio.html", r.stdout)
+        self.assertIn("gather", r.stdout)
+        r = self.cli("fts", "Gather things", "-d", "Py", "--json")
+        items = json.loads(r.stdout)
+        self.assertEqual(items[0]["ref"], "Py:3")
+        self.assertEqual(sorted(items[0]), ["docset", "path", "ref", "snippet"])
+        self.assertEqual(items[0]["path"], "guide.html")
+        r = self.cli("fts", "zzzznothing", "-d", "Py")
+        self.assertEqual(r.returncode, 0)
+        self.assertEqual(r.stdout.strip(), "")
+
+    def test_fts_index_layout_and_unreferenced_pages(self):
+        with open(os.path.join(self.store_dir, "Py.docset", "Contents", "Resources",
+                               "Documents", "orphan.html"), "w") as f:
+            f.write("<p>orphanword</p>")
+        r = self.cli("index-text", "Py")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        db = os.path.join(self.store_dir, ".dash-docset", "fts", "Py.sqlite")
+        con = sqlite3.connect(db)
+        self.assertEqual(con.execute("SELECT COUNT(*) FROM pages").fetchone()[0], 2)
+        self.assertEqual(con.execute("SELECT COUNT(*) FROM page_entries").fetchone()[0], 3)
+        keys = {k for k, _ in con.execute("SELECT key, value FROM meta")}
+        self.assertEqual(keys, {"docset_version", "built_at"})
+        con.close()
+        r = self.cli("fts", "orphanword", "-d", "Py")
+        self.assertEqual(r.stdout.strip(), "")
+
+    def test_fts_rebuilds_stale(self):
+        self.set_version("1")
+        r = self.cli("fts", "Gather", "-d", "Py")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertNotIn("rebuilt", r.stderr)
+        r = self.cli("fts", "Gather", "-d", "Py")
+        self.assertNotIn("rebuilt", r.stderr)
+        self.set_version("2")
+        r = self.cli("fts", "Gather", "-d", "Py")
+        self.assertIn("rebuilt index for Py", r.stderr)
+        r = self.cli("fts", "Gather", "-d", "Py")
+        self.assertNotIn("rebuilt", r.stderr)
+
+    def test_fts_unavailable(self):
+        import contextlib
+        import io
+        from unittest import mock
+        for argv in (["fts", "x", "-d", "Py"], ["index-text", "Py"]):
+            err = io.StringIO()
+            with mock.patch.object(docset, "fts_available", return_value=False), \
+                    contextlib.redirect_stderr(err):
+                code = docset.main(["--dir", self.store_dir] + argv)
+            self.assertEqual(code, 2)
+            self.assertIn("FTS5", err.getvalue())
+
+    def test_fts_scope_error(self):
+        # 500+ entries make a store docset without a source full-size
+        big = [("e%d" % i, "Function", "p.html") for i in range(500)]
+        store2 = os.path.join(self.tmp, "s2")
+        os.makedirs(store2)
+        for i in range(5):
+            make_docset(store2, "B%d" % i, entries=big, pages={"p.html": "<p>x</p>"})
+        r = run_cli("--dir", store2, "fts", "x", env={"HOME": self.tmp}, cwd=self.tmp)
+        self.assertEqual(r.returncode, 4)
+
+    def test_parse_page_ref(self):
+        self.assertEqual(docset.parse_page_ref("Py:page:library/a.html"),
+                         ("Py", "library/a.html"))
+        self.assertIsNone(docset.parse_page_ref("Py:12"))
+        self.assertIsNone(docset.parse_page_ref("Py:page:"))
+
+    def test_show_accepts_page_ref(self):
+        r = self.cli("show", "Py:page:library/asyncio.html")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertIn("Run awaitables concurrently.", r.stdout)
+        self.assertIn("Block for a number of seconds.", r.stdout)  # whole page
+        r = self.cli("show", "Py:page:../../evil.html")
+        self.assertEqual(r.returncode, 5)
+        r = self.cli("show", "Py:page:nope.html")
+        self.assertEqual(r.returncode, 5)
+
+    def test_page_ref_for_page_without_entries(self):
+        with open(os.path.join(self.store_dir, "Py.docset", "Contents", "Resources",
+                               "Documents", "x.html"), "w") as f:
+            f.write("<p>unlisted</p>")
+        r = self.cli("show", "Py:page:x.html")
+        self.assertIn("unlisted", r.stdout)
+
+
 if __name__ == "__main__":
     unittest.main()

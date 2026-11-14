@@ -8,6 +8,7 @@ import pathlib
 import re
 import sqlite3
 import tempfile
+import time
 from html.parser import HTMLParser
 from urllib.parse import unquote
 from dataclasses import dataclass, field
@@ -673,20 +674,16 @@ def positive_int(text):
     return n
 
 
-def cmd_show(args):
-    name, entry_id = parse_ref(args.ref)
-    store = require_store(args)
-    ds = next((d for d in find_docsets(store) if d.name == name), None)
-    if ds is None:
-        raise CLIError("unknown docset %r (see: docset.py list)" % name, 5)
-    entry = next(iter_entries(ds, entry_id=entry_id), None)
-    if entry is None:
-        raise CLIError("no entry %s in docset %s" % (args.ref, name), 5)
-    _id, entry_name, entry_type, path = entry
-    if re.match(r"https?://", path, re.I):
-        print("online-only entry: " + path)
-        return 0
-    file_part, anchor = entry_location(path)
+def parse_page_ref(ref: str) -> Optional[Tuple[str, str]]:
+    """'<Docset>:page:<path>' -> (name, path), else None."""
+    name, sep, path = ref.partition(":page:")
+    if not sep or not name or not path:
+        return None
+    return name, path
+
+
+def page_file(ds, file_part) -> str:
+    """Absolute path of a page file inside the docset's Documents; CLIError 5."""
     docs = os.path.join(ds.path, "Contents", "Resources", "Documents")
     page = os.path.normpath(os.path.join(docs, *file_part.split("/")))
     try:
@@ -695,15 +692,46 @@ def cmd_show(args):
         inside = False
     if not inside or not os.path.isfile(page):
         raise CLIError("page file not found: %s" % page, 5)
-    with open(page, "rb") as f:
-        html = f.read().decode("utf-8", errors="replace")
-    blocks = html_to_text(html)
-    lines = trim_to_anchor(blocks, anchor)
+    return page
+
+
+def read_page_blocks(ds, file_part) -> List[Block]:
+    with open(page_file(ds, file_part), "rb") as f:
+        return html_to_text(f.read().decode("utf-8", errors="replace"))
+
+
+def _print_lines(lines, args):
     if not args.full:
         lines = cap_lines(lines, args.max_lines,
                           "raise --max-lines or use --full for the whole section")
     for line in lines:
         print(line)
+
+
+def cmd_show(args):
+    page_ref = parse_page_ref(args.ref)
+    name, entry_id = page_ref if page_ref else parse_ref(args.ref)
+    store = require_store(args)
+    ds = next((d for d in find_docsets(store) if d.name == name), None)
+    if ds is None:
+        raise CLIError("unknown docset %r (see: docset.py list)" % name, 5)
+    if page_ref:
+        blocks = read_page_blocks(ds, unquote(entry_id))
+        _print_lines(trim_to_anchor(blocks, None), args)
+        if not args.no_notes:
+            for line in general_notes(store, name):
+                print(line)
+        return 0
+    entry = next(iter_entries(ds, entry_id=entry_id), None)
+    if entry is None:
+        raise CLIError("no entry %s in docset %s" % (args.ref, name), 5)
+    _id, entry_name, entry_type, path = entry
+    if re.match(r"https?://", path, re.I):
+        print("online-only entry: " + path)
+        return 0
+    file_part, anchor = entry_location(path)
+    lines = trim_to_anchor(read_page_blocks(ds, file_part), anchor)
+    _print_lines(lines, args)
     if not args.no_notes:
         for line in notes_for(store, name, entry_name, entry_type):
             print(line)
@@ -872,6 +900,189 @@ def cmd_notes(args):
     return 0
 
 
+FTS_SNIPPET_TOKENS = 14
+
+
+def fts_available() -> bool:
+    try:
+        con = sqlite3.connect(":memory:")
+        try:
+            con.execute("CREATE VIRTUAL TABLE t USING fts5(x, tokenize='unicode61')")
+        finally:
+            con.close()
+        return True
+    except sqlite3.Error:
+        return False
+
+
+def fts_path(store, name) -> str:
+    return os.path.join(meta_dir(store), "fts", name + ".sqlite")
+
+
+def docset_stamp(ds) -> str:
+    """Staleness key: installed version, else the index file's mtime (int)."""
+    if ds.version:
+        return str(ds.version)
+    try:
+        return str(int(os.path.getmtime(index_path(ds.path))))
+    except OSError:
+        return ""
+
+
+def _stored_stamp(db):
+    if not os.path.isfile(db):
+        return None
+    try:
+        con = _open_ro(db)
+        try:
+            row = con.execute(
+                "SELECT value FROM meta WHERE key='docset_version'").fetchone()
+        finally:
+            con.close()
+    except sqlite3.Error:
+        return None
+    return row[0] if row else None
+
+
+def build_fts(store, ds) -> int:
+    """(Re)build the docset's full-text index; return the pages indexed."""
+    pages = {}  # page file -> [entry ids]
+    for entry_id, _n, _t, path in iter_entries(ds):
+        if re.match(r"https?://", path, re.I):
+            continue
+        file_part, _anchor = entry_location(path)
+        if file_part:
+            pages.setdefault(file_part, []).append(entry_id)
+    db = fts_path(store, ds.name)
+    os.makedirs(os.path.dirname(db), exist_ok=True)
+    tmp = db + ".tmp"
+    if os.path.exists(tmp):
+        os.unlink(tmp)
+    con = sqlite3.connect(tmp)
+    count = 0
+    try:
+        con.executescript(
+            "CREATE VIRTUAL TABLE pages USING fts5(path UNINDEXED, text, "
+            "tokenize='unicode61');"
+            "CREATE TABLE page_entries(path TEXT, entry_id INTEGER);"
+            "CREATE TABLE meta(key TEXT PRIMARY KEY, value TEXT);")
+        for file_part, ids in pages.items():
+            try:
+                blocks = read_page_blocks(ds, file_part)
+            except (CLIError, OSError):
+                continue
+            text = "\n".join(b.text for b in blocks)
+            con.execute("INSERT INTO pages(path, text) VALUES (?, ?)", (file_part, text))
+            con.executemany("INSERT INTO page_entries VALUES (?, ?)",
+                            [(file_part, i) for i in ids])
+            count += 1
+        con.executemany("INSERT INTO meta VALUES (?, ?)", [
+            ("docset_version", docset_stamp(ds)),
+            ("built_at", time.strftime("%Y-%m-%dT%H:%M:%S", time.gmtime()))])
+        con.commit()
+    except BaseException:
+        con.close()
+        os.unlink(tmp)
+        raise
+    con.close()
+    os.replace(tmp, db)
+    return count
+
+
+def ensure_fts(store, ds) -> None:
+    """Build a missing index; rebuild a stale one (noting it on stderr)."""
+    stored = _stored_stamp(fts_path(store, ds.name))
+    if stored == docset_stamp(ds):
+        return
+    build_fts(store, ds)
+    if stored is not None:
+        _warn("rebuilt index for %s" % ds.name)
+
+
+def fts_match_expr(query) -> str:
+    """Quote each token as an FTS5 phrase and AND them (user text is data)."""
+    return " AND ".join('"%s"' % t.replace('"', '""') for t in query.split())
+
+
+def fts_search(store, docsets, query, limit) -> List[dict]:
+    expr = fts_match_expr(query)
+    if not expr:
+        return []
+    scored = []
+    for ds in docsets:
+        db = fts_path(store, ds.name)
+        try:
+            con = _open_ro(db)
+            try:
+                rows = con.execute(
+                    "SELECT path, snippet(pages, 1, '[', ']', '...', %d), "
+                    "bm25(pages) FROM pages WHERE pages MATCH ? "
+                    "ORDER BY bm25(pages) LIMIT ?" % FTS_SNIPPET_TOKENS,
+                    (expr, limit)).fetchall()
+                for path, snip, score in rows:
+                    first = con.execute(
+                        "SELECT MIN(entry_id) FROM page_entries WHERE path = ?",
+                        (path,)).fetchone()[0]
+                    ref = ("%s:%d" % (ds.name, first) if first is not None
+                           else "%s:page:%s" % (ds.name, path))
+                    scored.append((score, ds.name, path, {
+                        "ref": ref, "docset": ds.name, "path": path,
+                        "snippet": " ".join(snip.split())}))
+            finally:
+                con.close()
+        except sqlite3.Error as e:
+            _warn("skipping %s: %s" % (ds.name, e))
+    scored.sort(key=lambda h: h[:3])
+    return [h[3] for h in scored[:limit]]
+
+
+def _need_fts():
+    if not fts_available():
+        raise CLIError("this Python's sqlite3 has no FTS5 support; full-text "
+                       "search is unavailable (docset search still works)", 2)
+
+
+def cmd_index_text(args):
+    _need_fts()
+    store = require_store(args)
+    all_docs = find_docsets(store)
+    by_name = {d.name: d for d in all_docs}
+    if not args.args:
+        raise CLIError("name the docsets to index", 2)
+    for n in args.args:
+        if n not in by_name:
+            raise CLIError("unknown docset %r (see: docset.py list)" % n, 5)
+    for n in dict.fromkeys(args.args):
+        count = build_fts(store, by_name[n])
+        print("indexed %d pages of %s" % (count, n))
+    return 0
+
+
+def cmd_fts(args):
+    if not args.query.strip():
+        raise CLIError("empty search query", 2)
+    _need_fts()
+    store = require_store(args)
+    docs = select_docsets(store, find_docsets(store), args.docset or [], args.all)
+    for ds in docs:
+        ensure_fts(store, ds)
+    hits = fts_search(store, docs, args.query, args.max_lines)
+    if args.json:
+        print(json.dumps(hits, indent=2))
+        return 0
+    lines = []
+    for h in hits:
+        lines.append("%s  (%s)  %s" % (h["ref"], h["docset"], h["path"]))
+        lines.append("    " + h["snippet"])
+    for line in cap_lines(lines, args.max_lines,
+                          "raise --max-lines or narrow the query or -d"):
+        print(line)
+    for dname in dict.fromkeys(h["docset"] for h in hits):
+        for line in general_notes(store, dname):
+            print(line)
+    return 0
+
+
 def not_implemented(args):
     print("not implemented: " + args.command, file=sys.stderr)
     return 2
@@ -900,7 +1111,7 @@ def build_parser():
             p.set_defaults(handler=cmd_list)
             continue
         if name == "show":
-            p.add_argument("ref", metavar="REF", help="<Docset>:<id> from search")
+            p.add_argument("ref", metavar="REF", help="<Docset>:<id> from search, or <Docset>:page:<path> from fts")
             p.add_argument("--full", action="store_true",
                            help="print the whole trimmed section, without the line cap")
             p.add_argument("--max-lines", type=positive_int, default=150, metavar="N",
@@ -923,6 +1134,24 @@ def build_parser():
             p.add_argument("--json", action="store_true",
                            help="print a JSON list of {ref, docset, type, name, rank}")
             p.set_defaults(handler=cmd_search)
+            continue
+        if name == "fts":
+            p.add_argument("query", metavar="QUERY")
+            p.add_argument("-d", "--docset", metavar="NAME", action="append",
+                           help="search only this docset (repeatable)")
+            p.add_argument("--all", action="store_true",
+                           help="search every docset (needed when more than 4 "
+                           "are full-size and no project list is set)")
+            p.add_argument("--max-lines", type=positive_int, default=40, metavar="N",
+                           help="print at most N lines (default 40)")
+            p.add_argument("--json", action="store_true",
+                           help="print a JSON list of {ref, docset, path, snippet}")
+            p.set_defaults(handler=cmd_fts)
+            continue
+        if name == "index-text":
+            p.add_argument("args", nargs="*", metavar="DOCSET",
+                           help="docsets to (re)build the full-text index for")
+            p.set_defaults(handler=cmd_index_text)
             continue
         if name == "notes":
             p.add_argument("docset", metavar="DOCSET")
