@@ -23,6 +23,12 @@
 - [ ] `opencode-build` `ERRATA.md`: record the doc mistakes already seen
       (verify each against the installed `@opencode/plugin` types).
 
+- [ ] `dash-docset`, after its first version (the user, 2026-11-14):
+      - semantic search, which needs its own index over page text and
+        probably an embedding model (a dependency or a network service);
+        the first version has only SQLite FTS5 full-text search.
+      - MCP server mode for the script, once the CLI commands have settled.
+
 ## Automation
 
 - [ ] Scheduled workflow: run each skill's `refresh_references.py` weekly and
