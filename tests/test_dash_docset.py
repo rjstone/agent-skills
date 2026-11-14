@@ -830,8 +830,7 @@ class NotesTests(unittest.TestCase):
         r = self.cli("show", "Py:1", "--no-notes")
         self.assertNotIn("use return_exceptions", r.stdout)
         r = self.cli("search", "gather", "-d", "Py")
-        self.assertIn("general tip", r.stdout)
-        self.assertEqual(r.stdout.count("general tip"), 1)
+        self.assertNotIn("general tip", r.stdout)  # notes only with show
         self.assertNotIn("use return_exceptions", r.stdout)
         r = self.cli("search", "gather", "-d", "Py", "--json")
         self.assertNotIn("general tip", r.stdout)
@@ -943,6 +942,24 @@ class FtsTests(unittest.TestCase):
         r = self.cli("fts", "zzzznothing", "-d", "Py")
         self.assertEqual(r.returncode, 0)
         self.assertEqual(r.stdout.strip(), "no matches for 'zzzznothing'")
+
+    def test_snippet_phrases(self):
+        self.assertEqual(docset._snippet_phrases(
+            "...Also see \x02context\x03 \x02variable\x03. - A contextvars.\x02Context\x03 object..."),
+            ["also see context variable", "context variable"])
+        # literal brackets in the docs are not match marks
+        self.assertEqual(docset._snippet_phrases(
+            "get([default]) Return a value for the \x02context\x03 \x02variable\x03 for"),
+            ["for the context variable for", "context variable for"])
+        self.assertEqual(docset._snippet_phrases("no match marks"), [])
+
+    def test_fts_cap_keeps_ref_with_snippet(self):
+        r = self.cli("fts", "gather", "-d", "Py", "--max-lines", "2")
+        lines = r.stdout.splitlines()
+        self.assertTrue(lines[0].startswith("Py:page:"))
+        self.assertTrue(lines[1].startswith("    "))
+        self.assertTrue(lines[2].startswith("... "))
+        self.assertIn("more hits cut", lines[2])
 
     def test_fts_first_build_says_so(self):
         r = self.cli("fts", "gather", "-d", "Py")

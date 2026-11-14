@@ -507,9 +507,6 @@ def cmd_search(args):
         lines.append("no matches for %r" % args.query)
     for line in cap_lines(lines, args.max_lines, hint):
         print(line)
-    for dname in dict.fromkeys(h[3] for h in hits):
-        for line in general_notes(store, dname):
-            print(line)
     return 0
 
 
@@ -1051,13 +1048,18 @@ def fts_match_expr(query) -> str:
     return " AND ".join('"%s"' % t.replace('"', '""') for t in query.split())
 
 
-def _snippet_phrase(snippet) -> Optional[str]:
-    """Up to 3 words from the first [match] of an FTS snippet, for locating it."""
-    m = re.search(r"\[[^\]]+\][^.\[\]`]*", snippet)
+def _snippet_phrases(snippet) -> List[str]:
+    """Phrases around the first match of an FTS snippet (matches marked
+    \x02...\x03), longest first: two words before it plus up to three from
+    it, then just the latter."""
+    m = re.search("\x02", snippet)
     if not m:
-        return None
-    words = re.sub(r"[\[\]]", "", m.group(0)).split()[:3]
-    return " ".join(words).lower() if words else None
+        return []
+    before = snippet[:m.start()].split("...")[-1].split()[-2:]
+    after = re.split(r"\.\.\.|[.!?;:](?:\s|$)|\s-\s",
+                     re.sub("[\x02\x03]", "", snippet[m.start():]))[0].split()[:3]
+    clean = lambda ws: " ".join(ws).strip(" .,;:!?()").lower()
+    return [p for p in dict.fromkeys([clean(before + after), clean(after)]) if p]
 
 
 def match_anchor(ds, path, query, snippet="") -> Optional[str]:
@@ -1077,10 +1079,8 @@ def match_anchor(ds, path, query, snippet="") -> Optional[str]:
             last_id = b.ids[0]
         anchor_at.append(last_id)
     texts = [" ".join(t.split()) for t in texts]
-    phrase = _snippet_phrase(snippet)
-    tests = [lambda t: all(w in t for w in words), lambda t: words[0] in t]
-    if phrase:
-        tests.insert(0, lambda t: phrase in t)
+    tests = [(lambda t, p=p: p in t) for p in _snippet_phrases(snippet)]
+    tests += [lambda t: all(w in t for w in words), lambda t: words[0] in t]
     for test in tests:
         for i, t in enumerate(texts):
             if anchor_at[i] and test(t):
@@ -1099,18 +1099,19 @@ def fts_search(store, docsets, query, limit) -> List[dict]:
             con = _open_ro(db)
             try:
                 rows = con.execute(
-                    "SELECT path, snippet(pages, 1, '[', ']', '...', %d), "
+                    "SELECT path, snippet(pages, 1, char(2), char(3), '...', %d), "
                     "bm25(pages) FROM pages WHERE pages MATCH ? "
                     "ORDER BY bm25(pages) LIMIT ?" % FTS_SNIPPET_TOKENS,
                     (expr, limit)).fetchall()
                 for path, snip, score in rows:
                     ref = "%s:page:%s" % (ds.name, path)
-                    anchor = match_anchor(ds, path, query, snip)
+                    anchor = match_anchor(ds, path, query, snip)  # \x02 marks matches
                     if anchor:
                         ref += "#" + quote(anchor, safe=":/()$")
                     scored.append((score, ds.name, path, {
                         "ref": ref, "docset": ds.name, "path": path,
-                        "snippet": " ".join(snip.split())}))
+                        "snippet": " ".join(snip.split()).replace(
+                            "\x02", "[").replace("\x03", "]")}))
             finally:
                 con.close()
         except sqlite3.Error as e:
@@ -1158,16 +1159,13 @@ def cmd_fts(args):
     if not hits:
         print("no matches for %r" % args.query)
         return 0
-    lines = []
-    for h in hits:
-        lines.append(h["ref"])
-        lines.append("    " + h["snippet"])
-    for line in cap_lines(lines, args.max_lines,
-                          "raise --max-lines or narrow the query or -d"):
-        print(line)
-    for dname in dict.fromkeys(h["docset"] for h in hits):
-        for line in general_notes(store, dname):
-            print(line)
+    room = max(1, (args.max_lines - 1) // 2) if len(hits) * 2 > args.max_lines else len(hits)
+    for h in hits[:room]:
+        print(h["ref"])
+        print("    " + h["snippet"])
+    if len(hits) > room:
+        print("... %s more hits cut; raise --max-lines or narrow the query or -d"
+              % ("%d" % (len(hits) - room) if len(hits) < limit else "%d or" % (len(hits) - room)))
     return 0
 
 
@@ -1443,6 +1441,10 @@ def cheat_index(store, refresh=False) -> dict:
     return sheets
 
 
+def _note(msg):
+    print("note: " + msg, file=sys.stderr)
+
+
 def _first_version(e) -> str:
     return next((str(v) for v in e.get("versions") or [] if v), "")
 
@@ -1457,11 +1459,13 @@ _SOURCE_ERRORS = (FetchError, ValueError, KeyError, TypeError, AttributeError, C
 def _kapeli_feeds(store, refresh):
     names: dict = {}
     errors = []
+    github_failed = [False]
     try:
         for n in _list_names(KAPELI_LIST_URL, ".xml"):
             names.setdefault(n, [])
     except _SOURCE_ERRORS as e:
         errors.append(str(e))
+        github_failed[0] = True
     try:
         for key, m in zeal_manifest(store, refresh).items():
             if not isinstance(m, dict):
@@ -1476,8 +1480,11 @@ def _kapeli_feeds(store, refresh):
         try:
             for e in _catalog_feeds(store, "com.kapeli.dash"):
                 names.setdefault(e["name"], []).extend([e["title"]] if e.get("title") else [])
+            _note("official docset list from Zeal's catalog (other sources unavailable)")
         except _SOURCE_ERRORS as e:
             errors.append("Zeal catalog: %s" % e)
+    elif github_failed[0] and len(errors) == 1:
+        _note("official docset list from Zeal's manifest (GitHub API unavailable)")
     if not names:
         raise FetchError("; ".join(errors))
     return [Feed(n, "kapeli", "", [], sorted(set(a for a in al if a != n)))
@@ -1494,13 +1501,17 @@ def _cheat_feeds(store, refresh):
     except _SOURCE_ERRORS as e:
         errors.append(str(e))
     try:
-        return [Feed(n, "cheat", "", []) for n in _list_names(CHEAT_LIST_URL, ".rb")]
+        feeds = [Feed(n, "cheat", "", []) for n in _list_names(CHEAT_LIST_URL, ".rb")]
+        _note("cheat sheet list from the GitHub API (Kapeli's cheat.json unavailable)")
+        return feeds
     except _SOURCE_ERRORS as e:
         errors.append(str(e))
     try:
-        return [Feed(e["name"], "cheat", _first_version(e), [CHEAT_URL % quote(e["name"])],
-                     [e["title"]] if e.get("title") else [])
-                for e in _catalog_feeds(store, "com.kapeli.cheatsheet")]
+        feeds = [Feed(e["name"], "cheat", _first_version(e), [CHEAT_URL % quote(e["name"])],
+                      [e["title"]] if e.get("title") else [])
+                 for e in _catalog_feeds(store, "com.kapeli.cheatsheet")]
+        _note("cheat sheet list from Zeal's catalog (other sources unavailable)")
+        return feeds
     except _SOURCE_ERRORS as e:
         errors.append("Zeal catalog: %s" % e)
     raise FetchError("; ".join(errors))
@@ -1512,9 +1523,11 @@ def _user_feeds(store):
         return parse_index_json(data, "user", USER_BASE_URL)
     except _SOURCE_ERRORS as first:
         try:
-            return [Feed(str(e.get("title") or e["name"]), "user", _first_version(e),
-                         [USER_BASE_URL + e["name"] + "/" + e["archive"]])
-                    for e in _catalog_feeds(store, "com.kapeli.contrib") if e.get("archive")]
+            feeds = [Feed(str(e.get("title") or e["name"]), "user", _first_version(e),
+                          [USER_BASE_URL + e["name"] + "/" + e["archive"]])
+                     for e in _catalog_feeds(store, "com.kapeli.contrib") if e.get("archive")]
+            _note("user-contributed list from Zeal's catalog (Kapeli's index unavailable)")
+            return feeds
         except _SOURCE_ERRORS as e:
             raise FetchError("%s; Zeal catalog: %s" % (first, e))
 
@@ -1980,7 +1993,7 @@ def build_parser():
             continue
         if name == "sources":
             p.add_argument("query", nargs="?", metavar="QUERY",
-                           help="only names containing this text")
+                           help="only docsets whose name, title or keywords contain this text")
             p.add_argument("--refresh", action="store_true",
                            help="refetch the source lists (cached for 7 days)")
             p.add_argument("--max-lines", type=positive_int, default=40, metavar="N",
