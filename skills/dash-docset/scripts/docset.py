@@ -1,6 +1,9 @@
 #!/usr/bin/env python3
 """Install Dash docsets and search them offline (stdlib only)."""
 import argparse
+import io
+import posixpath
+import zlib
 import json
 import os
 import sys
@@ -617,10 +620,11 @@ SKIP_TAGS = {"script", "style", "nav", "header", "footer", "form", "select",
              "noscript", "template"}
 SKIP_ROLES = {"navigation", "search", "banner", "contentinfo"}
 # Navigation chrome of common doc generators (Sphinx, Read the Docs, ...);
-# "headerlink" is the pilcrow link after Sphinx headings.
+# "headerlink" (Sphinx) and "copiable-link" (GNU Texinfo) are pilcrow links.
 SKIP_CLASSES = {"related", "mobile-nav", "sphinxsidebar", "sphinxsidebarwrapper",
                 "breadcrumbs", "breadcrumb", "wy-nav-side", "rst-versions",
-                "headerlink", "toc-drawer", "sidebar-drawer", "skip-link"}
+                "headerlink", "copiable-link", "toc-drawer", "sidebar-drawer",
+                "skip-link"}
 
 
 def _skippable(tag, a) -> bool:
@@ -819,9 +823,94 @@ def page_file(ds, file_part) -> str:
     return page
 
 
+# Tarix docsets (Dash's compact storage; read by Zeal's tarixarchive.cpp):
+# Contents/Resources/tarix.tgz is a normal .tgz written with a zlib full flush
+# before every tar record, and tarixIndex.db is SQLite with
+# tarindex(path TEXT PRIMARY KEY COLLATE NOCASE, hash TEXT), where path starts
+# "<Name>.docset/" and hash is "<block> <offset> <length>": the compressed
+# byte offset of a flush point and the record size in 512-byte blocks. Pages
+# are read one at a time without unpacking. (Kapeli serves the index as
+# <archive>.tgz.tarix: a .tgz holding that SQLite file.)
+TARIX_MAX_RECORD = 64 * 1024 * 1024
+_TARIX: dict = {}  # Resources dir -> (connection, root prefix) or None
+
+
+def _tarix(res):
+    if res not in _TARIX:
+        _TARIX[res] = None
+        arc, idx = os.path.join(res, "tarix.tgz"), os.path.join(res, "tarixIndex.db")
+        if os.path.isfile(arc) and os.path.isfile(idx):
+            try:
+                con = _open_ro(idx)
+                row = con.execute("SELECT path FROM tarindex WHERE path LIKE "
+                                  "'%.docset/%' LIMIT 1").fetchone()
+                prefix = row[0][:row[0].index(".docset/") + len(".docset/")] if row else ""
+                _TARIX[res] = (con, prefix)
+            except (sqlite3.Error, ValueError) as e:
+                _warn("unreadable tarix index %s: %s" % (idx, e))
+    return _TARIX[res]
+
+
+def read_tarix(res, rel) -> Optional[bytes]:
+    """File rel (e.g. Contents/Resources/Documents/x.html) from the tarix
+    archive in the Resources dir res; None if the docset has no archive."""
+    t = _tarix(res)
+    if t is None:
+        return None
+    con, prefix = t
+    try:
+        row = con.execute("SELECT hash FROM tarindex WHERE path = ?", (prefix + rel,)).fetchone()
+    except sqlite3.Error as e:
+        raise CLIError("tarix index error for %s: %s" % (rel, e), 7)
+    if not row or not row[0]:
+        raise CLIError("page not in the docset's archive: %s" % rel, 5)
+    try:
+        _block, offset, blocks = (int(x) for x in str(row[0]).split())
+    except ValueError:
+        raise CLIError("bad tarix index entry for %s" % rel, 7)
+    want = blocks * 512
+    if offset < 0 or blocks < 1 or want > TARIX_MAX_RECORD:
+        raise CLIError("bad tarix index entry for %s" % rel, 7)
+    out = bytearray()
+    try:
+        with open(os.path.join(res, "tarix.tgz"), "rb") as f:
+            f.seek(offset)
+            z = zlib.decompressobj(-zlib.MAX_WBITS)
+            buf = b""
+            while len(out) < want and not z.eof:
+                if not buf:
+                    buf = f.read(1 << 16)
+                    if not buf:
+                        break
+                out += z.decompress(buf, want - len(out))
+                buf = z.unconsumed_tail
+        with tarfile.open(fileobj=io.BytesIO(bytes(out[:want])), mode="r:") as tar:
+            member = tar.next()
+            if member is None or not member.isfile():
+                raise CLIError("no file record for %s in the archive" % rel, 7)
+            return tar.extractfile(member).read()
+    except (OSError, zlib.error, tarfile.TarError) as e:
+        raise CLIError("cannot read %s from the docset's archive: %s" % (rel, e), 7)
+
+
+def read_page_bytes(ds, file_part) -> bytes:
+    """A page from Documents/, else from the docset's tarix archive."""
+    try:
+        with open(page_file(ds, file_part), "rb") as f:
+            return f.read()
+    except CLIError:
+        rel = posixpath.normpath(file_part.replace("\\", "/")).lstrip("/")
+        if rel.startswith(".."):
+            raise
+        data = read_tarix(os.path.join(ds.path, "Contents", "Resources"),
+                          "Contents/Resources/Documents/" + rel)
+        if data is None:
+            raise
+        return data
+
+
 def read_page_blocks(ds, file_part) -> List[Block]:
-    with open(page_file(ds, file_part), "rb") as f:
-        return html_to_text(f.read().decode("utf-8", errors="replace"))
+    return html_to_text(read_page_bytes(ds, file_part).decode("utf-8", errors="replace"))
 
 
 def _print_lines(lines, args):

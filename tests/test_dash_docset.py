@@ -1787,3 +1787,85 @@ class SourcesTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+import shutil  # noqa: E402
+import struct  # noqa: E402
+import zlib  # noqa: E402
+
+
+def make_tarix(docset_path):
+    """Turn a fixture docset into Dash's tarix form: Documents/ packed into
+    Contents/Resources/tarix.tgz (full zlib flush before each tar record)
+    with tarixIndex.db mapping paths to '<block> <offset> <blocks>'."""
+    name = os.path.basename(docset_path)
+    res = os.path.join(docset_path, "Contents", "Resources")
+    docs = os.path.join(res, "Documents")
+    out = bytearray(b"\x1f\x8b\x08\x00\x00\x00\x00\x00\x00\x03")  # gzip header
+    comp = zlib.compressobj(9, zlib.DEFLATED, -zlib.MAX_WBITS)
+    crc, size, rows, block = 0, 0, [], 0
+    for root, _dirs, files in sorted(os.walk(docs)):
+        for fn in sorted(files):
+            full = os.path.join(root, fn)
+            arc = name + "/" + os.path.relpath(full, docset_path).replace(os.sep, "/")
+            with open(full, "rb") as f:
+                data = f.read()
+            ti = tarfile.TarInfo(arc)
+            ti.size = len(data)
+            record = ti.tobuf(tarfile.GNU_FORMAT) + data + b"\0" * (-len(data) % 512)
+            rows.append((arc, "%d %d %d" % (block, len(out), len(record) // 512)))
+            out += comp.compress(record) + comp.flush(zlib.Z_FULL_FLUSH)
+            crc, size, block = zlib.crc32(record, crc), size + len(record), block + len(record) // 512
+    end = b"\0" * 1024
+    out += comp.compress(end) + comp.flush()
+    crc, size = zlib.crc32(end, crc), size + len(end)
+    out += struct.pack("<II", crc & 0xffffffff, size & 0xffffffff)
+    with open(os.path.join(res, "tarix.tgz"), "wb") as f:
+        f.write(out)
+    con = sqlite3.connect(os.path.join(res, "tarixIndex.db"))
+    con.execute("CREATE TABLE tarindex(path TEXT PRIMARY KEY COLLATE NOCASE, hash TEXT)")
+    con.executemany("INSERT INTO tarindex VALUES (?, ?)", rows)
+    con.commit()
+    con.close()
+    shutil.rmtree(docs)
+
+
+class TarixTests(unittest.TestCase):
+    def setUp(self):
+        self.tmp = tmp_dir(self)
+        self.store_dir = os.path.join(self.tmp, "store")
+        os.makedirs(self.store_dir)
+        self.dash = os.path.join(self.tmp, "Dash", "DocSets", "Py")
+        path = make_docset(self.dash, "Py")
+        make_tarix(path)
+        docset._TARIX.clear()
+
+    def test_archive_is_a_valid_tgz(self):
+        res = os.path.join(self.dash, "Py.docset", "Contents", "Resources")
+        with tarfile.open(os.path.join(res, "tarix.tgz")) as t:
+            self.assertTrue(any(n.endswith("asyncio.html") for n in t.getnames()))
+
+    def test_show_and_fts_read_from_archive(self):
+        ds = docset._make_docset(os.path.join(self.dash, "Py.docset"), True, None, None)
+        text = "\n".join(b.text for b in docset.read_page_blocks(ds, "library/asyncio.html"))
+        self.assertIn("asyncio.gather", text)
+        with self.assertRaises(docset.CLIError) as cm:
+            docset.read_page_blocks(ds, "library/missing.html")
+        self.assertEqual(cm.exception.code, 5)
+        store = docset.Store(self.store_dir, "flag", [os.path.dirname(self.dash)], None)
+        if docset.fts_available():
+            self.assertGreater(docset.build_fts(store, ds), 0)
+            hits = docset.fts_search(store, [ds], "gather", 5)
+            self.assertTrue(any(h["ref"].startswith("Py:page:library/asyncio.html") for h in hits), hits)
+
+    def test_bad_index_entry_is_exit_7(self):
+        res = os.path.join(self.dash, "Py.docset", "Contents", "Resources")
+        con = sqlite3.connect(os.path.join(res, "tarixIndex.db"))
+        con.execute("UPDATE tarindex SET hash = '0 5 999999999'")
+        con.commit()
+        con.close()
+        docset._TARIX.clear()
+        ds = docset._make_docset(os.path.join(self.dash, "Py.docset"), True, None, None)
+        with self.assertRaises(docset.CLIError) as cm:
+            docset.read_page_blocks(ds, "library/asyncio.html")
+        self.assertEqual(cm.exception.code, 7)

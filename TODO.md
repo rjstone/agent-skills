@@ -40,6 +40,11 @@
         Kapeli's feeds README allows its docsets only for personal use or
         with Dash or Zeal; the user has asked Kapeli about redistributing
         the metadata. Wait for the answer.
+      - Optional tarix storage for our own installs: keep the downloaded
+        `.tgz` as `tarix.tgz` and fetch `<archive>.tgz.tarix` (a small .tgz
+        holding the SQLite index) instead of unpacking. Reading already
+        works (Dash stores docsets this way); this would save disk space
+        and file count in persistent stores, for one extra small download.
       - Deferred from the final review (2026-11-14):
         - downloads: a size cap, and refusing https to http redirects.
         - a fixed `.tmp` name for FTS builds breaks concurrent builds.
