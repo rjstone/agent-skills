@@ -181,6 +181,11 @@ metadata:
 - `opencode-api` - opencode v2 server HTTP API: the published OpenAPI spec
   cached in `references/openapi.json`, searched with `scripts/api_lookup.py`
   (too large to read whole); calls via `opencode api` or Basic auth.
+- `dash-docset` - install Dash docsets (Kapeli, user-contributed, cheat
+  sheets) and search them offline with `scripts/docset.py` (stdlib only):
+  entry search, page text, full-text search and per-docset notes. The user
+  picks the storage location; the script never writes into Dash, Zeal or
+  dasht folders.
 
 ## Decisions (the user, 2026-11-08)
 
