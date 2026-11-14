@@ -55,7 +55,7 @@ plan:
 | `bcc0085` | `search`, `fts` and `sources` take several words without quotes; a search name must contain all of them, in any order. "No matches" points to `fts`. | Solarus rerun |
 | `3301f12` | `search` treats `f(a, b)` as an exact match for `f` and lists anchored entries before whole-page entries; `show` starts an entry without an anchor at a heading named like it. Some docsets (DuckDB) have both kinds for one function. | DuckDB trial prep |
 | `4fb4c1e` | `SKILL.md`: the user config path, a warning when a "permanent" folder is temporary, and that options and settings are found with `fts`. | DuckDB trial |
-| (next) | `fts` prints the short entry REF when the matched section is an entry's, trying every id on the block (DuckDB headings carry a Dash `//apple_ref` id plus the entry's id). | DuckDB trial |
+| `dff734b` | `fts` prints the short entry REF when the matched section is an entry's, trying every id on the block (DuckDB headings carry a Dash `//apple_ref` id plus the entry's id). | DuckDB trial |
 
 ## What the plan and design say that no longer holds
 
