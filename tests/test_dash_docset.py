@@ -415,7 +415,7 @@ class RankTests(unittest.TestCase):
     def test_parse_ref(self):
         self.assertEqual(docset.parse_ref("Python_3:42"), ("Python_3", 42))
         self.assertEqual(docset.parse_ref("A:B:7"), ("A:B", 7))
-        for bad in ("nocolon", "A:x", ":3", "A:"):
+        for bad in ("nocolon", "A:x", ":3", "A:", "x:" + chr(0xb2), "x:" + chr(0x663)):
             with self.subTest(bad=bad), self.assertRaises(docset.CLIError):
                 docset.parse_ref(bad)
 
@@ -558,6 +558,161 @@ class SearchTests(unittest.TestCase):
         self.assertEqual(r.returncode, 0, r.stderr)
         self.assertIn("(Good)", r.stdout)
         self.assertIn("Bad", r.stderr)
+
+
+    def test_max_lines_below_one_rejected(self):
+        self.add("Alpha", [("sleep", "Function", "a.html")])
+        for cmd in (("search", "sleep"), ("show", "Alpha:1")):
+            for bad in ("0", "-3", "x"):
+                with self.subTest(cmd=cmd[0], bad=bad):
+                    r = self.cli(*cmd, "--max-lines", bad)
+                    self.assertEqual(r.returncode, 2, r.stderr)
+
+
+GIT_PAGE = (
+    "<html><body><table>\n"
+    "<tr id='//dash_ref_Create/Entry/Clone an existing repository/0'>"
+    "<td><p>Clone an existing repository</p></td><td><code>git clone URL</code></td></tr>\n"
+    "<tr id='//dash_ref_Create/Entry/Create a new repository/0'>"
+    "<td><p>Create a new repository</p></td><td><code>git init</code></td></tr>\n"
+    "</table></body></html>\n")
+PY_PAGE = (
+    '<html><body><dl class="py">\n'
+    '<dt id="asyncio.gather">gather(*aws)</dt><dd><p>Run them together.</p></dd>\n'
+    '<dt id="asyncio.sleep">sleep(delay)</dt><dd><p>Block a while.</p></dd>\n'
+    "</dl></body></html>\n")
+
+
+class ShowTests(unittest.TestCase):
+    def setUp(self):
+        self.tmp = tmp_dir(self)
+        self.store_dir = os.path.join(self.tmp, "store")
+        os.makedirs(self.store_dir)
+
+    def add(self, name, entries, pages):
+        make_docset(self.store_dir, name, entries=entries, pages=pages)
+
+    def cli(self, *args):
+        return run_cli("--dir", self.store_dir, *args, env={"HOME": self.tmp},
+                       cwd=self.tmp)
+
+    def test_show_trims_to_anchor(self):
+        self.add("Py", DEFAULT_ENTRIES, DEFAULT_PAGES)
+        r = self.cli("show", "Py:1")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertIn("asyncio.gather", r.stdout)
+        self.assertIn("await asyncio.gather(a(), b())", r.stdout)
+        self.assertIn("Run awaitables concurrently.", r.stdout)
+        self.assertNotIn("asyncio.sleep", r.stdout)
+        self.assertNotIn("Block for", r.stdout)
+        self.assertTrue(r.stdout.startswith("## ") or "\n## " in r.stdout)
+        r = self.cli("show", "Py:3")  # no anchor: whole page
+        self.assertIn("# Guide", r.stdout)
+        r = self.cli("show", "Py:1", "--full")
+        self.assertIn("Block for", r.stdout)
+
+    def test_show_tr_and_dt_anchors(self):
+        self.add("Git", [("Clone", "Entry",
+                          "index.html#//dash_ref_Create/Entry/Clone%20an%20existing%20repository/0"),
+                         ("Create", "Entry",
+                          "index.html#//dash_ref_Create/Entry/Create%20a%20new%20repository/0")],
+                 {"index.html": GIT_PAGE})
+        r = self.cli("show", "Git:1")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertIn("git clone URL", r.stdout)
+        self.assertNotIn("git init", r.stdout)
+        self.assertNotIn("not found", r.stdout)
+        r = self.cli("show", "Git:2")
+        self.assertIn("git init", r.stdout)
+        self.assertNotIn("git clone", r.stdout)
+        self.add("PyDoc", [("asyncio.gather", "Function", "a.html#asyncio.gather"),
+                           ("asyncio.sleep", "Function", "a.html#asyncio.sleep")],
+                 {"a.html": PY_PAGE})
+        r = self.cli("show", "PyDoc:1")
+        self.assertIn("gather(*aws)", r.stdout)
+        self.assertIn("Run them together.", r.stdout)
+        self.assertNotIn("sleep", r.stdout)
+
+    def test_show_anchor_not_found_shows_page_with_note(self):
+        self.add("Py", [("x", "Function", "guide.html#nope")], DEFAULT_PAGES)
+        r = self.cli("show", "Py:1")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertIn("anchor not found", r.stdout)
+        self.assertIn("Gather things.", r.stdout)
+
+    def test_entry_location(self):
+        el = docset.entry_location
+        self.assertEqual(el("a/b.html#x"), ("a/b.html", "x"))
+        self.assertEqual(el("a/b.html"), ("a/b.html", None))
+        self.assertEqual(el("a%20b.html#x%20y"), ("a b.html", "x%20y"))
+        self.assertEqual(el("<dash_entry_name=Foo><dash_entry_isSuper=1>a/b.html#x"),
+                         ("a/b.html", "x"))
+
+    def test_show_path_variants(self):
+        pages = {"my dir/p age.html": "<h1 id='top'>Top</h1><p>body text</p>"}
+        self.add("D", [("m", "Guide", "<dash_entry_name=m>my%20dir/p%20age.html#top"),
+                       ("n", "Guide", "my%20dir/p%20age.html")], pages)
+        for ref in ("D:1", "D:2"):
+            r = self.cli("show", ref)
+            self.assertEqual(r.returncode, 0, r.stderr)
+            self.assertIn("body text", r.stdout)
+
+    def test_show_online_only(self):
+        self.add("D", [("m", "Guide", "https://example.com/doc#x")], {})
+        r = self.cli("show", "D:1")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertIn("online-only entry: https://example.com/doc#x", r.stdout)
+
+    def test_show_bad_encoding_and_cap(self):
+        self.add("D", [("big", "Guide", "big.html"), ("lat", "Guide", "lat.html")], {})
+        docs = os.path.join(self.store_dir, "D.docset", "Contents", "Resources",
+                            "Documents")
+        with open(os.path.join(docs, "big.html"), "w", encoding="utf-8") as f:
+            f.write("<body>" + "".join("<p>line %d</p>" % i for i in range(1000))
+                    + "</body>")
+        with open(os.path.join(docs, "lat.html"), "wb") as f:
+            f.write("<p>caf\xe9 ok</p>".encode("latin-1"))
+        r = self.cli("show", "D:1")
+        lines = r.stdout.splitlines()
+        self.assertEqual(len(lines), 151)
+        self.assertIn("850 more lines cut", lines[-1])
+        self.assertIn("--full", lines[-1])
+        r = self.cli("show", "D:1", "--full")
+        self.assertEqual(len(r.stdout.splitlines()), 1000)
+        r = self.cli("show", "D:1", "--max-lines", "10")
+        self.assertEqual(len(r.stdout.splitlines()), 11)
+        r = self.cli("show", "D:2")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertIn("ok", r.stdout)
+
+    def test_show_unknown_ref(self):
+        self.add("D", [("m", "Guide", "gone.html")], {})
+        r = self.cli("show", "D:99")
+        self.assertEqual(r.returncode, 5)
+        self.assertIn("D:99", r.stderr)
+        r = self.cli("show", "Nope:1")
+        self.assertEqual(r.returncode, 5)
+        self.assertIn("Nope", r.stderr)
+        r = self.cli("show", "D:1")  # page file missing
+        self.assertEqual(r.returncode, 5)
+        self.assertIn("gone.html", r.stderr)
+        r = self.cli("show", "garbage")
+        self.assertEqual(r.returncode, 2)
+
+    def test_html_to_text_blocks(self):
+        html = ("<nav>skip me</nav><script>x=1</script><h2 id='a'>Title</h2>"
+                "<ul><li>one</li><li>two</li></ul>"
+                "<pre>  x = 1\n  y = 2</pre><footer>bye</footer>")
+        blocks = docset.html_to_text(html)
+        texts = [b.text for b in blocks]
+        self.assertEqual(texts[0], "## Title")
+        self.assertEqual(blocks[0].level, 2)
+        self.assertEqual(blocks[0].ids, ["a"])
+        self.assertEqual(texts[1:3], ["- one", "- two"])
+        self.assertEqual(blocks[1].depth, 1)
+        self.assertEqual(texts[3], "```\n  x = 1\n  y = 2\n```")
+        self.assertNotIn("skip", "".join(texts))
+        self.assertNotIn("bye", "".join(texts))
 
 
 if __name__ == "__main__":

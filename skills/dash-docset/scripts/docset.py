@@ -5,8 +5,11 @@ import json
 import os
 import sys
 import pathlib
+import re
 import sqlite3
 import tempfile
+from html.parser import HTMLParser
+from urllib.parse import unquote
 from dataclasses import dataclass, field
 from typing import Iterator, List, Mapping, Optional, Tuple
 
@@ -301,32 +304,38 @@ def like_pattern(query) -> str:
     return "%" + "%".join(esc) + "%"
 
 
-def iter_entries(ds, like: Optional[str] = None) -> Iterator[Tuple[int, str, str, str]]:
+def iter_entries(ds, like: Optional[str] = None,
+                 entry_id: Optional[int] = None) -> Iterator[Tuple[int, str, str, str]]:
     """Yield (id, name, type, path) from either index form.
 
-    like: optional SQL LIKE pattern (ESCAPE '\\') the name must match."""
+    like: optional SQL LIKE pattern (ESCAPE '\\') the name must match.
+    entry_id: optional id; only that entry is read (a keyed lookup)."""
     con = _open_ro(index_path(ds.path))
     try:
         if "searchIndex" in _tables(con):
             sql = "SELECT id, name, type, path FROM searchIndex"
-            params = ()
-            if like is not None:
-                sql += " WHERE name LIKE ? ESCAPE '\\'"
-                params = (like,)
-            sql += " ORDER BY id"
-            for i, n, t, p in con.execute(sql, params):
-                yield i, n, t or "", p or ""
+            id_col, name_col = "id", "name"
         else:
             sql = ("SELECT k.Z_PK, k.ZTOKENNAME, ty.ZTYPENAME, f.ZPATH, m.ZANCHOR "
                    "FROM ZTOKEN k "
                    "LEFT JOIN ZTOKENTYPE ty ON ty.Z_PK = k.ZTOKENTYPE "
                    "LEFT JOIN ZTOKENMETAINFORMATION m ON m.Z_PK = k.ZMETAINFORMATION "
                    "LEFT JOIN ZFILEPATH f ON f.Z_PK = m.ZFILE")
-            params = ()
-            if like is not None:
-                sql += " WHERE k.ZTOKENNAME LIKE ? ESCAPE '\\'"
-                params = (like,)
-            sql += " ORDER BY k.Z_PK"
+            id_col, name_col = "k.Z_PK", "k.ZTOKENNAME"
+        where, params = [], []
+        if like is not None:
+            where.append("%s LIKE ? ESCAPE '\\'" % name_col)
+            params.append(like)
+        if entry_id is not None:
+            where.append("%s = ?" % id_col)
+            params.append(entry_id)
+        if where:
+            sql += " WHERE " + " AND ".join(where)
+        sql += " ORDER BY " + id_col
+        if "searchIndex" in _tables(con):
+            for i, n, t, p in con.execute(sql, params):
+                yield i, n, t or "", p or ""
+        else:
             for i, n, t, p, a in con.execute(sql, params):
                 yield i, n, t or "", (p or "") + ("#" + a if a else "")
     finally:
@@ -399,7 +408,7 @@ MAX_FULL_UNSCOPED = 4
 def parse_ref(ref: str) -> Tuple[str, int]:
     """'<DocsetName>:<id>' -> (name, id); the id follows the last colon."""
     name, sep, num = ref.rpartition(":")
-    if not sep or not name or not num.isdigit():
+    if not sep or not name or not (num.isascii() and num.isdecimal()):
         raise CLIError("bad reference %r (expected <Docset>:<id>)" % ref, 2)
     return name, int(num)
 
@@ -481,6 +490,216 @@ def cmd_search(args):
     return 0
 
 
+@dataclass
+class Block:
+    level: int        # heading level 1-6, 0 for other blocks
+    ids: List[str]    # ids / <a name> seen since the last emitted block
+    text: str         # one or more lines
+    tag: str          # element that started the block (the id carrier if any)
+    depth: int        # open dl/table/ul/ol containers
+
+
+SKIP_TAGS = {"script", "style", "nav", "header", "footer"}
+CONTAINER_TAGS = {"dl", "table", "ul", "ol"}
+BLOCK_TAGS = {"p", "div", "li", "dt", "dd", "tr", "pre", "ul", "ol", "dl", "table",
+              "section", "article", "blockquote", "caption", "details", "summary",
+              "figure", "figcaption", "body", "main", "aside", "address", "form",
+              "fieldset", "hr", "h1", "h2", "h3", "h4", "h5", "h6"}
+HEADINGS = {"h%d" % i: i for i in range(1, 7)}
+CLOSES_SAME = {"li": ("li",), "dt": ("dt", "dd"), "dd": ("dt", "dd"), "p": ("p",),
+               "tr": ("tr",)}
+
+
+class _TextParser(HTMLParser):
+    def __init__(self):
+        super().__init__(convert_charrefs=True)
+        self.blocks: List[Block] = []
+        self.buf: List[str] = []
+        self.stack: List[str] = []
+        self.skip = 0
+        self.in_pre = False
+        self.depth = 0
+        self.level = 0
+        self.prefix = ""
+        self.ids: List[str] = []
+        self.id_tag = ""
+        self.start_depth = 0
+
+    def _top(self):
+        return self.stack[-1] if self.stack else ""
+
+    def flush(self):
+        raw = "".join(self.buf)
+        self.buf = []
+        if self.in_pre:
+            text = raw.strip("\n").rstrip()
+            text = "```\n" + text + "\n```" if text.strip() else ""
+        else:
+            text = " ".join(raw.split())
+        if not text:
+            self.level = 0
+            if self.prefix != "- ":
+                self.prefix = ""
+            return
+        if self.level:
+            tag = "h%d" % self.level
+            text = "#" * self.level + " " + text
+        else:
+            tag = self.id_tag or self._top()
+            text = self.prefix + text
+        self.blocks.append(Block(self.level, self.ids, text, tag, self.start_depth))
+        self.ids, self.id_tag, self.level, self.prefix = [], "", 0, ""
+
+    def handle_starttag(self, tag, attrs):
+        if self.skip:
+            if tag in SKIP_TAGS:
+                self.skip += 1
+            return
+        if tag in SKIP_TAGS:
+            self.flush()
+            self.skip = 1
+            return
+        a = dict(attrs)
+        if tag in BLOCK_TAGS:
+            self.flush()
+            if self.stack and self.stack[-1] in CLOSES_SAME.get(tag, ()):
+                self.stack.pop()
+            if tag in CONTAINER_TAGS:
+                self.depth += 1
+            self.stack.append(tag)
+            self.start_depth = self.depth
+            if tag in HEADINGS:
+                self.level = HEADINGS[tag]
+            elif tag == "li":
+                self.prefix = "- "
+            elif tag == "pre":
+                self.in_pre = True
+        elif tag in ("td", "th") and self.buf and not self.in_pre:
+            self.buf.append(" | ")
+        elif tag == "br":
+            self.buf.append("\n" if self.in_pre else " ")
+        if a.get("id"):
+            self.ids.append(a["id"])
+            if tag in BLOCK_TAGS and not self.id_tag:
+                self.id_tag = tag
+        if tag == "a" and a.get("name"):
+            self.ids.append(a["name"])
+        if not self.buf:
+            self.start_depth = self.depth
+
+    def handle_endtag(self, tag):
+        if self.skip:
+            if tag in SKIP_TAGS:
+                self.skip -= 1
+            return
+        if tag in BLOCK_TAGS:
+            self.flush()
+            self.in_pre = self.in_pre and tag != "pre"
+            if tag in self.stack:
+                while self.stack.pop() != tag:
+                    pass
+            if tag in CONTAINER_TAGS and self.depth:
+                self.depth -= 1
+            self.start_depth = self.depth
+
+    def handle_data(self, data):
+        if self.skip:
+            return
+        if not self.buf:
+            self.start_depth = self.depth
+        self.buf.append(data)
+
+    def close(self):
+        super().close()
+        self.flush()
+
+
+def html_to_text(html: str) -> List[Block]:
+    """Page HTML -> blocks (headings as '#' lines, <pre> fenced, items as '- ')."""
+    p = _TextParser()
+    p.feed(html)
+    p.close()
+    return p.blocks
+
+
+def entry_location(path: str) -> Tuple[str, Optional[str]]:
+    """Index path -> (page file, anchor or None): marker tags dropped, file decoded."""
+    path = re.sub(r"<dash_entry_[^>]*>", "", path)
+    file_part, sep, anchor = path.partition("#")
+    return unquote(file_part), (anchor if sep and anchor else None)
+
+
+def trim_to_anchor(blocks: List[Block], anchor: Optional[str]) -> List[str]:
+    """Lines of the section the anchor names; whole page if none or not found."""
+    def lines_of(bs):
+        return [ln for b in bs for ln in b.text.split("\n")]
+
+    if not anchor:
+        return lines_of(blocks)
+    want = {anchor, unquote(anchor)}
+    start = None
+    for i, b in enumerate(blocks):
+        if any(x in want or unquote(x) in want for x in b.ids):
+            start = i
+            break
+    if start is None:
+        return ["note: anchor not found (%s); showing the whole page" % anchor] \
+            + lines_of(blocks)
+    first = blocks[start]
+    end = len(blocks)
+    for j in range(start + 1, len(blocks)):
+        b = blocks[j]
+        if first.level:
+            stop = b.level and b.level <= first.level
+        else:
+            stop = (b.level or b.depth < first.depth
+                    or (b.tag == first.tag and b.ids and b.depth <= first.depth))
+        if stop:
+            end = j
+            break
+    return lines_of(blocks[start:end])
+
+
+def positive_int(text):
+    try:
+        n = int(text)
+    except ValueError:
+        n = 0
+    if n < 1:
+        raise argparse.ArgumentTypeError("%r: must be an integer >= 1" % text)
+    return n
+
+
+def cmd_show(args):
+    name, entry_id = parse_ref(args.ref)
+    store = require_store(args)
+    ds = next((d for d in find_docsets(store) if d.name == name), None)
+    if ds is None:
+        raise CLIError("unknown docset %r (see: docset.py list)" % name, 5)
+    entry = next(iter_entries(ds, entry_id=entry_id), None)
+    if entry is None:
+        raise CLIError("no entry %s in docset %s" % (args.ref, name), 5)
+    _id, _name, _type, path = entry
+    if re.match(r"https?://", path, re.I):
+        print("online-only entry: " + path)
+        return 0
+    file_part, anchor = entry_location(path)
+    docs = os.path.join(ds.path, "Contents", "Resources", "Documents")
+    page = os.path.normpath(os.path.join(docs, *file_part.split("/")))
+    if os.path.commonpath([docs, page]) != docs or not os.path.isfile(page):
+        raise CLIError("page file not found: %s" % page, 5)
+    with open(page, "rb") as f:
+        html = f.read().decode("utf-8", errors="replace")
+    blocks = html_to_text(html)
+    lines = trim_to_anchor(blocks, None if args.full else anchor)
+    if not args.full:
+        lines = cap_lines(lines, args.max_lines,
+                          "raise --max-lines or use --full for the whole page")
+    for line in lines:
+        print(line)
+    return 0
+
+
 def cmd_list(args):
     store = require_store(args)
     docs = find_docsets(store)
@@ -526,6 +745,16 @@ def build_parser():
         if name == "list":
             p.set_defaults(handler=cmd_list)
             continue
+        if name == "show":
+            p.add_argument("ref", metavar="REF", help="<Docset>:<id> from search")
+            p.add_argument("--full", action="store_true",
+                           help="print the whole page, untrimmed and uncapped")
+            p.add_argument("--max-lines", type=positive_int, default=150, metavar="N",
+                           help="print at most N lines (default 150)")
+            p.add_argument("--no-notes", action="store_true",
+                           help="do not append notes (notes come in a later release)")
+            p.set_defaults(handler=cmd_show)
+            continue
         if name == "search":
             p.add_argument("query", metavar="QUERY")
             p.add_argument("-d", "--docset", metavar="NAME", action="append",
@@ -535,7 +764,7 @@ def build_parser():
                            "are full-size and no project list is set)")
             p.add_argument("--type", metavar="TYPE",
                            help="only entries of this type (case-insensitive)")
-            p.add_argument("--max-lines", type=int, default=40, metavar="N",
+            p.add_argument("--max-lines", type=positive_int, default=40, metavar="N",
                            help="print at most N results (default 40)")
             p.add_argument("--json", action="store_true",
                            help="print a JSON list of {ref, docset, type, name, rank}")
