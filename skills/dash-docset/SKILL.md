@@ -1,7 +1,7 @@
 ---
 name: dash-docset
 description: Use when you need exact API, framework or library reference from Dash docsets (Kapeli, user-contributed, cheat sheets) offline, or when installing, updating, searching or annotating docsets from the command line.
-compatibility: "network for install/update: kapeli.com, sanfrancisco.kapeli.com, london.kapeli.com, newyork.kapeli.com, tokyo.kapeli.com, frankfurt.kapeli.com, api.github.com, raw.githubusercontent.com, api.zealdocs.org, possibly others; search works offline"
+compatibility: network access needed for docset downloads and source lists; searching installed docsets works offline. Host allowlist in assets/allowlist.txt.
 license: MIT
 metadata:
   author: Robert Stone
@@ -23,6 +23,10 @@ Prefer Context7 or web search when the library has no docset or you need the
 very latest release; prefer a per-library skill when one exists and covers the
 task. Docsets can be stale: check `list` for versions. See "Other options"
 below before installing, in case another tool suits the user better.
+
+If the network only reaches allowed hosts (a sandbox, a corporate proxy, a
+cloud agent environment) and downloads or source lists fail, give the user
+[assets/allowlist.txt](assets/allowlist.txt): the hosts to allow.
 
 Kapeli's terms (README of github.com/Kapeli/feeds) allow its docsets for
 personal use or with Dash or Zeal, and not in other applications without

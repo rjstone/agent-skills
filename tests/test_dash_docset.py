@@ -144,6 +144,17 @@ class SkeletonTests(unittest.TestCase):
         script = tuple(int(x) for x in docset.VERSION.split("."))
         self.assertLessEqual(script, skill)
 
+    def test_allowlist_covers_script_hosts(self):
+        from urllib.parse import urlsplit
+        path = os.path.join(os.path.dirname(os.path.dirname(SCRIPT)), "assets",
+                            "allowlist.txt")
+        with open(path, encoding="utf-8") as f:
+            listed = {l.strip() for l in f if l.strip() and not l.startswith("#")}
+        used = {urlsplit(v).hostname for k, v in vars(docset).items()
+                if k.endswith("_URL") and isinstance(v, str) and "://" in v}
+        self.assertTrue(used)
+        self.assertEqual(used - listed, set())
+
     def test_fixture_both_forms(self):
         import tempfile
         for form in ("searchIndex", "ztoken"):
