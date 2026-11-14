@@ -295,21 +295,39 @@ def count_entries(docset_path) -> int:
         con.close()
 
 
-def iter_entries(ds) -> Iterator[Tuple[int, str, str, str]]:
-    """Yield (id, name, type, path) from either index form."""
+def like_pattern(query) -> str:
+    """dasht's fuzzy pattern %a%b%c% with %, _ and \\ escaped (ESCAPE '\\')."""
+    esc = ["\\" + c if c in "%_\\" else c for c in query]
+    return "%" + "%".join(esc) + "%"
+
+
+def iter_entries(ds, like: Optional[str] = None) -> Iterator[Tuple[int, str, str, str]]:
+    """Yield (id, name, type, path) from either index form.
+
+    like: optional SQL LIKE pattern (ESCAPE '\\') the name must match."""
     con = _open_ro(index_path(ds.path))
     try:
         if "searchIndex" in _tables(con):
-            sql = "SELECT id, name, type, path FROM searchIndex ORDER BY id"
-            for i, n, t, p in con.execute(sql):
+            sql = "SELECT id, name, type, path FROM searchIndex"
+            params = ()
+            if like is not None:
+                sql += " WHERE name LIKE ? ESCAPE '\\'"
+                params = (like,)
+            sql += " ORDER BY id"
+            for i, n, t, p in con.execute(sql, params):
                 yield i, n, t or "", p or ""
         else:
             sql = ("SELECT k.Z_PK, k.ZTOKENNAME, ty.ZTYPENAME, f.ZPATH, m.ZANCHOR "
                    "FROM ZTOKEN k "
                    "LEFT JOIN ZTOKENTYPE ty ON ty.Z_PK = k.ZTOKENTYPE "
                    "LEFT JOIN ZTOKENMETAINFORMATION m ON m.Z_PK = k.ZMETAINFORMATION "
-                   "LEFT JOIN ZFILEPATH f ON f.Z_PK = m.ZFILE ORDER BY k.Z_PK")
-            for i, n, t, p, a in con.execute(sql):
+                   "LEFT JOIN ZFILEPATH f ON f.Z_PK = m.ZFILE")
+            params = ()
+            if like is not None:
+                sql += " WHERE k.ZTOKENNAME LIKE ? ESCAPE '\\'"
+                params = (like,)
+            sql += " ORDER BY k.Z_PK"
+            for i, n, t, p, a in con.execute(sql, params):
                 yield i, n, t or "", (p or "") + ("#" + a if a else "")
     finally:
         con.close()
@@ -370,6 +388,99 @@ def find_docsets(store) -> List[Docset]:
     return list(result.values())
 
 
+class ScopeError(CLIError):
+    def __init__(self, message):
+        super().__init__(message, 4)
+
+
+MAX_FULL_UNSCOPED = 4
+
+
+def parse_ref(ref: str) -> Tuple[str, int]:
+    """'<DocsetName>:<id>' -> (name, id); the id follows the last colon."""
+    name, sep, num = ref.rpartition(":")
+    if not sep or not name or not num.isdigit():
+        raise CLIError("bad reference %r (expected <Docset>:<id>)" % ref, 2)
+    return name, int(num)
+
+
+def rank(query: str, name: str) -> Optional[int]:
+    """0 exact, 1 prefix, 2 substring, 3 fuzzy (in order), None no match."""
+    q, n = query.lower(), name.lower()
+    if n == q:
+        return 0
+    if n.startswith(q):
+        return 1
+    if q in n:
+        return 2
+    pos = 0
+    for c in q:
+        pos = n.find(c, pos) + 1
+        if pos == 0:
+            return None
+    return 3
+
+
+def select_docsets(store, all_docsets, names, use_all) -> List[Docset]:
+    """Scope: -d names > project list > all if <= 4 full-size or use_all."""
+    by_name = {d.name: d for d in all_docsets}
+    wanted = names or store.project_docsets
+    if wanted:
+        picked = []
+        for n in wanted:
+            if n not in by_name:
+                raise ScopeError("unknown docset %r (see: docset.py list)" % n)
+            if by_name[n] not in picked:
+                picked.append(by_name[n])
+        return picked
+    full = [d for d in all_docsets if d.full_size]
+    if use_all or len(full) <= MAX_FULL_UNSCOPED:
+        return list(all_docsets)
+    raise ScopeError(
+        "%d full-size docsets and no scope; searching all of them is slow and "
+        "noisy.\nFull-size docsets: %s\nNarrow it with -d NAME (repeatable), "
+        "a \"docsets\" list in %s, or search everything with --all."
+        % (len(full), ", ".join(d.name for d in full), PROJECT_FILE))
+
+
+def cap_lines(lines, max_lines, hint) -> List[str]:
+    if len(lines) <= max_lines:
+        return list(lines)
+    cut = len(lines) - max_lines
+    return list(lines[:max_lines]) + ["... %d more lines cut; %s" % (cut, hint)]
+
+
+def cmd_search(args):
+    if not args.query:
+        raise CLIError("empty search query", 2)
+    store = require_store(args)
+    docs = select_docsets(store, find_docsets(store), args.docset or [], args.all)
+    like = like_pattern(args.query)
+    want_type = args.type.lower() if args.type else None
+    hits = []
+    for ds in docs:
+        try:
+            for i, name, typ, _path in iter_entries(ds, like):
+                if want_type is not None and typ.lower() != want_type:
+                    continue
+                r = rank(args.query, name)
+                if r is not None:
+                    hits.append((r, len(name), name, ds.name, i, typ))
+        except sqlite3.Error as e:
+            _warn("skipping %s: %s" % (ds.name, e))
+    hits.sort(key=lambda h: h[:4] + (h[4],))
+    hint = "raise --max-lines or narrow the query, -d or --type"
+    if args.json:
+        items = [{"ref": "%s:%d" % (d, i), "docset": d, "type": t, "name": n,
+                  "rank": r} for r, _l, n, d, i, t in hits[:args.max_lines]]
+        print(json.dumps(items, indent=2))
+        return 0
+    lines = ["%s:%d  %s  %s  (%s)" % (d, i, t, n, d) for r, _l, n, d, i, t in hits]
+    for line in cap_lines(lines, args.max_lines, hint):
+        print(line)
+    return 0
+
+
 def cmd_list(args):
     store = require_store(args)
     docs = find_docsets(store)
@@ -414,6 +525,21 @@ def build_parser():
             continue
         if name == "list":
             p.set_defaults(handler=cmd_list)
+            continue
+        if name == "search":
+            p.add_argument("query", metavar="QUERY")
+            p.add_argument("-d", "--docset", metavar="NAME", action="append",
+                           help="search only this docset (repeatable)")
+            p.add_argument("--all", action="store_true",
+                           help="search every docset (needed when more than 4 "
+                           "are full-size and no project list is set)")
+            p.add_argument("--type", metavar="TYPE",
+                           help="only entries of this type (case-insensitive)")
+            p.add_argument("--max-lines", type=int, default=40, metavar="N",
+                           help="print at most N results (default 40)")
+            p.add_argument("--json", action="store_true",
+                           help="print a JSON list of {ref, docset, type, name, rank}")
+            p.set_defaults(handler=cmd_search)
             continue
         p.add_argument("args", nargs="*")
         p.set_defaults(handler=not_implemented)

@@ -402,5 +402,163 @@ class ReadingTests(unittest.TestCase):
         self.assertIn("warning", r.stderr)
 
 
+class RankTests(unittest.TestCase):
+    def test_rank_order(self):
+        r = docset.rank
+        self.assertEqual(r("Gather", "gather"), 0)
+        self.assertEqual(r("gat", "Gather"), 1)
+        self.assertEqual(r("ath", "Gather"), 2)
+        self.assertEqual(r("gtr", "Gather"), 3)
+        self.assertIsNone(r("xyz", "Gather"))
+        self.assertIsNone(r("rg", "Gather"))  # order matters
+
+    def test_parse_ref(self):
+        self.assertEqual(docset.parse_ref("Python_3:42"), ("Python_3", 42))
+        self.assertEqual(docset.parse_ref("A:B:7"), ("A:B", 7))
+        for bad in ("nocolon", "A:x", ":3", "A:"):
+            with self.subTest(bad=bad), self.assertRaises(docset.CLIError):
+                docset.parse_ref(bad)
+
+    def test_cap_lines(self):
+        lines = ["l%d" % i for i in range(10)]
+        self.assertEqual(docset.cap_lines(lines, 10, "h"), lines)
+        out = docset.cap_lines(lines, 4, "use --x")
+        self.assertEqual(out[:4], lines[:4])
+        self.assertEqual(out[4], "... 6 more lines cut; use --x")
+        self.assertEqual(len(out), 5)
+
+
+class SearchTests(unittest.TestCase):
+    def setUp(self):
+        self.tmp = tmp_dir(self)
+        self.store_dir = os.path.join(self.tmp, "store")
+        os.makedirs(self.store_dir)
+        self.installed = {}
+
+    def add(self, name, entries=None, source="kapeli", form="searchIndex"):
+        make_docset(self.store_dir, name, form=form, entries=entries)
+        if source:
+            self.installed[name] = {"source": source, "version": "1"}
+        docset.save_installed(docset.Store(self.store_dir, "--dir", [], None),
+                              self.installed)
+
+    def cli(self, *args, project=None):
+        if project is not None:
+            with open(os.path.join(self.tmp, ".dash-docset.json"), "w") as f:
+                json.dump(project, f)
+        return run_cli("--dir", self.store_dir, *args, env={"HOME": self.tmp},
+                       cwd=self.tmp)
+
+    def test_search_ranks_across_docsets(self):
+        self.add("Alpha", [("sleep_long", "Function", "a.html"),
+                           ("sleep", "Function", "b.html")])
+        self.add("Beta", [("Sleep", "Guide", "c.html"), ("xsleepx", "Guide", "d.html"),
+                          ("s_l_e_e_p", "Guide", "e.html")], form="ztoken")
+        r = self.cli("search", "sleep")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        names = [l.split("  ")[2] for l in r.stdout.splitlines()]
+        self.assertEqual(names, ["Sleep", "sleep", "sleep_long", "xsleepx", "s_l_e_e_p"])
+        first = r.stdout.splitlines()[0].split("  ")
+        self.assertEqual(first[1], "Guide")
+        self.assertEqual(first[3], "(Beta)")
+        self.assertRegex(first[0], r"^Beta:\d+$")
+        self.assertTrue(r.stdout.splitlines()[1].startswith("Alpha:2  "))
+
+    def test_search_type_filter_case_insensitive(self):
+        self.add("Alpha", [("sleep", "Function", "a.html"), ("sleep2", "Guide", "b.html")])
+        r = self.cli("search", "sleep", "--type", "guide")
+        self.assertEqual(len(r.stdout.splitlines()), 1)
+        self.assertIn("sleep2", r.stdout)
+
+    def test_search_like_wildcards_escaped(self):
+        self.add("Alpha", [("a_c", "Function", "a.html"), ("abc", "Function", "b.html"),
+                           ("100%", "Function", "c.html")])
+        r = self.cli("search", "a_c")
+        self.assertEqual([l.split("  ")[2] for l in r.stdout.splitlines()], ["a_c"])
+        r = self.cli("search", "%")
+        self.assertEqual([l.split("  ")[2] for l in r.stdout.splitlines()], ["100%"])
+
+    def test_unknown_docset_exits_4(self):
+        self.add("Alpha")
+        r = self.cli("search", "x", "-d", "Nope")
+        self.assertEqual(r.returncode, 4)
+        self.assertIn("Nope", r.stderr)
+
+    def test_scope_names_beat_project(self):
+        self.add("Alpha", [("thing", "Function", "a.html")])
+        self.add("Beta", [("thing", "Function", "b.html")])
+        r = self.cli("search", "thing", "-d", "Beta", project={"docsets": ["Alpha"]})
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertIn("(Beta)", r.stdout)
+        self.assertNotIn("(Alpha)", r.stdout)
+
+    def test_scope_project_list(self):
+        for n in "ABCDEF":
+            self.add("Doc" + n, [("thing", "Function", "a.html")])
+        r = self.cli("search", "thing", project={"docsets": ["DocB", "DocC"]})
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertEqual(sorted(l.split("  ")[3] for l in r.stdout.splitlines()),
+                         ["(DocB)", "(DocC)"])
+
+    def test_scope_error_over_four_full(self):
+        for n in "ABCDE":
+            self.add("Doc" + n, [("thing", "Function", "a.html")])
+        r = self.cli("search", "thing")
+        self.assertEqual(r.returncode, 4)
+        for n in "ABCDE":
+            self.assertIn("Doc" + n, r.stderr)
+        for hint in ("-d", "docsets", ".dash-docset.json", "--all"):
+            self.assertIn(hint, r.stderr)
+        r = self.cli("search", "thing", "--all")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertEqual(len(r.stdout.splitlines()), 5)
+
+    def test_scope_small_docsets_dont_count(self):
+        for n in "ABCD":
+            self.add("Doc" + n, [("thing", "Function", "a.html")])
+        for n in "XYZ":
+            self.add("Cheat" + n, [("thing", "Function", "a.html")], source="cheat")
+        r = self.cli("search", "thing")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertEqual(len(r.stdout.splitlines()), 7)
+
+    def test_search_max_lines_and_hint(self):
+        self.add("Alpha", [("item%02d" % i, "Function", "a.html") for i in range(50)])
+        r = self.cli("search", "item")
+        lines = r.stdout.splitlines()
+        self.assertEqual(len(lines), 41)
+        self.assertTrue(lines[-1].startswith("... 10 more lines cut;"), lines[-1])
+        self.assertIn("--max-lines", lines[-1])
+        r = self.cli("search", "item", "--max-lines", "5")
+        self.assertEqual(len(r.stdout.splitlines()), 6)
+
+    def test_search_json(self):
+        self.add("Alpha", [("sleep", "Function", "a.html"), ("sleeper", "Guide", "b.html")])
+        r = self.cli("search", "sleep", "--json")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        data = json.loads(r.stdout)
+        self.assertEqual([d["name"] for d in data], ["sleep", "sleeper"])
+        self.assertEqual(set(data[0]), {"ref", "docset", "type", "name", "rank"})
+        self.assertEqual((data[0]["docset"], data[0]["rank"], data[1]["rank"]),
+                         ("Alpha", 0, 1))
+        self.assertEqual(data[0]["ref"], "Alpha:1")
+        r = self.cli("search", "sleep", "--json", "--max-lines", "1")
+        self.assertEqual(len(json.loads(r.stdout)), 1)
+
+    def test_search_skips_broken_docset_with_warning(self):
+        self.add("Good", [("thing", "Function", "a.html")])
+        self.add("Bad", [("thing", "Function", "a.html")])
+        con = sqlite3.connect(os.path.join(self.store_dir, "Bad.docset", "Contents",
+                                           "Resources", "docSet.dsidx"))
+        con.execute("DROP TABLE searchIndex")
+        con.execute("CREATE TABLE searchIndex(id INTEGER PRIMARY KEY, x TEXT)")
+        con.commit()
+        con.close()
+        r = self.cli("search", "thing")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertIn("(Good)", r.stdout)
+        self.assertIn("Bad", r.stderr)
+
+
 if __name__ == "__main__":
     unittest.main()
