@@ -727,5 +727,122 @@ class ShowTests(unittest.TestCase):
         self.assertNotIn("bye", "".join(texts))
 
 
+class NotesTests(unittest.TestCase):
+    def setUp(self):
+        self.tmp = tmp_dir(self)
+        self.store_dir = os.path.join(self.tmp, "store")
+        os.makedirs(self.store_dir)
+
+    def cli(self, *args):
+        return run_cli("--dir", self.store_dir, *args, env={"HOME": self.tmp},
+                       cwd=self.tmp)
+
+    def write_notes(self, name, text):
+        path = docset.notes_path(self.store_dir, name)
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        with open(path, "w", encoding="utf-8") as f:
+            f.write(text)
+        return path
+
+    def test_notes_path(self):
+        self.assertEqual(docset.notes_path(self.store_dir, "Py"),
+                         os.path.join(self.store_dir, "notes", "Py.md"))
+
+    def test_parse_notes(self):
+        general, sections = docset.parse_notes(
+            "# Title\nintro\n## Asyncio.Gather (Function)\nA\n## other\nB\n"
+            "## General\nG2\n")
+        self.assertEqual(general, ["intro", "G2"])
+        self.assertEqual(sections["asyncio.gather"], [("Function", ["A"])])
+        self.assertEqual(sections["other"], [(None, ["B"])])
+        self.assertNotIn("general", sections)
+
+    def test_notes_match_case_and_type(self):
+        self.write_notes("Py", "gen line\n## ASYNCIO.gather (function)\nfn note\n"
+                         "## asyncio.gather (Guide)\nguide note\n"
+                         "## asyncio.gather\nany note\n## unrelated\nnope\n")
+        out = "\n".join(docset.notes_for(self.store_dir, "Py", "Asyncio.Gather",
+                                         "Function"))
+        self.assertIn("--- notes (", out)
+        self.assertIn("gen line", out)
+        self.assertIn("fn note", out)
+        self.assertIn("any note", out)
+        self.assertNotIn("guide note", out)
+        self.assertNotIn("nope", out)
+        self.assertEqual(docset.notes_for(self.store_dir, "Nofile", "x", "y"), [])
+
+    def test_notes_shown_with_show(self):
+        make_docset(self.store_dir, "Py")
+        self.write_notes("Py", "general tip\n## asyncio.gather\nuse return_exceptions\n")
+        r = self.cli("show", "Py:1")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertIn("Run awaitables concurrently.", r.stdout)
+        self.assertIn("use return_exceptions", r.stdout)
+        self.assertIn("general tip", r.stdout)
+        r = self.cli("show", "Py:1", "--no-notes")
+        self.assertNotIn("use return_exceptions", r.stdout)
+        r = self.cli("search", "gather", "-d", "Py")
+        self.assertIn("general tip", r.stdout)
+        self.assertEqual(r.stdout.count("general tip"), 1)
+        self.assertNotIn("use return_exceptions", r.stdout)
+        r = self.cli("search", "gather", "-d", "Py", "--json")
+        self.assertNotIn("general tip", r.stdout)
+        json.loads(r.stdout)
+
+    def test_show_warns_on_size_only(self):
+        make_docset(self.store_dir, "Py")
+        self.write_notes("Py", "## asyncio.gather\n" + "x\n" * 250
+                         + "## orphan heading\ny\n")
+        r = self.cli("show", "Py:1")
+        self.assertIn("asyncio.gather", r.stderr)
+        self.assertNotIn("orphan heading", r.stderr)
+
+    def test_notes_for_foreign_docset_live_in_store(self):
+        foreign = os.path.join(self.tmp, "foreign")
+        os.makedirs(foreign)
+        make_docset(foreign, "Ext")
+        before = sorted(os.path.join(d, f) for d, _, fs in os.walk(foreign) for f in fs)
+        with open(os.path.join(self.tmp, ".dash-docset.json"), "w") as f:
+            json.dump({"read_from": [foreign]}, f)
+        r = self.cli("notes", "Ext", "--path")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        path = r.stdout.strip()
+        self.assertEqual(path, os.path.join(self.store_dir, "notes", "Ext.md"))
+        self.assertFalse(os.path.exists(path))
+        self.write_notes("Ext", "hello\n")
+        r = self.cli("notes", "Ext")
+        self.assertIn("hello", r.stdout)
+        after = sorted(os.path.join(d, f) for d, _, fs in os.walk(foreign) for f in fs)
+        self.assertEqual(before, after)
+
+    def test_check_limits(self):
+        w = docset.check_notes("## a\n" + "x\n" * 250, {"a"})
+        self.assertTrue(any("a" in x and "100" in x for x in w), w)
+        text = "".join("## s%d\n%s" % (i, "x\n" * 9) for i in range(100))
+        names = {"s%d" % i for i in range(100)}
+        self.assertEqual(docset.check_notes(text, names), [])
+        self.assertTrue(docset.check_notes("x\n" * 51, set()))
+        big = "".join("## t%d\n%s" % (i, "x\n" * 99) for i in range(21))
+        w = docset.check_notes(big, {"t%d" % i for i in range(21)})
+        self.assertTrue(any("2,000" in x or "2000" in x for x in w), w)
+
+    def test_check_orphans(self):
+        w = docset.check_notes("## real\nx\n## ghost (Type)\ny\n", {"real"})
+        self.assertEqual(len(w), 1)
+        self.assertIn("ghost", w[0])
+
+    def test_notes_check_cli(self):
+        make_docset(self.store_dir, "Py")
+        self.write_notes("Py", "## asyncio.gather\nok\n")
+        r = self.cli("notes", "Py", "--check")
+        self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+        self.write_notes("Py", "## ghost\nok\n")
+        r = self.cli("notes", "Py", "--check")
+        self.assertEqual(r.returncode, 1)
+        self.assertIn("ghost", r.stdout)
+        r = self.cli("notes", "Missing", "--check")
+        self.assertEqual(r.returncode, 5)
+
+
 if __name__ == "__main__":
     unittest.main()

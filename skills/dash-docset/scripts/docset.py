@@ -487,6 +487,9 @@ def cmd_search(args):
     lines = ["%s:%d  %s  %s  (%s)" % (d, i, t, n, d) for r, _l, n, d, i, t in hits]
     for line in cap_lines(lines, args.max_lines, hint):
         print(line)
+    for dname in dict.fromkeys(h[3] for h in hits):
+        for line in general_notes(store, dname):
+            print(line)
     return 0
 
 
@@ -679,7 +682,7 @@ def cmd_show(args):
     entry = next(iter_entries(ds, entry_id=entry_id), None)
     if entry is None:
         raise CLIError("no entry %s in docset %s" % (args.ref, name), 5)
-    _id, _name, _type, path = entry
+    _id, entry_name, entry_type, path = entry
     if re.match(r"https?://", path, re.I):
         print("online-only entry: " + path)
         return 0
@@ -701,6 +704,12 @@ def cmd_show(args):
                           "raise --max-lines or use --full for the whole section")
     for line in lines:
         print(line)
+    if not args.no_notes:
+        for line in notes_for(store, name, entry_name, entry_type):
+            print(line)
+        _p, text = _read_notes(store, name)
+        for w in size_warnings(text or ""):
+            print("warning: notes: " + w, file=sys.stderr)
     return 0
 
 
@@ -719,6 +728,138 @@ def cmd_list(args):
         if d.clashes:
             line += "  (also in %s; store copy used)" % ", ".join(d.clashes)
         print(line)
+    return 0
+
+
+NOTES_GENERAL_MAX = 50
+NOTES_SECTION_MAX = 100
+NOTES_TOTAL_MAX = 2000
+_HEADING = re.compile(r"^##\s+(.*?)\s*$")
+_TYPED = re.compile(r"^(.*?)\s*\(([^()]*)\)$")
+
+
+def notes_path(store, docset_name) -> str:
+    """Notes always live in the script's own store, also for foreign docsets."""
+    root = store if isinstance(store, str) else store.path
+    return os.path.join(root, "notes", docset_name + ".md")
+
+
+def parse_notes(text):
+    """(general lines, {lowercased heading: [(type or None, lines)]})."""
+    general: List[str] = []
+    sections: dict = {}
+    cur = None  # None = general; else the list the lines go to
+    seen_content = False
+    for line in text.splitlines():
+        m = _HEADING.match(line)
+        if m:
+            heading = m.group(1)
+            typ = None
+            tm = _TYPED.match(heading)
+            if tm:
+                heading, typ = tm.group(1).strip(), tm.group(2).strip() or None
+            if heading.lower() == "general" and typ is None:
+                cur = general
+            else:
+                cur = []
+                sections.setdefault(heading.lower(), []).append((typ, cur))
+            seen_content = True
+            continue
+        if cur is None and not seen_content and line.startswith("# "):
+            seen_content = True  # leading title line
+            continue
+        if cur is None:
+            cur = general
+        if line.strip() or cur:
+            seen_content = True
+            cur.append(line)
+    return general, sections
+
+
+def _read_notes(store, docset_name):
+    path = notes_path(store, docset_name)
+    try:
+        with open(path, encoding="utf-8", errors="replace") as f:
+            return path, f.read()
+    except OSError:
+        return path, None
+
+
+def notes_for(store, docset_name, entry_name, entry_type) -> List[str]:
+    path, text = _read_notes(store, docset_name)
+    if text is None:
+        return []
+    general, sections = parse_notes(text)
+    body = list(general)
+    for typ, lines in sections.get(entry_name.lower(), []):
+        if typ is None or typ.lower() == (entry_type or "").lower():
+            body.extend(lines)
+    if not any(l.strip() for l in body):
+        return []
+    return ["--- notes (%s) ---" % path] + body
+
+
+def general_notes(store, docset_name) -> List[str]:
+    path, text = _read_notes(store, docset_name)
+    if text is None:
+        return []
+    general, _ = parse_notes(text)
+    if not any(l.strip() for l in general):
+        return []
+    return ["--- notes (%s) ---" % path] + general
+
+
+def size_warnings(text) -> List[str]:
+    general, sections = parse_notes(text)
+    warns = []
+    if len(general) > NOTES_GENERAL_MAX:
+        warns.append("General notes are %d lines (limit %d); trim them"
+                     % (len(general), NOTES_GENERAL_MAX))
+    for name, items in sections.items():
+        for typ, lines in items:
+            if len(lines) > NOTES_SECTION_MAX:
+                warns.append("section %r is %d lines (limit %d); trim it" % (
+                    name + (" (%s)" % typ if typ else ""), len(lines),
+                    NOTES_SECTION_MAX))
+    total = len(text.splitlines())
+    if total > NOTES_TOTAL_MAX:
+        warns.append("notes file is %d lines (limit %s); trim it"
+                     % (total, format(NOTES_TOTAL_MAX, ",")))
+    return warns
+
+
+def check_notes(text, entry_names) -> List[str]:
+    warns = size_warnings(text)
+    _, sections = parse_notes(text)
+    for name in sections:
+        if name not in entry_names:
+            warns.append("section %r matches no entry in the docset" % name)
+    return warns
+
+
+def cmd_notes(args):
+    store = require_store(args)
+    ds = next((d for d in find_docsets(store) if d.name == args.docset), None)
+    if ds is None:
+        raise CLIError("unknown docset %r (see: docset.py list)" % args.docset, 5)
+    path = notes_path(store, ds.name)
+    if args.path:
+        print(path)
+        return 0
+    _, text = _read_notes(store, ds.name)
+    if args.check:
+        if text is None:
+            print("no notes file: " + path)
+            return 0
+        names = {n.lower() for _i, n, _t, _p in iter_entries(ds)}
+        warns = check_notes(text, names)
+        for w in warns:
+            print("warning: " + w)
+        return 1 if warns else 0
+    if text is None:
+        print("no notes file yet for %s (it would be %s)" % (ds.name, path))
+    else:
+        sys.stdout.write(text)
     return 0
 
 
@@ -756,7 +897,7 @@ def build_parser():
             p.add_argument("--max-lines", type=positive_int, default=150, metavar="N",
                            help="print at most N lines (default 150)")
             p.add_argument("--no-notes", action="store_true",
-                           help="do not append notes (notes come in a later release)")
+                           help="do not append notes")
             p.set_defaults(handler=cmd_show)
             continue
         if name == "search":
@@ -773,6 +914,16 @@ def build_parser():
             p.add_argument("--json", action="store_true",
                            help="print a JSON list of {ref, docset, type, name, rank}")
             p.set_defaults(handler=cmd_search)
+            continue
+        if name == "notes":
+            p.add_argument("docset", metavar="DOCSET")
+            g = p.add_mutually_exclusive_group()
+            g.add_argument("--check", action="store_true",
+                           help="warn about oversized notes and headings matching "
+                           "no entry; exit 1 if any")
+            g.add_argument("--path", action="store_true",
+                           help="print the notes file path (not created)")
+            p.set_defaults(handler=cmd_notes)
             continue
         p.add_argument("args", nargs="*")
         p.set_defaults(handler=not_implemented)
