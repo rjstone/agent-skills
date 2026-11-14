@@ -6,9 +6,14 @@ import os
 import sys
 import pathlib
 import re
+import shutil
 import sqlite3
+import tarfile
 import tempfile
 import time
+import urllib.error
+import urllib.request
+import xml.etree.ElementTree as ET
 from html.parser import HTMLParser
 from urllib.parse import unquote
 from dataclasses import dataclass, field
@@ -716,7 +721,7 @@ def cmd_show(args):
     if ds is None:
         raise CLIError("unknown docset %r (see: docset.py list)" % name, 5)
     if page_ref:
-        blocks = read_page_blocks(ds, unquote(entry_id))
+        blocks = read_page_blocks(ds, entry_id)
         _print_lines(trim_to_anchor(blocks, None), args)
         if not args.no_notes:
             for line in general_notes(store, name):
@@ -1066,7 +1071,9 @@ def cmd_fts(args):
     docs = select_docsets(store, find_docsets(store), args.docset or [], args.all)
     for ds in docs:
         ensure_fts(store, ds)
-    hits = fts_search(store, docs, args.query, args.max_lines)
+    # text output takes two lines per hit: fetch enough hits to reach the line cap
+    limit = args.max_lines if args.json else args.max_lines // 2 + 1
+    hits = fts_search(store, docs, args.query, limit)
     if args.json:
         print(json.dumps(hits, indent=2))
         return 0
@@ -1080,6 +1087,441 @@ def cmd_fts(args):
     for dname in dict.fromkeys(h["docset"] for h in hits):
         for line in general_notes(store, dname):
             print(line)
+    return 0
+
+
+# --- sources, install, update, remove ---------------------------------------
+
+# Verified live 2026-11-14. Official docsets: the *.xml files at the root of
+# the Kapeli/feeds repo (GitHub API, branch master); each feed is
+# <entry><version>..</version><url>http://MIRROR/feeds/Name.tgz</url>...
+# (5 mirrors, http: rewritten to https:; they redirect to kapeli.com).
+KAPELI_LIST_URL = "https://api.github.com/repos/Kapeli/feeds/contents/"
+KAPELI_FEED_URL = "https://raw.githubusercontent.com/Kapeli/feeds/master/%s.xml"
+# User-contributed: JSON index {"docsets": {Key: {name, archive, version}}};
+# download = USER_BASE_URL + Key + "/" + archive.
+USER_BASE_URL = "https://kapeli.com/feeds/zzz/user_contributed/build/"
+USER_INDEX_URL = USER_BASE_URL + "index.json"
+# Cheat sheets: no index; names = cheatsheets/*.rb in Kapeli/cheatsheets;
+# no version, so the HTTP Last-Modified header of the archive stands in.
+CHEAT_LIST_URL = "https://api.github.com/repos/Kapeli/cheatsheets/contents/cheatsheets"
+CHEAT_URL = "https://kapeli.com/feeds/zzz/cheatsheets/%s.tgz"
+
+SOURCE_NAMES = ("kapeli", "user", "cheat")
+CACHE_MAX_AGE = 7 * 86400
+USER_AGENT = "dash-docset/0.1"
+NET_TIMEOUT = 60
+UNKNOWN_VERSION = "unknown"
+
+
+class FetchError(Exception):
+    def __init__(self, message, status=None):
+        super().__init__(message)
+        self.status = status
+
+
+class ArchiveError(Exception):
+    pass
+
+
+class AmbiguousName(CLIError):
+    def __init__(self, message):
+        super().__init__(message, 6)
+
+
+@dataclass
+class Feed:
+    name: str
+    source: str
+    version: str
+    urls: List[str]
+
+
+def _https(url):
+    return "https://" + url[len("http://"):] if url.lower().startswith("http://") else url
+
+
+def parse_kapeli_xml(text: str, name: str) -> Feed:
+    try:
+        root = ET.fromstring(text)
+    except ET.ParseError as e:
+        raise ValueError("bad feed XML for %s: %s" % (name, e))
+    version = (root.findtext("version") or "").strip()
+    urls = [_https(u.text.strip()) for u in root.findall("url") if u.text and u.text.strip()]
+    if not urls:
+        raise ValueError("feed %s lists no download URL" % name)
+    return Feed(name, "kapeli", version, urls)
+
+
+def parse_index_json(data: dict, source: str, base_url: str) -> List[Feed]:
+    feeds = []
+    for key, d in (data.get("docsets") or {}).items():
+        if not isinstance(d, dict) or not d.get("archive"):
+            continue
+        feeds.append(Feed(str(d.get("name") or key), source, str(d.get("version") or ""),
+                          [base_url + key + "/" + d["archive"]]))
+    return feeds
+
+
+def _request(url, method="GET"):
+    req = urllib.request.Request(url, method=method, headers={"User-Agent": USER_AGENT})
+    try:
+        return urllib.request.urlopen(req, timeout=NET_TIMEOUT)
+    except urllib.error.HTTPError as e:
+        raise FetchError("HTTP %d for %s" % (e.code, url), e.code)
+    except (urllib.error.URLError, OSError, ValueError) as e:
+        raise FetchError("cannot reach %s: %s" % (url, getattr(e, "reason", e)))
+
+
+def fetch(url: str) -> bytes:
+    """GET url (redirects followed). The only function that reads the network."""
+    with _request(url) as r:
+        try:
+            return r.read()
+        except OSError as e:
+            raise FetchError("download of %s failed: %s" % (url, e))
+
+
+def download(url: str, dest: str) -> None:
+    """Stream url to the file dest (archives are 100+ MB)."""
+    with _request(url) as r:
+        try:
+            with open(dest, "wb") as out:
+                shutil.copyfileobj(r, out, 1 << 20)
+        except OSError as e:
+            raise FetchError("download of %s failed: %s" % (url, e))
+
+
+def head_last_modified(url: str) -> Optional[str]:
+    try:
+        with _request(url, "HEAD") as r:
+            return r.headers.get("Last-Modified")
+    except FetchError:
+        return None
+
+
+def _cache_path(store):
+    return os.path.join(meta_dir(store), "cache", "sources.json")
+
+
+def _list_names(url, suffix):
+    items = json.loads(fetch(url).decode("utf-8"))
+    return sorted(i["name"][:-len(suffix)] for i in items
+                  if isinstance(i, dict) and i.get("type", "file") == "file"
+                  and str(i.get("name", "")).endswith(suffix))
+
+
+def _fetch_source(source):
+    if source == "kapeli":
+        return [Feed(n, "kapeli", "", []) for n in _list_names(KAPELI_LIST_URL, ".xml")]
+    if source == "cheat":
+        return [Feed(n, "cheat", "", []) for n in _list_names(CHEAT_LIST_URL, ".rb")]
+    data = json.loads(fetch(USER_INDEX_URL).decode("utf-8"))
+    return parse_index_json(data, "user", USER_BASE_URL)
+
+
+def load_sources(store, refresh: bool, sources=SOURCE_NAMES) -> List[Feed]:
+    """Feeds of each source, cached per source for 7 days; stale cache on failure."""
+    path = _cache_path(store)
+    try:
+        cache = _load_json(path) if os.path.isfile(path) else {}
+    except CLIError:
+        cache = {}
+    now = time.time()
+    feeds, errors, changed = [], [], False
+    for source in sources:
+        entry = cache.get(source)
+        fresh = (entry and not refresh
+                 and 0 <= now - entry.get("fetched", 0) < CACHE_MAX_AGE)
+        if not fresh:
+            try:
+                entry = {"fetched": now,
+                         "feeds": [vars(f) for f in _fetch_source(source)]}
+                cache[source] = entry
+                changed = True
+            except (FetchError, ValueError, KeyError, TypeError) as e:
+                errors.append("%s: %s" % (source, e))
+                if entry:
+                    _warn("using the cached %s list; refresh failed: %s" % (source, e))
+                else:
+                    _warn("cannot load the %s list: %s" % (source, e))
+                    continue
+        feeds.extend(Feed(f["name"], f["source"], f["version"], list(f["urls"]))
+                     for f in entry["feeds"])
+    if changed:
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        _write_json(path, cache)
+    if errors and not feeds:
+        raise CLIError("could not load any source list (%s)" % "; ".join(errors), 7)
+    return feeds
+
+
+def _norm(name):
+    return re.sub(r"[\s_]+", "_", name.strip().lower())
+
+
+def _name_from_url(url, source):
+    """Feed name from a download URL: Name.tgz, or build/<Key>/<archive>."""
+    parts = url.rstrip("/").split("/")
+    if source == "user":
+        return parts[-2]
+    return parts[-1][:-len(".tgz")] if parts[-1].endswith(".tgz") else parts[-1]
+
+
+def resolve_feed(store, source, name, user_feeds=None) -> Feed:
+    """Complete feed for source:name without listing the whole source (Ruling 8)."""
+    try:
+        if source == "kapeli":
+            return parse_kapeli_xml(fetch(KAPELI_FEED_URL % name).decode("utf-8"), name)
+        if source == "cheat":
+            url = CHEAT_URL % name
+            return Feed(name, "cheat", head_last_modified(url) or UNKNOWN_VERSION, [url])
+        if user_feeds is None:
+            user_feeds = load_sources(store, False, ("user",))
+        for f in user_feeds:
+            if f.name == name or _norm(f.name) == _norm(name):
+                return f
+        raise CLIError("no %s docset named %r (see: docset.py sources %s)"
+                       % (source, name, name), 5)
+    except FetchError as e:
+        if e.status == 404:
+            raise CLIError("%s docset %r not found (%s)" % (source, name, e), 5)
+        raise CLIError(str(e), 7)
+    except ValueError as e:
+        raise CLIError(str(e), 7)
+
+
+def _bad_member_path(name):
+    n = name.replace("\\", "/")
+    return (n.startswith("/") or re.match(r"^[A-Za-z]:", n) is not None
+            or ".." in n.split("/"))
+
+
+def _inside(root, path):
+    try:
+        return os.path.commonpath([root, path]) == root
+    except ValueError:
+        return False
+
+
+def safe_extract(tgz_path: str, dest: str) -> str:
+    """Extract a gzip tar holding one .docset into dest; return that folder.
+
+    Rejects absolute or `..` paths, links leaving dest, device files and
+    fifos, non-gzip input and archives without exactly one top-level
+    .docset; ArchiveError, and nothing is extracted unless all members pass."""
+    root = os.path.realpath(dest)
+    try:
+        with open(tgz_path, "rb") as f:
+            if f.read(2) != b"\x1f\x8b":
+                raise ArchiveError("not a gzip archive")
+        with tarfile.open(tgz_path, "r:gz") as tar:
+            members = tar.getmembers()
+            tops = set()
+            for m in members:
+                if _bad_member_path(m.name):
+                    raise ArchiveError("unsafe path in archive: %r" % m.name)
+                parts = [p for p in m.name.replace("\\", "/").split("/") if p not in ("", ".")]
+                if not parts:
+                    continue
+                tops.add(parts[0])
+                target = os.path.normpath(os.path.join(root, *parts))
+                if m.isdev() or m.isfifo():
+                    raise ArchiveError("device or fifo in archive: %r" % m.name)
+                if m.issym() or m.islnk():
+                    base = root if m.islnk() else os.path.dirname(target)
+                    link = m.linkname.replace("\\", "/")
+                    if link.startswith("/") or re.match(r"^[A-Za-z]:", link) or not _inside(
+                            root, os.path.normpath(os.path.join(base, link))):
+                        raise ArchiveError("link leaves the archive: %r -> %r"
+                                           % (m.name, m.linkname))
+                elif not (m.isfile() or m.isdir()):
+                    raise ArchiveError("unsupported member type: %r" % m.name)
+            docsets = [t for t in tops if t.endswith(".docset")]
+            if len(docsets) != 1 or len(tops) != 1:
+                raise ArchiveError("archive must hold exactly one top-level .docset "
+                                   "folder (found: %s)" % ", ".join(sorted(tops)))
+            if hasattr(tarfile, "data_filter"):
+                tar.extractall(dest, members=members, filter="data")
+            else:
+                tar.extractall(dest, members=members)
+    except ArchiveError:
+        raise
+    except (tarfile.TarError, EOFError, OSError, UnicodeError) as e:
+        raise ArchiveError("cannot read archive: %s" % e)
+    out = os.path.join(dest, docsets[0])
+    for base, dirs, files in os.walk(out):  # belt and braces: nothing resolves outside
+        for n in dirs + files:
+            if not _inside(root, os.path.realpath(os.path.join(base, n))):
+                raise ArchiveError("path resolves outside the extract folder: %r" % n)
+    return out
+
+
+def _download_any(urls, dest):
+    errors = []
+    for url in urls:
+        try:
+            download(_https(url), dest)
+            return _https(url)
+        except FetchError as e:
+            errors.append(str(e))
+            _warn("mirror failed: %s" % e)
+    raise CLIError("download failed on every mirror: %s" % "; ".join(errors), 7)
+
+
+def install_feed(store, feed: Feed) -> Docset:
+    """Download, extract and move the docset into the store; record it."""
+    os.makedirs(meta_dir(store), exist_ok=True)
+    work = tempfile.mkdtemp(dir=meta_dir(store), prefix="tmp-")
+    try:
+        archive = os.path.join(work, "download.tgz")
+        used = _download_any(feed.urls, archive)
+        out = os.path.join(work, "x")
+        os.makedirs(out)
+        try:
+            extracted = safe_extract(archive, out)
+        except ArchiveError as e:
+            raise CLIError("bad archive from %s: %s" % (used, e), 7)
+        name = os.path.basename(extracted)[:-len(".docset")]
+        final = os.path.join(store.path, name + ".docset")
+        backup = os.path.join(work, "old")
+        had = os.path.isdir(final)
+        if had:
+            os.replace(final, backup)
+        try:
+            os.replace(extracted, final)
+        except BaseException:
+            if had:
+                os.replace(backup, final)
+            raise
+        installed = load_installed(store)
+        installed[name] = {"source": feed.source, "version": feed.version, "url": used,
+                           "installed": time.strftime("%Y-%m-%d")}
+        save_installed(store, installed)
+    finally:
+        shutil.rmtree(work, ignore_errors=True)
+    ds = _make_docset(final, False, feed.source, feed.version)
+    if ds is None:
+        raise CLIError("installed %s but its index is unreadable" % name, 7)
+    return ds
+
+
+def install(store, spec: str) -> Docset:
+    prefix, sep, name = spec.partition(":")
+    if sep and prefix in SOURCE_NAMES and name:
+        return install_feed(store, resolve_feed(store, prefix, name))
+    matches = [f for f in load_sources(store, False) if _norm(f.name) == _norm(spec)]
+    if not matches:
+        raise CLIError("no docset named %r in any source (see: docset.py sources %s)"
+                       % (spec, spec), 5)
+    if len(matches) > 1:
+        raise AmbiguousName("%r is offered by several sources; name one: %s"
+                            % (spec, ", ".join("%s:%s" % (f.source, f.name)
+                                               for f in matches)))
+    f = matches[0]
+    return install_feed(store, resolve_feed(store, f.source, f.name))
+
+
+def cmd_sources(args):
+    store = require_store(args)
+    feeds = load_sources(store, args.refresh)
+    q = _norm(args.query) if args.query else ""
+    lines = []
+    for f in feeds:
+        if q in _norm(f.name):
+            lines.append("%s:%s%s" % (f.source, f.name,
+                                      "  " + f.version if f.version else ""))
+    lines.sort()
+    if not lines:
+        print("no docsets match %r" % (args.query or ""))
+        return 0
+    for line in cap_lines(lines, args.max_lines,
+                          "raise --max-lines or give a QUERY"):
+        print(line)
+    return 0
+
+
+def cmd_install(args):
+    store = require_store(args)
+    failed = 0
+    for spec in args.specs:
+        try:
+            ds = install(store, spec)
+        except CLIError as e:
+            if len(args.specs) == 1:
+                raise
+            print("%s: %s" % (spec, e), file=sys.stderr)
+            failed = e.code
+            continue
+        print("installed %s %s (%d entries)" % (ds.name, ds.version or "", ds.entry_count))
+    return failed
+
+
+def _managed(store, name):
+    """The installed.json entry for name, or a CLIError (5 unknown, 2 not ours)."""
+    installed = load_installed(store)
+    if name in installed and isinstance(installed[name], dict):
+        return installed[name]
+    if any(d.name == name for d in find_docsets(store)):
+        raise CLIError("%s was not installed by docset.py (foreign or hand-copied); "
+                       "manage it with the tool that owns it" % name, 2)
+    raise CLIError("unknown docset %r (see: docset.py list)" % name, 5)
+
+
+def cmd_update(args):
+    store = require_store(args)
+    installed = load_installed(store)
+    names = list(dict.fromkeys(args.names)) or sorted(installed)
+    metas = {n: _managed(store, n) for n in names}
+    if not names:
+        print("nothing installed")
+        return 0
+    user_feeds = None
+    failed = 0
+    for name in names:
+        meta = metas[name]
+        try:
+            source = meta.get("source")
+            if source not in SOURCE_NAMES or not meta.get("url"):
+                raise CLIError("%s has no usable source record" % name, 2)
+            feed_name = _name_from_url(meta["url"], source)
+            if source == "user" and user_feeds is None:
+                user_feeds = load_sources(store, True, ("user",))
+            feed = resolve_feed(store, source, feed_name, user_feeds)
+            if feed.version == meta.get("version"):
+                print("%s: up to date (%s)" % (name, feed.version or "-"))
+                continue
+            ds = install_feed(store, feed)
+        except CLIError as e:
+            print("%s: %s" % (name, e), file=sys.stderr)
+            failed = failed or e.code
+            continue
+        print("%s: updated %s -> %s" % (name, meta.get("version") or "-",
+                                        feed.version or "-"))
+        _p, text = _read_notes(store, ds.name)
+        if text:
+            names_ = {n.lower() for _i, n, _t, _p2 in iter_entries(ds)}
+            for w in check_notes(text, names_):
+                print("warning: notes: " + w)
+    return failed
+
+
+def cmd_remove(args):
+    store = require_store(args)
+    _managed(store, args.name)
+    path = os.path.join(store.path, args.name + ".docset")
+    if os.path.isdir(path):
+        shutil.rmtree(path)
+    try:
+        os.unlink(fts_path(store, args.name))
+    except OSError:
+        pass
+    installed = load_installed(store)
+    installed.pop(args.name, None)
+    save_installed(store, installed)
+    print("removed %s" % args.name)
+    if os.path.exists(notes_path(store, args.name)):
+        print("notes kept: " + notes_path(store, args.name))
     return 0
 
 
@@ -1109,6 +1551,30 @@ def build_parser():
             continue
         if name == "list":
             p.set_defaults(handler=cmd_list)
+            continue
+        if name == "sources":
+            p.add_argument("query", nargs="?", metavar="QUERY",
+                           help="only names containing this text")
+            p.add_argument("--refresh", action="store_true",
+                           help="refetch the source lists (cached for 7 days)")
+            p.add_argument("--max-lines", type=positive_int, default=40, metavar="N",
+                           help="print at most N lines (default 40)")
+            p.set_defaults(handler=cmd_sources)
+            continue
+        if name == "install":
+            p.add_argument("specs", nargs="+", metavar="SPEC",
+                           help="[kapeli:|user:|cheat:]Name; a prefix is needed when "
+                           "several sources offer the name")
+            p.set_defaults(handler=cmd_install)
+            continue
+        if name == "update":
+            p.add_argument("names", nargs="*", metavar="NAME",
+                           help="installed docsets to update (default: all)")
+            p.set_defaults(handler=cmd_update)
+            continue
+        if name == "remove":
+            p.add_argument("name", metavar="NAME")
+            p.set_defaults(handler=cmd_remove)
             continue
         if name == "show":
             p.add_argument("ref", metavar="REF", help="<Docset>:<id> from search, or <Docset>:page:<path> from fts")

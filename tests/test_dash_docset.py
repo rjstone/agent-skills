@@ -127,11 +127,6 @@ class SkeletonTests(unittest.TestCase):
         for name in SUBCOMMANDS:
             self.assertIn(name, r.stdout)
 
-    def test_stub_exits_2(self):
-        r = run_cli("sources")
-        self.assertEqual(r.returncode, 2)
-        self.assertIn("not implemented", r.stderr)
-
     def test_fixture_both_forms(self):
         import tempfile
         for form in ("searchIndex", "ztoken"):
@@ -965,6 +960,415 @@ class FtsTests(unittest.TestCase):
             f.write("<p>unlisted</p>")
         r = self.cli("show", "Py:page:x.html")
         self.assertIn("unlisted", r.stdout)
+
+
+class Task7FixTests(unittest.TestCase):
+    def setUp(self):
+        self.tmp = tmp_dir(self)
+        self.store_dir = os.path.join(self.tmp, "store")
+        os.makedirs(self.store_dir)
+
+    def test_show_page_ref_with_literal_percent(self):
+        make_docset(self.store_dir, "Pc", entries=[("x", "Guide", "50%x.html")],
+                    pages={"50%x.html": "<p>percent page</p>"})
+        r = run_cli("--dir", self.store_dir, "show", "Pc:page:50%x.html",
+                    env={"HOME": self.tmp}, cwd=self.tmp)
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertIn("percent page", r.stdout)
+
+    def test_fts_fetches_enough_hits_for_line_cap(self):
+        import contextlib
+        import io
+        from unittest import mock
+        make_docset(self.store_dir, "Pc", entries=[("x", "Guide", "a.html")],
+                    pages={"a.html": "<p>word</p>"})
+        seen = []
+
+        def fake(store, docs, query, limit):
+            seen.append(limit)
+            return []
+        for argv, want in ((["--max-lines", "10"], 6),
+                           (["--max-lines", "10", "--json"], 10)):
+            with mock.patch.object(docset, "fts_search", fake), \
+                    contextlib.redirect_stdout(io.StringIO()):
+                docset.main(["--dir", self.store_dir, "fts", "word", "-d", "Pc"] + argv)
+            self.assertEqual(seen[-1], want)
+
+
+# --- sources, install, update, remove --------------------------------------
+
+import contextlib  # noqa: E402
+import io  # noqa: E402
+import tarfile  # noqa: E402
+from unittest import mock  # noqa: E402
+
+FEED_XML = ("<entry><version>%s</version>"
+            "<url>http://one.example.com/feeds/Foo.tgz</url>"
+            "<url>http://two.example.com/feeds/Foo.tgz</url>"
+            "<other-versions><version><name>0.5</name></version>"
+            "<url>http://old.example.com/Foo-0.5.tgz</url></other-versions></entry>")
+USER_INDEX = {"docsets": {
+    "Foo": {"name": "Foo", "archive": "Foo.tgz", "version": "9", "author": "x"},
+    "Bar_Key": {"name": "Bar", "archive": "Bar.tgz", "version": "2.0"}}}
+
+
+def make_tgz(path, docset_name="Foo", **kw):
+    """Write a .tgz holding a fixture docset; return the path."""
+    with tempfile.TemporaryDirectory() as d:
+        make_docset(d, docset_name, **kw)
+        with tarfile.open(path, "w:gz") as t:
+            t.add(os.path.join(d, docset_name + ".docset"), arcname=docset_name + ".docset")
+    return path
+
+
+def bad_tgz(path, build):
+    """A .tgz whose members `build(tarfile)` adds by hand."""
+    with tarfile.open(path, "w:gz") as t:
+        build(t)
+    return path
+
+
+def add_file(t, name, data=b"x"):
+    ti = tarfile.TarInfo(name)
+    ti.size = len(data)
+    t.addfile(ti, io.BytesIO(data))
+
+
+def add_special(t, name, typ, linkname=""):
+    ti = tarfile.TarInfo(name)
+    ti.type = typ
+    ti.linkname = linkname
+    t.addfile(ti)
+
+
+class FakeNet:
+    """Replaces fetch / download / head_last_modified; records the calls."""
+
+    def __init__(self, test, pages=None, archives=None, heads=None):
+        self.pages = dict(pages or {})
+        self.archives = dict(archives or {})  # url -> local .tgz path
+        self.heads = dict(heads or {})
+        self.fetched, self.downloaded = [], []
+        for name, fn in (("fetch", self.fetch), ("download", self.download),
+                         ("head_last_modified", self.head)):
+            p = mock.patch.object(docset, name, fn)
+            p.start()
+            test.addCleanup(p.stop)
+
+    def fetch(self, url):
+        self.fetched.append(url)
+        if url not in self.pages:
+            raise docset.FetchError("HTTP 404 for " + url, 404)
+        v = self.pages[url]
+        return v if isinstance(v, bytes) else v.encode()
+
+    def download(self, url, dest):
+        self.downloaded.append(url)
+        if url not in self.archives:
+            raise docset.FetchError("HTTP 503 for " + url, 503)
+        with open(self.archives[url], "rb") as src, open(dest, "wb") as out:
+            out.write(src.read())
+
+    def head(self, url):
+        return self.heads.get(url)
+
+
+FEED_URL = docset.KAPELI_FEED_URL % "Foo"
+MIRROR1 = "https://one.example.com/feeds/Foo.tgz"
+MIRROR2 = "https://two.example.com/feeds/Foo.tgz"
+
+
+class SourcesTests(unittest.TestCase):
+    def setUp(self):
+        self.tmp = tmp_dir(self)
+        self.store_dir = os.path.join(self.tmp, "store")
+        os.makedirs(self.store_dir)
+        self.store = docset.Store(self.store_dir, "flag", [], None)
+        self.tgz = make_tgz(os.path.join(self.tmp, "Foo.tgz"))
+
+    def main(self, *argv):
+        out, err = io.StringIO(), io.StringIO()
+        with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
+            code = docset.main(["--dir", self.store_dir] + list(argv))
+        return code, out.getvalue(), err.getvalue()
+
+    def net(self, version="1.0", **kw):
+        pages = {FEED_URL: FEED_XML % version}
+        pages.update(kw.pop("pages", {}))
+        archives = kw.pop("archives", {MIRROR2: self.tgz})
+        return FakeNet(self, pages=pages, archives=archives, **kw)
+
+    def test_parse_feeds(self):
+        f = docset.parse_kapeli_xml(FEED_XML % "2.21.0", "Foo")
+        self.assertEqual(f, docset.Feed("Foo", "kapeli", "2.21.0",
+                                        [MIRROR1, MIRROR2]))
+        feeds = docset.parse_index_json(USER_INDEX, "user", "https://h.example/build/")
+        self.assertEqual([x.name for x in feeds], ["Foo", "Bar"])
+        self.assertEqual(feeds[1], docset.Feed(
+            "Bar", "user", "2.0", ["https://h.example/build/Bar_Key/Bar.tgz"]))
+        with self.assertRaises(ValueError):
+            docset.parse_kapeli_xml("<entry></entry>", "Foo")
+        with self.assertRaises(ValueError):
+            docset.parse_kapeli_xml("not xml", "Foo")
+
+    def test_install_and_list(self):
+        net = self.net()
+        code, out, err = self.main("install", "kapeli:Foo")
+        self.assertEqual(code, 0, err)
+        self.assertEqual(net.downloaded, [MIRROR1, MIRROR2])  # first mirror failed
+        self.assertTrue(os.path.isfile(os.path.join(
+            self.store_dir, "Foo.docset", "Contents", "Resources", "docSet.dsidx")))
+        inst = docset.load_installed(self.store)["Foo"]
+        self.assertEqual((inst["source"], inst["version"], inst["url"]),
+                         ("kapeli", "1.0", MIRROR2))
+        self.assertRegex(inst["installed"], r"^\d{4}-\d\d-\d\d")
+        code, out, err = self.main("list")
+        self.assertIn("Foo  kapeli  1.0", out)
+        self.assertEqual(os.listdir(os.path.join(self.store_dir, ".dash-docset")),
+                         ["installed.json"])  # temp files cleaned up
+        # an explicit prefix did not fetch the source lists (Ruling 8)
+        self.assertEqual(net.fetched, [FEED_URL])
+        code, out, err = self.main("search", "gather", "-d", "Foo")
+        self.assertIn("asyncio.gather", out)
+
+    def test_install_cheat_uses_last_modified(self):
+        url = docset.CHEAT_URL % "Foo"
+        net = FakeNet(self, archives={url: self.tgz},
+                      heads={url: "Wed, 01 Jan 2025 00:00:00 GMT"})
+        code, out, err = self.main("install", "cheat:Foo")
+        self.assertEqual(code, 0, err)
+        inst = docset.load_installed(self.store)["Foo"]
+        self.assertEqual((inst["source"], inst["version"], inst["url"]),
+                         ("cheat", "Wed, 01 Jan 2025 00:00:00 GMT", url))
+        self.assertEqual(net.fetched, [])
+
+    def test_install_user_prefix(self):
+        url = docset.USER_BASE_URL + "Foo/Foo.tgz"
+        FakeNet(self, pages={docset.USER_INDEX_URL: json.dumps(USER_INDEX)},
+                archives={url: self.tgz})
+        code, out, err = self.main("install", "user:Foo")
+        self.assertEqual(code, 0, err)
+        self.assertEqual(docset.load_installed(self.store)["Foo"]["source"], "user")
+
+    def test_install_not_found(self):
+        self.net()
+        code, out, err = self.main("install", "kapeli:Nope")
+        self.assertEqual(code, 5)
+        self.assertIn("not found", err)
+
+    def test_install_ambiguous_needs_prefix(self):
+        names = lambda a: json.dumps([{"name": n, "type": "file"} for n in a])
+        self.net(pages={
+            docset.KAPELI_LIST_URL: names(["Foo.xml", "Other.xml"]),
+            docset.CHEAT_LIST_URL: names(["Foo.rb"]),
+            docset.USER_INDEX_URL: json.dumps(USER_INDEX)})
+        code, out, err = self.main("install", "Foo")
+        self.assertEqual(code, 6)
+        for p in ("kapeli:Foo", "user:Foo", "cheat:Foo"):
+            self.assertIn(p, err)
+        self.assertFalse(os.path.exists(os.path.join(self.store_dir, "Foo.docset")))
+        code, out, err = self.main("install", "kapeli:Foo")
+        self.assertEqual(code, 0, err)
+
+    def test_install_unprefixed_unique(self):
+        names = lambda a: json.dumps([{"name": n, "type": "file"} for n in a])
+        self.net(pages={docset.KAPELI_LIST_URL: names(["Foo.xml"]),
+                        docset.CHEAT_LIST_URL: names(["Zed.rb"]),
+                        docset.USER_INDEX_URL: json.dumps(
+                            {"docsets": {"Bar_Key": USER_INDEX["docsets"]["Bar_Key"]}})})
+        code, out, err = self.main("install", "foo")  # case-insensitive
+        self.assertEqual(code, 0, err)
+
+    def test_all_mirrors_fail(self):
+        self.net(archives={})
+        code, out, err = self.main("install", "kapeli:Foo")
+        self.assertEqual(code, 7)
+        self.assertEqual(os.listdir(self.store_dir), [".dash-docset"] if
+                         os.path.isdir(os.path.join(self.store_dir, ".dash-docset"))
+                         else [])
+        self.assertFalse(os.path.exists(
+            os.path.join(self.store_dir, ".dash-docset", "installed.json")))
+
+    def test_safe_extract_ok(self):
+        dest = os.path.join(self.tmp, "out")
+        os.makedirs(dest)
+        path = docset.safe_extract(self.tgz, dest)
+        self.assertEqual(path, os.path.join(dest, "Foo.docset"))
+        self.assertTrue(os.path.isfile(os.path.join(path, "Contents", "Info.plist")))
+
+    def test_safe_extract_rejects(self):
+        def ok_member(t):
+            add_file(t, "Foo.docset/Contents/Info.plist")
+        cases = {
+            "absolute": lambda t: (ok_member(t), add_file(t, "/tmp/evil.txt")),
+            "dotdot": lambda t: (ok_member(t), add_file(t, "Foo.docset/../../evil.txt")),
+            "symlink-out": lambda t: (ok_member(t), add_special(
+                t, "Foo.docset/l", tarfile.SYMTYPE, "../../etc")),
+            "symlink-abs": lambda t: (ok_member(t), add_special(
+                t, "Foo.docset/l", tarfile.SYMTYPE, "/etc/passwd")),
+            "hardlink-out": lambda t: (ok_member(t), add_special(
+                t, "Foo.docset/h", tarfile.LNKTYPE, "../evil")),
+            "device": lambda t: (ok_member(t), add_special(
+                t, "Foo.docset/dev", tarfile.CHRTYPE)),
+            "fifo": lambda t: (ok_member(t), add_special(
+                t, "Foo.docset/ff", tarfile.FIFOTYPE)),
+            "no-docset": lambda t: add_file(t, "readme.txt"),
+            "two-docsets": lambda t: (add_file(t, "A.docset/x"), add_file(t, "B.docset/x")),
+        }
+        for label, build in cases.items():
+            with self.subTest(label):
+                tgz = bad_tgz(os.path.join(self.tmp, label + ".tgz"), build)
+                dest = os.path.join(self.tmp, "d-" + label)
+                os.makedirs(dest)
+                with self.assertRaises(docset.ArchiveError):
+                    docset.safe_extract(tgz, dest)
+                # nothing escaped
+                self.assertFalse(os.path.exists(os.path.join(self.tmp, "evil.txt")))
+        plain = os.path.join(self.tmp, "plain.tgz")
+        with open(plain, "wb") as f:
+            f.write(b"this is not gzip at all")
+        with self.assertRaises(docset.ArchiveError):
+            docset.safe_extract(plain, self.tmp)
+
+    def test_install_bad_archive_leaves_store_unchanged(self):
+        bad = bad_tgz(os.path.join(self.tmp, "bad.tgz"),
+                      lambda t: (add_file(t, "Foo.docset/Contents/Info.plist"),
+                                 add_file(t, "../evil.txt")))
+        self.net(archives={MIRROR1: bad})
+        code, out, err = self.main("install", "kapeli:Foo")
+        self.assertEqual(code, 7)
+        self.assertFalse(os.path.exists(os.path.join(self.store_dir, "Foo.docset")))
+        self.assertFalse(os.path.exists(os.path.join(self.tmp, "evil.txt")))
+        self.assertFalse(os.path.exists(
+            os.path.join(self.store_dir, ".dash-docset", "installed.json")))
+        left = [n for n in os.listdir(os.path.join(self.store_dir, ".dash-docset"))]
+        self.assertEqual(left, [])
+
+    def test_update(self):
+        self.net("1.0")
+        self.assertEqual(self.main("install", "kapeli:Foo")[0], 0)
+        code, out, err = self.main("update")
+        self.assertEqual(code, 0, err)
+        self.assertIn("Foo: up to date", out)
+        # new version with changed content; notes heading now orphaned
+        tgz2 = make_tgz(os.path.join(self.tmp, "Foo2.tgz"),
+                        entries=[("brandnew", "Function", "guide.html")])
+        self.net("2.0", archives={MIRROR1: tgz2})
+        notes = docset.notes_path(self.store, "Foo")
+        os.makedirs(os.path.dirname(notes))
+        with open(notes, "w") as f:
+            f.write("## brandnew\nkeep\n## asyncio.gather\ngone\n")
+        code, out, err = self.main("update", "Foo")
+        self.assertEqual(code, 0, err)
+        self.assertIn("Foo: updated 1.0 -> 2.0", out)
+        self.assertIn("asyncio.gather", out)  # orphan warning
+        self.assertNotIn("brandnew' matches no", out)
+        self.assertEqual(docset.load_installed(self.store)["Foo"]["version"], "2.0")
+        code, out, _ = self.main("search", "brandnew", "-d", "Foo")
+        self.assertIn("brandnew", out)
+        self.assertEqual([n for n in os.listdir(self.store_dir)
+                          if n.endswith(".docset")], ["Foo.docset"])
+        self.assertTrue(os.path.exists(notes))
+
+    def test_update_failure_keeps_old_docset(self):
+        self.net("1.0")
+        self.main("install", "kapeli:Foo")
+        self.net("2.0", archives={})
+        code, out, err = self.main("update")
+        self.assertEqual(code, 7)
+        self.assertEqual(docset.load_installed(self.store)["Foo"]["version"], "1.0")
+        self.assertTrue(os.path.isdir(os.path.join(self.store_dir, "Foo.docset")))
+
+    def test_update_and_remove_refuse_foreign(self):
+        ro = os.path.join(self.tmp, "ro")
+        os.makedirs(ro)
+        make_docset(ro, "Alien")
+        make_docset(self.store_dir, "Loose")  # in store, not in installed.json
+        store_arg = ["--dir", self.store_dir]
+        cfg = os.path.join(self.tmp, "proj")
+        os.makedirs(cfg)
+        with open(os.path.join(cfg, docset.PROJECT_FILE), "w") as f:
+            json.dump({"store": self.store_dir, "read_from": [ro]}, f)
+        old = os.getcwd()
+        os.chdir(cfg)
+        self.addCleanup(os.chdir, old)
+        FakeNet(self)
+        for cmd in ("update", "remove"):
+            for name in ("Alien", "Loose"):
+                with self.subTest(cmd=cmd, name=name):
+                    out, err = io.StringIO(), io.StringIO()
+                    with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
+                        code = docset.main([cmd, name])
+                    self.assertEqual(code, 2, err.getvalue())
+                    self.assertIn("not installed by docset.py", err.getvalue())
+            out, err = io.StringIO(), io.StringIO()
+            with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
+                code = docset.main([cmd, "Nope"])
+            self.assertEqual(code, 5)
+        self.assertTrue(os.path.isdir(os.path.join(ro, "Alien.docset")))
+        self.assertTrue(os.path.isdir(os.path.join(self.store_dir, "Loose.docset")))
+
+    def test_remove_keeps_notes(self):
+        self.net()
+        self.main("install", "kapeli:Foo")
+        notes = docset.notes_path(self.store, "Foo")
+        os.makedirs(os.path.dirname(notes))
+        with open(notes, "w") as f:
+            f.write("## General\nhi\n")
+        fts = docset.fts_path(self.store, "Foo")
+        if docset.fts_available():
+            self.assertEqual(self.main("index-text", "Foo")[0], 0)
+            self.assertTrue(os.path.exists(fts))
+        code, out, err = self.main("remove", "Foo")
+        self.assertEqual(code, 0, err)
+        self.assertFalse(os.path.exists(os.path.join(self.store_dir, "Foo.docset")))
+        self.assertFalse(os.path.exists(fts))
+        self.assertNotIn("Foo", docset.load_installed(self.store))
+        self.assertTrue(os.path.exists(notes))
+        self.assertIn("notes", out)
+
+    def test_sources_cache_and_filter(self):
+        names = lambda a: json.dumps([{"name": n, "type": "file"} for n in a])
+        net = self.net(pages={
+            docset.KAPELI_LIST_URL: names(["Python_3.xml", "Go.xml", "README.md"]),
+            docset.CHEAT_LIST_URL: names(["Git.rb", "Python_Cheat.rb"]),
+            docset.USER_INDEX_URL: json.dumps(USER_INDEX)})
+        code, out, err = self.main("sources", "python")
+        self.assertEqual(code, 0, err)
+        self.assertIn("kapeli:Python_3", out)
+        self.assertIn("cheat:Python_Cheat", out)
+        self.assertNotIn("Go", out)
+        self.assertNotIn("README", out)
+        n = len(net.fetched)
+        self.main("sources", "git")
+        self.assertEqual(len(net.fetched), n)  # served from the cache
+        self.main("sources", "git", "--refresh")
+        self.assertEqual(len(net.fetched), 2 * n)
+        # a cache older than 7 days is refetched
+        path = os.path.join(self.store_dir, ".dash-docset", "cache", "sources.json")
+        with open(path) as f:
+            data = json.load(f)
+        for entry in data.values():
+            entry["fetched"] -= 8 * 86400
+        with open(path, "w") as f:
+            json.dump(data, f)
+        self.main("sources", "git")
+        self.assertEqual(len(net.fetched), 3 * n)
+        # a failing source falls back to the stale cache
+        for entry in data.values():
+            entry["fetched"] -= 8 * 86400
+        with open(path, "w") as f:
+            json.dump(data, f)
+        net.pages.clear()
+        code, out, err = self.main("sources", "git")
+        self.assertEqual(code, 0)
+        self.assertIn("cheat:Git", out)
+        self.assertIn("warning", err)
+
+    def test_sources_all_failing(self):
+        FakeNet(self)
+        code, out, err = self.main("sources")
+        self.assertEqual(code, 7)
 
 
 if __name__ == "__main__":
