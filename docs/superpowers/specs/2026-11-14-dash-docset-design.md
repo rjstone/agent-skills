@@ -1,5 +1,8 @@
 # dash-docset skill: design
 
+> **Later changes:** see `../plans/2026-11-14-dash-docset-after-plan.md`. It records the rulings made while executing
+> the plan and every change since, and lists what below no longer holds.
+
 Status: approved by the user (2026-11-14).
 
 ## Intent

@@ -1,5 +1,8 @@
 # dash-docset Implementation Plan
 
+> **Later changes:** see `2026-11-14-dash-docset-after-plan.md`. It records the rulings made while executing
+> the plan and every change since, and lists what below no longer holds.
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** A `dash-docset` skill whose stdlib Python script installs Dash docsets and searches/shows them as compact text with per-docset notes.
