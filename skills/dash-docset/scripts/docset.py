@@ -735,7 +735,7 @@ NOTES_GENERAL_MAX = 50
 NOTES_SECTION_MAX = 100
 NOTES_TOTAL_MAX = 2000
 _HEADING = re.compile(r"^##\s+(.*?)\s*$")
-_TYPED = re.compile(r"^(.*?)\s*\(([^()]*)\)$")
+_TYPED = re.compile(r"^(.*?)\s+\(([^()]+)\)$")  # needs a space and a type
 
 
 def notes_path(store, docset_name) -> str:
@@ -765,10 +765,12 @@ def parse_notes(text):
                 sections.setdefault(heading.lower(), []).append((typ, cur))
             seen_content = True
             continue
-        if cur is None and not seen_content and line.startswith("# "):
-            seen_content = True  # leading title line
-            continue
         if cur is None:
+            if not line.strip():
+                continue  # blank lines before any content
+            if not seen_content and line.startswith("# "):
+                seen_content = True  # leading title line
+                continue
             cur = general
         if line.strip() or cur:
             seen_content = True
@@ -791,9 +793,14 @@ def notes_for(store, docset_name, entry_name, entry_type) -> List[str]:
         return []
     general, sections = parse_notes(text)
     body = list(general)
-    for typ, lines in sections.get(entry_name.lower(), []):
-        if typ is None or typ.lower() == (entry_type or "").lower():
-            body.extend(lines)
+    want = entry_name.lower()
+    for key, items in sections.items():
+        for typ, lines in items:
+            if key == want:
+                if typ is None or typ.lower() == (entry_type or "").lower():
+                    body.extend(lines)
+            elif typ is not None and "%s (%s)" % (key, typ.lower()) == want:
+                body.extend(lines)  # entry name itself ends in "(...)"
     if not any(l.strip() for l in body):
         return []
     return ["--- notes (%s) ---" % path] + body
@@ -831,9 +838,11 @@ def size_warnings(text) -> List[str]:
 def check_notes(text, entry_names) -> List[str]:
     warns = size_warnings(text)
     _, sections = parse_notes(text)
-    for name in sections:
-        if name not in entry_names:
-            warns.append("section %r matches no entry in the docset" % name)
+    for name, items in sections.items():
+        for typ, _lines in items:
+            full = "%s (%s)" % (name, typ.lower()) if typ else name
+            if name not in entry_names and full not in entry_names:
+                warns.append("section %r matches no entry in the docset" % full)
     return warns
 
 

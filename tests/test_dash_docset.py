@@ -817,7 +817,7 @@ class NotesTests(unittest.TestCase):
 
     def test_check_limits(self):
         w = docset.check_notes("## a\n" + "x\n" * 250, {"a"})
-        self.assertTrue(any("a" in x and "100" in x for x in w), w)
+        self.assertTrue(any("'a'" in x and "100" in x for x in w), w)
         text = "".join("## s%d\n%s" % (i, "x\n" * 9) for i in range(100))
         names = {"s%d" % i for i in range(100)}
         self.assertEqual(docset.check_notes(text, names), [])
@@ -825,6 +825,20 @@ class NotesTests(unittest.TestCase):
         big = "".join("## t%d\n%s" % (i, "x\n" * 99) for i in range(21))
         w = docset.check_notes(big, {"t%d" % i for i in range(21)})
         self.assertTrue(any("2,000" in x or "2000" in x for x in w), w)
+
+    def test_parenthesised_entry_names(self):
+        make_docset(self.store_dir, "C", entries=[
+            ("strlen()", "Function", "s.html#strlen")],
+            pages={"s.html": '<h2 id="strlen">strlen</h2><p>Length.</p>'})
+        self.write_notes("C", "## strlen()\nnul-terminated only\n")
+        r = self.cli("show", "C:1")
+        self.assertIn("nul-terminated only", r.stdout)
+        self.assertEqual(self.cli("notes", "C", "--check").returncode, 0)
+        self.assertEqual(docset.parse_notes("## f (Type)\nx\n")[1]["f"][0][0], "Type")
+
+    def test_title_after_blank_lines_is_not_general(self):
+        general, _ = docset.parse_notes("\n\n# Title\nintro\n")
+        self.assertEqual(general, ["intro"])
 
     def test_check_orphans(self):
         w = docset.check_notes("## real\nx\n## ghost (Type)\ny\n", {"real"})
