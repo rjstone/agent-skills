@@ -5,6 +5,7 @@ import json
 import os
 import sys
 import pathlib
+import plistlib
 import re
 import shutil
 import sqlite3
@@ -149,22 +150,60 @@ def resolve_store(cli_dir, cwd, env) -> Optional[Store]:
     return None
 
 
-def _zeal_conf_path(env) -> Optional[str]:
-    """Docset folder set in Zeal's settings file (Linux; Qt INI), if any."""
+# Where Zeal keeps docsets (zealdocs/zeal src/libs/core/settings.cpp and
+# src/app/main.cpp, checked 2026-11-14): the "docsets/path" setting, else Qt's
+# AppLocalDataLocation for organization "Zeal", app "Zeal", plus "/docsets":
+#   Linux   $XDG_DATA_HOME/Zeal/Zeal/docsets (~/.local/share/...)
+#   macOS   ~/Library/Application Support/Zeal/Zeal/docsets
+#   Windows %LOCALAPPDATA%\Zeal\Zeal\docsets
+# Settings (Qt QSettings, organization domain zealdocs.org):
+#   Linux   $XDG_CONFIG_HOME/Zeal/Zeal.conf, [docsets] path=
+#   macOS   ~/Library/Preferences/org.zealdocs.Zeal.plist, key docsets.path
+#   Windows registry HKCU\Software\Zeal\Zeal\docsets, value path
+#   portable builds: zeal.ini beside zeal.exe; docsets default to ./docsets
+# Flatpak keeps both under ~/.var/app/org.zealdocs.Zeal/{data,config}.
+# Dash (macOS only): ~/Library/Application Support/Dash/DocSets/<Name>/<Name>.docset.
+
+
+def _ini_docsets_path(conf) -> Optional[str]:
     import configparser
-    conf_home = env.get("XDG_CONFIG_HOME") or os.path.join(_home(env), ".config")
-    for conf in (os.path.join(conf_home, "Zeal", "Zeal.conf"),
-                 os.path.join(_home(env), ".var", "app", "org.zealdocs.Zeal",
-                              "config", "Zeal", "Zeal.conf")):
-        cp = configparser.ConfigParser(interpolation=None)
-        try:
-            if cp.read(conf, encoding="utf-8") and cp.has_option("docsets", "path"):
-                path = cp.get("docsets", "path").strip().strip('"')
-                if path:
-                    return path
-        except (configparser.Error, OSError, UnicodeDecodeError):
-            continue
+    cp = configparser.ConfigParser(interpolation=None)
+    try:
+        if cp.read(conf, encoding="utf-8") and cp.has_option("docsets", "path"):
+            return cp.get("docsets", "path").strip().strip('"') or None
+    except (configparser.Error, OSError, UnicodeDecodeError):
+        pass
     return None
+
+
+def _zeal_custom_paths(env, apps=()) -> List[str]:
+    """Docset folders set in Zeal's settings, on any OS, if any."""
+    home = _home(env)
+    conf_home = env.get("XDG_CONFIG_HOME") or os.path.join(home, ".config")
+    out = [_ini_docsets_path(c) for c in (
+        os.path.join(conf_home, "Zeal", "Zeal.conf"),
+        os.path.join(home, ".var", "app", "org.zealdocs.Zeal", "config", "Zeal", "Zeal.conf"))]
+    plist = os.path.join(home, "Library", "Preferences", "org.zealdocs.Zeal.plist")
+    try:
+        with open(plist, "rb") as f:
+            data = plistlib.load(f)
+        out.append(data.get("docsets.path") or (data.get("docsets") or {}).get("path"))
+    except (OSError, ValueError, AttributeError, plistlib.InvalidFileException):
+        pass
+    if sys.platform == "win32":
+        try:
+            import winreg
+            with winreg.OpenKey(winreg.HKEY_CURRENT_USER, r"Software\Zeal\Zeal\docsets") as k:
+                out.append(str(winreg.QueryValueEx(k, "path")[0]))
+        except OSError:
+            pass
+    for app, where in apps:  # portable Zeal: zeal.ini beside zeal.exe
+        if app == "Zeal" and where.lower().endswith(".exe"):
+            app_dir = os.path.dirname(where)
+            ini = os.path.join(app_dir, "zeal.ini")
+            if os.path.isfile(ini):
+                out.append(os.path.join(app_dir, _ini_docsets_path(ini) or "docsets"))
+    return [p for p in dict.fromkeys(out) if p]
 
 
 def viewer_apps(env) -> List[Tuple[str, str]]:
@@ -198,10 +237,12 @@ def discover(env) -> List[str]:
     candidates = [
         env.get("DASHT_DOCSETS_DIR"),
         os.path.join(data, "dasht", "docsets"),
-        _zeal_conf_path(env),
+        *_zeal_custom_paths(env, viewer_apps(env)),
+        os.path.join(data, "Zeal", "Zeal", "docsets"),
         os.path.join(home, ".local", "share", "Zeal", "Zeal", "docsets"),
         os.path.join(home, ".var", "app", "org.zealdocs.Zeal", "data", "Zeal", "Zeal",
                      "docsets"),
+        os.path.join(home, "Library", "Application Support", "Zeal", "Zeal", "docsets"),
         os.path.join(env["LOCALAPPDATA"], "Zeal", "Zeal", "docsets")
         if env.get("LOCALAPPDATA") else None,
         os.path.join(home, "Library", "Application Support", "Dash", "DocSets"),

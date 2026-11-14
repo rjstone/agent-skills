@@ -47,6 +47,12 @@ apps and existing docset folders. Then decide where you are running:
      docset is missing, ask the user to download it in the app (Dash:
      Settings > Downloads; Zeal: Tools > Docsets), not with this script.
      With Dash, also suggest Kapeli's Dash MCP server (see "Other options").
+     `--discover` checks Zeal's default folder on Linux, macOS and Windows
+     (also Flatpak and portable installs) and a folder set in Zeal's
+     settings, and Dash's default `~/Library/Application Support/Dash/DocSets`.
+     If the app has docsets that `--discover` doesn't list, ask the user
+     where they are (Dash: Settings > Docsets; Zeal: Edit > Preferences >
+     Docsets) and pass that folder to `--read-from`.
    - B. Neither installed: suggest installing Zeal (Linux, Windows) or
      Dash (macOS), downloading the docsets there, then continuing as in A.
    - C. The user declines: the script downloads docsets itself. Offer a

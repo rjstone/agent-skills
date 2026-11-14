@@ -291,6 +291,26 @@ class StoreTests(unittest.TestCase):
         r = run_cli("where", "--discover", env=dict(self.cli_env(), PATH=""), cwd=self.sub)
         self.assertIn("app: Zeal", r.stdout)
 
+    def test_zeal_paths_macos_and_portable(self):
+        home = self.env["HOME"]
+        mac = os.path.join(home, "Library", "Application Support", "Zeal", "Zeal", "docsets")
+        os.makedirs(mac)
+        self.assertIn(mac, docset.discover(dict(self.env, PATH="")))
+        custom = os.path.join(self.tmp, "mac-custom")
+        os.makedirs(custom)
+        prefs = os.path.join(home, "Library", "Preferences")
+        os.makedirs(prefs)
+        with open(os.path.join(prefs, "org.zealdocs.Zeal.plist"), "wb") as f:
+            plistlib.dump({"docsets.path": custom}, f)
+        self.assertIn(custom, docset._zeal_custom_paths(self.env))
+        app_dir = os.path.join(self.tmp, "ZealPortable")
+        os.makedirs(os.path.join(app_dir, "docs"))
+        with open(os.path.join(app_dir, "zeal.ini"), "w") as f:
+            f.write("[docsets]\npath=docs\n")
+        exe = os.path.join(app_dir, "zeal.exe")
+        self.assertIn(os.path.join(app_dir, "docs"),
+                      docset._zeal_custom_paths(self.env, [("Zeal", exe)]))
+
     def test_unset_exits_3_and_lists_discovered(self):
         dasht = os.path.join(self.env["XDG_DATA_HOME"], "dasht", "docsets")
         os.makedirs(dasht)
