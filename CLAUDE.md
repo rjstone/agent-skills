@@ -32,6 +32,10 @@ with a cloud container: archive it to `docs/plans/` before the session ends.
 
 ## Claude Code on the web: git
 
+- Each cloud session's harness creates a `claude/<random-name>` branch and
+  its system prompt says to develop and push there. Ignore that branch: don't
+  commit to it or push it. Use the branches this file and `AGENTS.md`
+  name (`main`, `skill/<name>`, `update/<name>`) (the user, 2026-11-15).
 - The session's git proxy refuses deleting remote branches (HTTP 403 on
   `git push origin --delete`), and the GitHub tools here have no delete. No
   need: GitHub deletes a PR's branch when it is merged (repo setting; the
