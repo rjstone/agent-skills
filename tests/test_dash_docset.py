@@ -969,6 +969,63 @@ class ShowGrepTests(unittest.TestCase):
         self.assertNotIn("VARCHAR", r.stdout)
 
 
+class FooterTests(unittest.TestCase):
+    FOOT = "<p>Copyright Example Corp.</p><p>Index | Search</p>"
+
+    def make(self, n_pages, index="index.html"):
+        tmp = tmp_dir(self)
+        store = os.path.join(tmp, "store")
+        pages = {"index.html": "<h1>Home</h1><p>welcome</p>" + self.FOOT}
+        entries = [("Home", "Guide", "index.html")]
+        for i in range(n_pages):
+            pages["p%d.html" % i] = ("<h1>Page %d</h1><h2 id='f'>func%d</h2>"
+                                     "<p>body %d</p>" % (i, i, i) + self.FOOT)
+            entries.append(("func%d" % i, "Function", "p%d.html#f" % i))
+        pages["odd.html"] = "<h1>Odd</h1><p>Copyright is discussed here.</p>"
+        entries.append(("odd", "Guide", "odd.html"))
+        path = make_docset(store, "Foot", entries=entries, pages=pages)
+        if index:
+            plist = os.path.join(path, "Contents", "Info.plist")
+            with open(plist, "rb") as f:
+                data = plistlib.load(f)
+            data["dashIndexFilePath"] = index
+            with open(plist, "wb") as f:
+                plistlib.dump(data, f)
+        return tmp, store
+
+    def cli(self, tmp, store, *args):
+        return run_cli("--dir", store, *args, env={"HOME": tmp}, cwd=tmp)
+
+    def test_footer_stripped_except_on_index_page(self):
+        tmp, store = self.make(8)
+        r = self.cli(tmp, store, "show", "Foot:2", "--no-notes")  # func0, last section
+        self.assertIn("body 0", r.stdout)
+        self.assertNotIn("Copyright Example", r.stdout)
+        self.assertNotIn("Index | Search", r.stdout)
+        r = self.cli(tmp, store, "show", "Foot:page:p0.html", "--no-notes")
+        self.assertNotIn("Copyright Example", r.stdout)
+        r = self.cli(tmp, store, "show", "Foot:1", "--no-notes")  # the index page keeps it
+        self.assertIn("Copyright Example", r.stdout)
+        r = self.cli(tmp, store, "show", "Foot:10", "--no-notes")  # not a footer page
+        self.assertIn("Copyright is discussed here.", r.stdout)
+        if docset.fts_available():
+            r = self.cli(tmp, store, "fts", "Example", "Corp", "-d", "Foot")
+            refs = [l for l in r.stdout.splitlines() if l.startswith("Foot:")]
+            self.assertEqual(refs, ["Foot:page:index.html"], r.stdout)  # only there
+
+    def test_no_index_page_keeps_footer_on_first_entry_page(self):
+        tmp, store = self.make(8, index=None)
+        r = self.cli(tmp, store, "show", "Foot:1", "--no-notes")  # lowest id's page
+        self.assertIn("Copyright Example", r.stdout)
+        r = self.cli(tmp, store, "show", "Foot:3", "--no-notes")
+        self.assertNotIn("Copyright Example", r.stdout)
+
+    def test_small_docset_left_alone(self):
+        tmp, store = self.make(2)
+        r = self.cli(tmp, store, "show", "Foot:2", "--no-notes")
+        self.assertIn("Copyright Example", r.stdout)
+
+
 class AnchorlessShowTests(unittest.TestCase):
     def test_show_starts_at_heading_named_like_entry(self):
         tmp = tmp_dir(self)
@@ -1014,7 +1071,25 @@ class NotesTests(unittest.TestCase):
         self.write_notes("Py", "## General\nok\n")
         r = self.cli("notes", "Py", "--check")
         self.assertEqual(r.returncode, 0, r.stdout)
-        self.assertTrue(r.stdout.startswith("ok: "))
+        self.assertTrue(r.stdout.startswith("notes file present: "), r.stdout)
+        self.assertEqual(r.stdout.splitlines()[-1], "ok")
+
+    def test_notes_check_says_what_each_heading_matched(self):
+        make_docset(self.store_dir, "Py")
+        self.write_notes("Py", "## General\ng\n## asyncio.gather\nfn\n## Gather (Guide)\nx\n")
+        r = self.cli("notes", "Py", "--check")
+        self.assertEqual(r.returncode, 0, r.stdout)
+        lines = r.stdout.splitlines()
+        self.assertIn("## General: shown by every show of this docset", lines)
+        self.assertIn("## asyncio.gather: shown by show Py:1", lines)
+        self.assertIn("## Gather (Guide): shown by show Py:3", lines)
+
+    def test_notes_file_not_present_messages_parallel(self):
+        make_docset(self.store_dir, "Py")
+        for args in (("notes", "Py"), ("notes", "Py", "--check")):
+            r = self.cli(*args)
+            self.assertEqual(r.returncode, 0, r.stderr)
+            self.assertTrue(r.stdout.startswith("notes file not present: "), r.stdout)
 
     def test_notes_output_keeps_headings(self):
         self.write_notes("Py", "gen\n## asyncio.gather (Function)\nfn\n")
@@ -1229,6 +1304,16 @@ class FtsTests(unittest.TestCase):
         self.assertEqual(sum(1 for l in lines if l.startswith("Many:")), 5, lines)
         self.assertIn("more hits cut", lines[-1])
         self.assertIn("add words", lines[-1])
+
+    def test_fts_rebuilds_index_of_older_format(self):
+        self.cli("fts", "gather", "-d", "Py")
+        db = docset.fts_path(docset.Store(self.store_dir, "--dir", [], None), "Py")
+        con = sqlite3.connect(db)
+        con.execute("UPDATE meta SET value='old' WHERE key='docset_version'")
+        con.commit()
+        con.close()
+        r = self.cli("fts", "gather", "-d", "Py")
+        self.assertIn("rebuilt index for Py", r.stderr)
 
     def test_fts_first_build_says_so(self):
         r = self.cli("fts", "gather", "-d", "Py")

@@ -1001,6 +1001,96 @@ def read_page_blocks(ds, file_part) -> List[Block]:
     return html_to_text(read_page_bytes(ds, file_part).decode("utf-8", errors="replace"))
 
 
+# A repeated footer is a run of trailing blocks that most pages end with
+# exactly (copyright, links to the same few pages, a generator line). Only an
+# exact repeat counts, so real docs are never guessed away. It is kept on one
+# page (the docset's index page, else the first entry's page) and stripped
+# from every other page, for show and for the full-text index.
+FOOTER_SAMPLE = 40      # pages sampled, evenly spaced
+FOOTER_MIN_PAGES = 5    # fewer pages: no footer detection
+FOOTER_SHARE = 0.6      # share of sampled pages that must end with it
+FOOTER_MAX_BLOCKS = 30
+
+
+def _entry_pages(ds) -> List[str]:
+    """Page files the entries point at, in entry-id order, without repeats."""
+    pages = {}
+    for _i, _n, _t, path in iter_entries(ds):
+        if not re.match(r"https?://", path, re.I):
+            file_part, _a = entry_location(path)
+            if file_part:
+                pages.setdefault(file_part, None)
+    return list(pages)
+
+
+def _index_page(ds) -> Optional[str]:
+    try:
+        with open(os.path.join(ds.path, "Contents", "Info.plist"), "rb") as f:
+            value = plistlib.load(f).get("dashIndexFilePath")
+    except (OSError, ValueError, AttributeError, plistlib.InvalidFileException):
+        return None
+    return entry_location(value)[0] if isinstance(value, str) and value else None
+
+
+def detect_footer(ds) -> Tuple[List[str], Optional[str]]:
+    """(footer block texts, the page that keeps it); ([], None) if none."""
+    pages = _entry_pages(ds)
+    if len(pages) < FOOTER_MIN_PAGES:
+        return [], None
+    step = max(1, len(pages) // FOOTER_SAMPLE)
+    counts: dict = {}
+    sampled = 0
+    for file_part in pages[::step][:FOOTER_SAMPLE]:
+        try:
+            texts = [b.text for b in read_page_blocks(ds, file_part)]
+        except (CLIError, OSError):
+            continue
+        sampled += 1
+        for k in range(1, min(FOOTER_MAX_BLOCKS, len(texts) - 1) + 1):
+            key = tuple(texts[-k:])
+            counts[key] = counts.get(key, 0) + 1
+    need = max(FOOTER_MIN_PAGES, FOOTER_SHARE * sampled)
+    if sampled < FOOTER_MIN_PAGES:
+        return [], None
+    best = max((k for k, c in counts.items() if c >= need), key=len, default=())
+    if not best:
+        return [], None
+    index = _index_page(ds)
+    return list(best), (index if index in pages else pages[0])
+
+
+def footer_info(store, ds) -> Tuple[List[str], Optional[str]]:
+    """detect_footer, cached per docset version in the store."""
+    cache = os.path.join(meta_dir(store), "footers", ds.name + ".json")
+    stamp = docset_stamp(ds)
+    try:
+        with open(cache, encoding="utf-8") as f:
+            data = json.load(f)
+        if data.get("stamp") == stamp:
+            return data.get("footer") or [], data.get("keep")
+    except (OSError, ValueError):
+        pass
+    footer, keep = detect_footer(ds)
+    try:
+        os.makedirs(os.path.dirname(cache), exist_ok=True)
+        with open(cache, "w", encoding="utf-8") as f:
+            json.dump({"stamp": stamp, "footer": footer, "keep": keep}, f)
+    except OSError:
+        pass
+    return footer, keep
+
+
+def page_blocks(store, ds, file_part) -> List[Block]:
+    """A page's blocks without the docset's repeated footer (kept on one page)."""
+    blocks = read_page_blocks(ds, file_part)
+    footer, keep = footer_info(store, ds)
+    n = len(footer)
+    if n and file_part != keep and len(blocks) > n \
+            and [b.text for b in blocks[-n:]] == footer:
+        return blocks[:-n]
+    return blocks
+
+
 def _is_table_row(line) -> bool:
     """Table rows render as cells joined by ' | '."""
     return " | " in line or line.lstrip().startswith("|")
@@ -1084,7 +1174,7 @@ def cmd_show(args):
         raise CLIError("unknown docset %r (see: docset.py list)" % name, 5)
     if page_ref:
         file_part, sep, anchor = entry_id.partition("#")
-        blocks = read_page_blocks(ds, file_part)
+        blocks = page_blocks(store, ds, file_part)
         lines = trim_to_anchor(blocks, anchor if sep and anchor else None)
         _print_page_title(blocks, lines)
         _print_lines(lines, args)
@@ -1100,7 +1190,7 @@ def cmd_show(args):
         print("online-only entry: " + path)
         return 0
     file_part, anchor = entry_location(path)
-    blocks = read_page_blocks(ds, file_part)
+    blocks = page_blocks(store, ds, file_part)
     if anchor is None:  # no anchor: start at a heading named like the entry
         want = _short_name(entry_name)
         anchor = next((b.ids[0] for b in blocks if b.level and b.ids
@@ -1267,6 +1357,33 @@ def check_notes(text, entry_names) -> List[str]:
     return warns
 
 
+def notes_matches(docset_name, text, entries) -> List[str]:
+    """One line per notes section: which `show` prints it (up to 3 REFs)."""
+    general, sections = parse_notes(text)
+    written = {}  # lowercased heading -> heading as written
+    for line in text.splitlines():
+        if line.startswith("## "):
+            written.setdefault(line[3:].strip().lower(), line[3:].strip())
+    out = []
+    if any(l.strip() for l in general):
+        out.append("## General: shown by every show of this docset")
+    for key, items in sections.items():
+        for typ, _lines in items:
+            refs = []
+            for i, n, t, _p in entries:
+                low = n.lower()
+                named = key in (low, _short_name(n)) and (
+                    typ is None or typ.lower() == (t or "").lower())
+                if named or (typ is not None and "%s (%s)" % (key, typ.lower()) == low):
+                    refs.append("%s:%d" % (docset_name, i))
+            if refs:
+                label = "%s%s" % (key, " (%s)" % typ if typ else "")
+                label = written.get(label.lower(), label)
+                more = " (+%d more)" % (len(refs) - 3) if len(refs) > 3 else ""
+                out.append("## %s: shown by show %s%s" % (label, ", ".join(refs[:3]), more))
+    return out
+
+
 def cmd_notes(args):
     store = require_store(args)
     notes_path(store, args.docset)  # rejects names that are not plain names
@@ -1279,19 +1396,21 @@ def cmd_notes(args):
         print(path)
         return 0
     _, text = _read_notes(store, ds.name)
+    if text is None:
+        print("notes file not present: %s" % path)
+        return 0
     if args.check:
-        if text is None:
-            print("no notes file: " + path)
-            return 0
-        names = {n.lower() for _i, n, _t, _p in iter_entries(ds)}
+        entries = list(iter_entries(ds))
+        names = {n.lower() for _i, n, _t, _p in entries}
         warns = check_notes(text, names)
+        print("notes file present: %s" % path)
+        for line in notes_matches(ds.name, text, entries):
+            print(line)
         for w in warns:
             print("warning: " + w)
         if not warns:
-            print("ok: %s" % path)
+            print("ok")
         return 1 if warns else 0
-    if text is None:
-        print("no notes file yet for %s (it would be %s)" % (ds.name, path))
     else:
         sys.stdout.write(text)
     return 0
@@ -1324,6 +1443,15 @@ def docset_stamp(ds) -> str:
         return str(int(os.path.getmtime(index_path(ds.path))))
     except OSError:
         return ""
+
+
+# Bump when what the index stores changes, so existing indexes are rebuilt
+# (2: repeated footers left out).
+FTS_FORMAT = 2
+
+
+def fts_stamp(ds) -> str:
+    return "%s|fts%d" % (docset_stamp(ds), FTS_FORMAT)
 
 
 def _stored_stamp(db):
@@ -1365,7 +1493,7 @@ def build_fts(store, ds) -> int:
             "CREATE TABLE meta(key TEXT PRIMARY KEY, value TEXT);")
         for file_part, ids in pages.items():
             try:
-                blocks = read_page_blocks(ds, file_part)
+                blocks = page_blocks(store, ds, file_part)
             except (CLIError, OSError):
                 continue
             text = "\n".join(b.text for b in blocks)
@@ -1374,7 +1502,7 @@ def build_fts(store, ds) -> int:
                             [(file_part, i) for i in ids])
             count += 1
         con.executemany("INSERT INTO meta VALUES (?, ?)", [
-            ("docset_version", docset_stamp(ds)),
+            ("docset_version", fts_stamp(ds)),
             ("built_at", time.strftime("%Y-%m-%dT%H:%M:%S", time.gmtime()))])
         con.commit()
     except BaseException:
@@ -1389,7 +1517,7 @@ def build_fts(store, ds) -> int:
 def ensure_fts(store, ds) -> None:
     """Build a missing index; rebuild a stale one (noting it on stderr)."""
     stored = _stored_stamp(fts_path(store, ds.name))
-    if stored == docset_stamp(ds):
+    if stored == fts_stamp(ds):
         return
     if stored is None:
         print("note: building the full-text index for %s (first use; large "
@@ -2436,7 +2564,8 @@ Look up (usual order):
 
 Notes (format: references/notes.md in the skill folder):
   notes DOCSET --path            the notes file to edit
-  notes DOCSET --check           after editing; prints "ok" when fine
+  notes DOCSET --check           after editing: which REFs show each section,
+                                 then "ok"
 
 Set up and manage (references/setup.md, references/installing.md):
   where                          the store in use; exit 3 = not set yet
