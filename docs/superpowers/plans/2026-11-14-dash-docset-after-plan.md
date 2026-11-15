@@ -230,13 +230,13 @@ as true, `DuckDB:6072`); plus one note. The earlier DuckDB trial's "count_if
 is an alias of countif" isn't in this docset (two separate entries), so that
 question was replaced. Sizes are characters (tokens ≈ chars / 4).
 
-| | Run 1 (`17aa682`) | Run 2 (`5288a6c`) |
-|---|---|---|
-| Answers | all correct | all correct |
-| References opened | setup, installing, notes, each at its trigger | same |
-| All script output | 14,620 | 13,631 |
-| `search`/`show`/`fts` output | 11,417 | 9,911 |
-| Biggest call | `show DuckDB:29`, 5,551 (a whole parameters table) | `show DuckDB:29` without `--grep`, 6,658 |
+| | Run 1 (`17aa682`) | Run 2 (`5288a6c`) | Run 3 (`0ad3513`) |
+|---|---|---|---|
+| Answers | all correct | all correct | all correct |
+| References opened | setup, installing, notes, each at its trigger | same | same |
+| All script output | 14,620 | 13,631 | 6,192 (−58%) |
+| `search`/`show`/`fts` output | 11,417 | 9,911 | 3,679 (−68%) |
+| Biggest call | `show DuckDB:29`, 5,551 (a whole parameters table) | `show DuckDB:29` without `--grep`, 6,658 | `--help`, 1,107 |
 
 Run 1, lookup output against the answer spans: ~11% needed, ~40% irrelevant
 (`fts skip` hit at rank 7 of 17, a wrong Python-API page, overloads, a
@@ -249,6 +249,12 @@ duplicate "to check it wasn't different text". Without those two calls the
 lookups would have been ~3.1k (−73%). Both were confirmation calls; the
 output didn't say that `--grep` shows every match, or that `(also)` entries
 are the same text.
+
+Run 3: no unfiltered rerun. Two confirmation calls remained: a second
+`show DuckDB:29 --grep "Alias for delim"` (401) to check the table was
+`read_csv`'s, because the section heading is only "## Parameters"; and
+`show DuckDB:6122` (158) despite "(same section: ...)" and the `SKILL.md`
+line saying not to open those.
 
 `SKILL.md` + the three references read on a first run: ~9.9k, about the old
 single `SKILL.md`; later sessions read only `SKILL.md` (~3.5k).
