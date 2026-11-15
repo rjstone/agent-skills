@@ -61,6 +61,7 @@ plan:
 | `e0517c4` | Plain `where` with no location set also points agents to `references/setup.md` (it had its own message). | token trial 1 |
 | `5288a6c` | `show --grep TEXT` (matching lines plus heading and table header row); `fts` prints 5 hits by default and its cut line says to add words; `search` folds a whole-page entry into the anchored entry with the same short name on the same page, as `(also REF)`, and drops the repeated `(Docset)` suffix; `setup.md`: throwaway machines skip `--discover`. | token trial 1 |
 | `8f30f0b` | `show --grep` ends with "(all N lines containing 'X' are shown; the section has M lines)"; `search` prints `(same section: REF)` (JSON `same_section`) instead of `(also REF)`, and `SKILL.md` says not to open those. | token trial 2 |
+| `e19861e` | `show` prints `(page: Title)` before a section whose heading isn't the page's own (DuckDB's `## Parameters` is on "CSV Import"); folded same-section REFs appear only in `--json` (`same_section`); the `fts` cut line says "more hits cut" without a count. | token trial 3 |
 
 ## What the plan and design say that no longer holds
 
