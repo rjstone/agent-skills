@@ -42,10 +42,11 @@ carry their own licences.
    words need no quotes; a name must contain all of them (`search walking
    speed` finds `hero:get_walking_speed()`). Hits below the "fuzzy matches"
    line only share letters in order; treat them as misses (when real hits
-   exist, fuzzy ones are hidden). `(same section: REF)` names other entries
-   with the same text; don't open them. No hits prints "no matches" and
-   exits 0; exit 5 means a named docset or REF doesn't exist.
-2. `show REF` prints that entry's trimmed section plus any notes, capped at
+   exist, fuzzy ones are hidden). Entries that open the same section are
+   listed once. No hits prints "no matches" and exits 0; exit 5 means a
+   named docset or REF doesn't exist.
+2. `show REF` prints that entry's trimmed section (after a `(page: Title)`
+   line when the section is part of a larger page) plus any notes, capped at
    150 lines (`--full` lifts the cap). For one option or table row of a long
    section, add `--grep TEXT`: every matching line, with its heading and
    table header row; `...` marks lines without a match.

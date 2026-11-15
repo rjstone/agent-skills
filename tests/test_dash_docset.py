@@ -547,9 +547,10 @@ class SearchTests(unittest.TestCase):
                            ("date_subx", "Function", "date.html#x")])
         out = self.cli("search", "date_sub", "-d", "Alpha").stdout.splitlines()
         names = [l.split("  ")[2] for l in out]
-        # the bare page entry opens the same section: folded into the anchored one
+        # the bare page entry opens the same section: folded into the anchored
+        # one, listed only in --json (same text; agents opened it to check)
         self.assertEqual(names, ["date_sub(part, a, b)", "date_subx"])
-        self.assertTrue(out[0].endswith("  (same section: Alpha:1)"), out[0])
+        self.assertNotIn("Alpha:1", "\n".join(out))
 
     def test_bare_entry_kept_when_no_anchored_twin_on_its_page(self):
         self.add("Alpha", [("date_sub", "Function", "other.html"),
@@ -943,7 +944,9 @@ class AnchorlessShowTests(unittest.TestCase):
         r = run_cli("--dir", store, "show", "Duck:1", "--no-notes",
                     env={"HOME": tmp}, cwd=tmp)
         self.assertEqual(r.returncode, 0, r.stderr)
-        self.assertTrue(r.stdout.startswith("#### date_sub(part, a, b)"), r.stdout)
+        lines = r.stdout.splitlines()
+        self.assertEqual(lines[0], "(page: Date Functions)")  # names the page
+        self.assertTrue(lines[1].startswith("#### date_sub(part, a, b)"), r.stdout)
         self.assertIn("signed length", r.stdout)
         self.assertNotIn("intro", r.stdout)
         self.assertNotIn("nope", r.stdout)

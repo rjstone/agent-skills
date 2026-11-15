@@ -664,10 +664,7 @@ def cmd_search(args):
             lines.append("no exact, prefix or substring matches; fuzzy matches "
                          "(letters in order, often unrelated):" if k == 0 else
                          "--- fuzzy matches (letters in order, often unrelated) ---")
-        line = "%s:%d  %s  %s" % (d, i, t, n)
-        if (d, i) in also:
-            line += "  (same section: %s)" % ", ".join(also[(d, i)])
-        lines.append(line)
+        lines.append("%s:%d  %s  %s" % (d, i, t, n))
     if cut:
         lines.append("... %d fuzzy matches hidden (letters in order only, often "
                      "unrelated)" % cut)
@@ -1038,6 +1035,24 @@ def grep_lines(lines, patterns) -> List[str]:
     return out
 
 
+def page_title(blocks) -> Optional[str]:
+    """The page's top heading (first h1, else first heading), without #s."""
+    heads = [b for b in blocks if b.level]
+    if not heads:
+        return None
+    top = min(b.level for b in heads)
+    return next(b.text for b in heads if b.level == top).lstrip("#").strip() or None
+
+
+def _print_page_title(blocks, lines):
+    """'(page: Title)' when the section's heading isn't the page's own, so a
+    generic heading like '## Parameters' says what it belongs to."""
+    title = page_title(blocks)
+    if title and lines and lines[0].startswith("#") \
+            and lines[0].lstrip("#").strip() != title:
+        print("(page: %s)" % title)
+
+
 def _print_lines(lines, args):
     footer = None
     if getattr(args, "grep", None):
@@ -1070,7 +1085,9 @@ def cmd_show(args):
     if page_ref:
         file_part, sep, anchor = entry_id.partition("#")
         blocks = read_page_blocks(ds, file_part)
-        _print_lines(trim_to_anchor(blocks, anchor if sep and anchor else None), args)
+        lines = trim_to_anchor(blocks, anchor if sep and anchor else None)
+        _print_page_title(blocks, lines)
+        _print_lines(lines, args)
         if not args.no_notes:
             for line in general_notes(store, name):
                 print(line)
@@ -1089,6 +1106,7 @@ def cmd_show(args):
         anchor = next((b.ids[0] for b in blocks if b.level and b.ids
                        and _short_name(b.text.lstrip("#").strip()) == want), None)
     lines = trim_to_anchor(blocks, anchor)
+    _print_page_title(blocks, lines)
     _print_lines(lines, args)
     if not args.no_notes:
         for line in notes_for(store, name, entry_name, entry_type):
@@ -1536,9 +1554,8 @@ def cmd_fts(args):
         print(h["ref"])
         print("    " + h["snippet"])
     if len(hits) > room:
-        print("... %s more hits cut; add words (e.g. the function name), -d, or "
-              "raise --max-lines"
-              % ("%d" % (len(hits) - room) if len(hits) < limit else "%d or" % (len(hits) - room)))
+        print("... more hits cut; add words (e.g. the function name), -d, or "
+              "raise --max-lines")
     return 0
 
 
