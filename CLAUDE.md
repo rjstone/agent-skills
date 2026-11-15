@@ -23,22 +23,34 @@ with a cloud container: archive it to `docs/plans/` before the session ends.
 
 ## Claude Code on the web: cloud environment
 
-A personal cloud environment named `agent-skills`, linked to this repo, was
-created for it (the user, 2026-11-13). Its network allows only package
-registries, MCP servers and an exact list of hosts the skills' scripts use;
-add a host there (environment settings, or the environment tools) when a
-script needs a new one. Its setup script:
+This repo's sessions run in the personal cloud environment named `Agents`,
+which several other repos share (it holds their network secrets). The one
+named `agent-skills` was created by accident: don't use it (the user,
+2026-11-15). The network of `Agents` allows package registries, MCP servers
+and a list of hosts that includes the ones the skills' scripts use; add a
+host there (environment settings, or the environment tools) when a script
+needs a new one. Its setup script:
 
+- writes `~/.claude/CLAUDE.md` with one `PASS`, `FAIL` or `SKIP` line per
+  step and a last "finished" line; details are in `~/install.log`. No step
+  stops the script. Read those lines at session start: on a `FAIL`, or when
+  "finished" is missing, tell the user and fix it by hand if the task needs
+  it (the user, 2026-11-15).
 - installs `python3-tk`. That gives Tk only to the system Python 3.12; the
   `python3` on `PATH` is 3.13 and apt has no Tk for it, so run Tk work
   (`capturing-tk-screenshots-headless`, `thonny-plugin`) with `python3.12`.
-- links each `skills/<name>` into `~/.claude/skills/<name>`, so the repo's
-  working copies load as skills. Copies synced from claude.ai may also show
-  up under `anthropic-skills:`; the bare names are the repo versions.
+- links each `skills/<name>` into `~/.claude/skills/<name>`, only when this
+  repo is cloned in the session, so its working copies load as skills.
+  Copies synced from claude.ai may also show up under `anthropic-skills:`;
+  the bare names are the repo versions.
+- installs gpg, uv and the opencode v2 CLI (`npm install -g @opencode/cli`)
+  for the other repos.
 
-Pandoc, Xvfb and ImageMagick come with the base image. The environment
-picker's "Auto" setting is undocumented; it presumably picks the
-environment linked to the session's repo (to be confirmed).
+Pandoc, Xvfb and ImageMagick come with the base image. A setup script
+change takes effect only in a container built fresh, so test it by running
+its commands in the session, from the directory above the checkout. A
+running session can't be moved off `Agents` to another environment (the
+environment tools refuse); start a new session instead.
 
 ## Claude Code on the web: skills CLI
 
