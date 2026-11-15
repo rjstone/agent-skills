@@ -232,13 +232,13 @@ as true, `DuckDB:6072`); plus one note. The earlier DuckDB trial's "count_if
 is an alias of countif" isn't in this docset (two separate entries), so that
 question was replaced. Sizes are characters (tokens ≈ chars / 4).
 
-| | Run 1 (`17aa682`) | Run 2 (`5288a6c`) | Run 3 (`0ad3513`) | Run 4 (`aff6dae`) |
-|---|---|---|---|---|
-| Answers | all correct | all correct | all correct | all correct |
-| References opened | setup, installing, notes, each at its trigger | same | same | same |
-| All script output | 14,620 | 13,631 | 6,192 (−58%) | 6,631 (−55%) |
-| `search`/`show`/`fts` output | 11,417 | 9,911 | 3,679 (−68%) | 3,040 (−73%) |
-| Biggest call | `show DuckDB:29`, 5,551 (a whole parameters table) | `show DuckDB:29` without `--grep`, 6,658 | `--help`, 1,107 | `--help`, 1,107 |
+| | Run 1 (`17aa682`) | Run 2 (`5288a6c`) | Run 3 (`0ad3513`) | Run 4 (`aff6dae`) | Run 5 (`a3315ed`) |
+|---|---|---|---|---|---|
+| Answers | all correct | all correct | all correct | all correct | all correct |
+| References opened | setup, installing, notes, each at its trigger | same | same | same | same |
+| All script output | 14,620 | 13,631 | 6,192 (−58%) | 6,631 (−55%) | 6,370 (−56%) |
+| `search`/`show`/`fts` output | 11,417 | 9,911 | 3,679 (−68%) | 3,040 (−73%) | 3,262 (−71%) |
+| Biggest call | `show DuckDB:29`, 5,551 (a whole parameters table) | `show DuckDB:29` without `--grep`, 6,658 | `--help`, 1,107 | `--help`, 1,107 | `--help`, 2,151 |
 
 Run 1, lookup output against the answer spans: ~11% needed, ~40% irrelevant
 (`fts skip` hit at rank 7 of 17, a wrong Python-API page, overloads, a
@@ -263,6 +263,12 @@ level plus `where`, `sources`, `install`, `notes`) varied from 1.5k to 2.8k
 between runs and is now the largest overhead (42% of run 4's output). Haiku
 again read a note written as `## count_if` shown as `## count_if(x)` and
 wasn't sure it had matched (run 1 too).
+
+Run 5 (top-level `--help` as the command reference): no subcommand `--help`
+at all; help output 2,151 (one call) against 1.5k-2.8k before. `SKILL.md`
+3.5k → 2.9k. One small confirmation call remained (`--grep "Number of
+lines"`, 235). Haiku displayed and matched the `## count_if` note heading
+without confusion this time.
 
 `SKILL.md` + the three references read on a first run: ~9.9k, about the old
 single `SKILL.md`; later sessions read only `SKILL.md` (~3.5k).
