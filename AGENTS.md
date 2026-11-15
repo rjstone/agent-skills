@@ -240,7 +240,11 @@ metadata:
 
 ## Testing a skill with other models (opencode)
 
-Found 2026-11-15 with opencode 2.3.0; re-check when it changes.
+Found 2026-11-15 with opencode 2.3.0; re-check when it changes. A working
+harness (runner, scorer, provider config) and the results of its runs are
+in `docs/superpowers/trials/dash-docset/` and
+`docs/superpowers/plans/2026-11-14-dash-docset-after-plan.md`; copy it for
+another skill.
 
 - opencode discovers skills in `~/.claude/skills` and `.claude/skills`
   (also `~/.agents/skills`, `~/.config/opencode/skills`, `.opencode/skills`),

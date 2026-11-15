@@ -322,6 +322,181 @@ output, and agents already rephrase queries for `fts`, so an embedding index
 `SKILL.md` + the three references read on a first run: ~9.9k, about the old
 single `SKILL.md`; later sessions read only `SKILL.md` (~3.5k).
 
+### Trials with other models in opencode (2026-11-15)
+
+Goal: see how the skill holds up with non-Anthropic models, mostly ones
+cheaper or weaker than Haiku (the user, 2026-11-15). Harness: opencode 2.3.0,
+`opencode run`, one isolated home per model holding only this skill. The
+prompts never name the skill. Each run happened once, so single results are
+anecdotes; patterns across models are the finding. How to run them again is
+at the end of this section.
+
+Models (sizes are total parameters from the Hugging Face model pages unless
+marked; "by name" means taken from the model's name only):
+
+| Model | Provider | Size |
+|---|---|---|
+| `liquid/lfm-3-1.7b:free` | OpenRouter | 1.7B |
+| `nvidia/nemotron-3.5-lightning:free` | OpenRouter | 30B, 3B active (by name) |
+| `ricursiveai/ripple-65b-preview` | Nous | 65B (by name) |
+| `qwen/qwen3-next-80b-a3b-instruct` | Nous | 80B, 3B active (by name) |
+| `nvidia/nemotron-3-super-120b-a12b` | Nous | 120B, 12B active (by name) |
+| `nvidia/nemotron-3.5-super-vl:free` | OpenRouter | 124B, 12B active |
+| `stepfun/step-3.7-flash` | Nous | 201B |
+| `mimo-v2.6-flash` | OpenCode Go | 311B |
+| `Beam-1.0-501B-A23B` | Reflection | 501B, 23B active |
+| `deepseek-v4.1-flash` | OpenCode Go | 763B |
+| `gpt-6-luna`, `muse-spark-1.3-contributor` | OpenCode Go | not published |
+
+Not usable from the sandbox: OpenCode Zen's free models ("Free usage limit
+reached" on every one) and Nous's `stepfun/step-3.7-flash:free` (each run
+stalled after its first tool call; the paid model ran normally).
+
+**Round 1, set `basic`, skill at `6c8e344`.** Four scenarios against a
+project whose store already held Jinja, the Git cheat sheet and Pandas: S1 a
+`read_csv` option (needs page text), S2 a Jinja signature, S3 a lookup in a
+docset that must be installed first (Flask), S4 a cold start with no store.
+
+| Model | Loaded the skill | S1-S3 |
+|---|---|---|
+| Luna, Muse Spark, DeepSeek flash, MiMo, Beam, Step 3.7 Flash | 4 of 4 runs | all correct with the script |
+| `lfm-3-1.7b` | 3 of 4 | right answers by grepping the docset's HTML; copied `PATH` and `QUERY` from the help text literally; read the whole script instead of `--help` |
+| `nemotron-3.5-lightning` (30B) | 0 of 4 | S1-S2 right by grepping HTML (S1 at 77k input tokens; most others 11k-17k); S3 failed, it never found a way to install |
+
+What the runs showed, and what was changed (`b346149`):
+
+- Three models ran `cd <skill folder> && python scripts/docset.py ...`. From
+  there the project file wasn't found, so the script said "storage location
+  not set" and the model started first-time setup. Now the file is also
+  looked for from the script's folder, `OLDPWD` and parent processes'
+  folders, and `SKILL.md` says to stay in the project folder.
+- `show REF --grep on_bad_lines` printed the one matching line without the
+  parameter's description, and four of six models then piped `show` through
+  `grep -A`. Now a matching definition term comes with its definition.
+- `-d pandas` was rejected (the docset is `Pandas`). Names now match without
+  regard to case in lookups.
+- Step 3.7 Flash ran `where --discover`, concluded no store was set, and
+  ran `where --set .docsets --project` over the existing project file, which
+  dropped the installed docsets out of use. `where --set` now refuses to swap
+  a store without `--replace`, and `where --discover` prints the store in use.
+- S4 can't be judged in `opencode run`: the question tool is cancelled with
+  "make reasonable assumptions". Five of the six larger models tried that
+  tool first. Luna and Step 3.7 Flash stopped and asked in their reply;
+  the other four picked a location.
+
+**Round 2, set `basic` again, skill at `b346149`** (same models without the
+1.7B one). All S1-S3 answers correct.
+
+| | Round 1 | Round 2 |
+|---|---|---|
+| Commands run from inside the skill folder | 12 | 0 |
+| `show` piped through `grep` | 7 | 0 |
+| Script calls in S1 (Step, DeepSeek, Luna, MiMo, Muse Spark) | 8, 9, 8, 6, 5 | 4, 4, 4, 3, 4 |
+| Step 3.7 Flash, S3 | overwrote the project's store | store intact, Flask added |
+
+Beam did not load the skill in S1 this time (it had in round 1), and the
+30B nemotron still skipped it in three of four runs.
+
+**Round 3, set `docsets`, skill at `b346149`.** The four tasks of the Haiku
+trials above, rewritten (the earlier prompts weren't kept): set up a store,
+install the docset, three questions, one note. The prompt names the store
+(`.docsets`) and approves it, because the run can't ask. Seven models: the
+six from round 1 that used the skill, plus `nemotron-3.5-super-vl` (124B).
+
+- 27 of 28 runs answered all three questions correctly; all 28 loaded the
+  skill and attached the note (`notes --check` ok).
+- The one wrong answer: Step 3.7 Flash put `GCBASE`'s `Cn` field in bits
+  15:11 (it is 9:5, read off the rendered bit table).
+- Six of seven models searched several function names at once (`search
+  date_diff date_sub`) and got "no matches". Changed in `5bb7fb2`: `search`
+  now lists the best entry for each word.
+- One model passed `-d` to `show` (a usage error, three calls). Not changed.
+- Script output per task: about 6k-20k characters, against Haiku's 6k
+  (DuckDB) and 10k (the others).
+- The Solarus question "what exact call makes an enemy unaffected by
+  arrows" was answered `enemy:set_attack_consequence("arrow", "ignored")` by
+  all seven; the earlier trials' answer was `"protected"`. The docset supports
+  both ("ignored": nothing happens; "protected": the enemy stops the attack),
+  so the scorer accepts either.
+
+**Round 4, set `docsets`, skill at `5bb7fb2`, three smaller models.**
+
+| Model | Result |
+|---|---|
+| `nemotron-3-super-120b-a12b` | all four tasks done with the skill, notes attached, 11 of 12 answers right; 240k-375k input tokens per task |
+| `qwen3-next-80b-a3b-instruct` | no task completed |
+| `ripple-65b-preview` | no task completed |
+
+Failures by kind:
+
+- **Invented documentation.** Ripple (Morello) loaded the skill, ran no
+  script command, then reported "The docset is installed and the notes are
+  attached" with made-up quotes and a made-up reference file. Qwen (DuckDB,
+  Solarus) wrote its own `index.html` inside a fake `.docset` folder after
+  its web searches were cancelled, and answered "based on this
+  documentation" (wrongly: `date_diff` 1, `skip` INTEGER).
+- **Never loading the skill.** Qwen in three of four tasks (web search, a
+  `dash -install` command, a search for kernel sources); Ripple once (it
+  tried `require("dash-docset")`).
+- **Loading it but not following it.** Qwen (Python) skipped `--help` and
+  the references, wrote its own `.dash-docset.json` with `"docsets":
+  ".docsets"`, and made 26 mostly failing calls ("unknown docset '.'") at
+  442k input tokens; it then answered from `help()` and put the note in a
+  text file, and said so. Ripple (Python) set up and installed correctly,
+  guessed syntax twice, and quit without answering.
+- **Stopping early.** Ripple (DuckDB) did every lookup and the note
+  correctly and ended before writing the answer.
+- **Wrong page.** The 120B nemotron answered the `read_csv` `skip` question
+  with `skiprows`, `Optional[int]`, default `None`, from DuckDB's Python API
+  page (the trap the first Haiku token trial also hit).
+
+With these models the skill worked from about 120B up and not at 80B or
+below, but family and training differ as much as size, so that is not a
+size rule. Only one of the round-4 failures is something the script could
+soften (a message that names the config file when `"docsets"` isn't a
+list); the user declined that change (2026-11-15).
+
+#### Running these trials again
+
+Files: `docs/superpowers/trials/dash-docset/` holds `run_trials.sh` (the
+prompts are in it), `score_trials.py` and the `opencode.json` that adds
+Nous as a provider.
+
+Needs: Linux (on macOS, also GNU `timeout`), `opencode` (v2), `python3`,
+network access to the
+providers and to the hosts in the skill's `assets/allowlist.txt`, and an
+API key for each provider used.
+
+```bash
+# from the repo root; set the keys opencode reads for the providers you use
+export OPENROUTER_API_KEY=... NOUS_API_KEY=... OPENCODE_API_KEY=... REFLECTION_API_KEY=...
+export OUT="$HOME/dash-docset-trials"
+
+T=docs/superpowers/trials/dash-docset
+$T/run_trials.sh basic   opencode-go/gpt-6-luna opencode-go/mimo-v2.6-flash
+$T/run_trials.sh docsets nous/stepfun/step-3.7-flash "openrouter/nvidia/nemotron-3.5-super-vl:free"
+python3 $T/score_trials.py "$OUT"/docsets/*/        # -v: every command and the reply
+```
+
+- Model names are `provider/model` as `opencode models` prints them. A Nous
+  model must also be listed under `providers.nous.models` in
+  `opencode.json` there. A key variable left unset is set to a placeholder,
+  which only works where an egress proxy injects the key.
+- A run takes 10 seconds to 5 minutes; models run in parallel. The whole of
+  round 3 (seven models, four tasks) took about 13 minutes.
+- Each model gets its own `HOME` under `$OUT`, with a link to the skill as
+  its only skill. Agents still wrote outside it now and then (a folder in
+  the temporary directory, an `apt-get install`), so use a throwaway
+  machine.
+- The scorer's answer checks are patterns over the reply. Read a flagged
+  reply before calling it wrong, and read the replies of small models even
+  when nothing is flagged: an invented quote can pass a pattern.
+- To compare skill versions, check out the commit and run again with a new
+  `OUT`; `score_trials.py` prints script calls, errors and output size per
+  run.
+- Sizes came from the Hugging Face model pages; free models and prices
+  from each provider's `/models` endpoint. Both change.
+
 ## Open
 
 - **Waiting on Kapeli:** a reply about the docset terms and redistributing
@@ -332,6 +507,9 @@ single `SKILL.md`; later sessions read only `SKILL.md` (~3.5k).
   - real Dash/Zeal installs, including the macOS plist key, the Windows
     registry lookup and Zeal's menu path
   - the GitHub API listing (blocked in the sandbox; the fallbacks covered it)
+- **From the other-model trials, not changed:** `show` rejects `-d`
+  (one model tried it); a `"docsets"` value that isn't a list gives
+  "unknown docset '.'" (declined); models that never load the skill.
 - **`TODO.md`:**
   - MCP mode (look at ZDocsetMCP first)
   - installing into Dash, Zeal or dasht folders on request
