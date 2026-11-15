@@ -549,7 +549,7 @@ class SearchTests(unittest.TestCase):
         names = [l.split("  ")[2] for l in out]
         # the bare page entry opens the same section: folded into the anchored one
         self.assertEqual(names, ["date_sub(part, a, b)", "date_subx"])
-        self.assertTrue(out[0].endswith("  (also Alpha:1)"), out[0])
+        self.assertTrue(out[0].endswith("  (same section: Alpha:1)"), out[0])
 
     def test_bare_entry_kept_when_no_anchored_twin_on_its_page(self):
         self.add("Alpha", [("date_sub", "Function", "other.html"),
@@ -557,7 +557,7 @@ class SearchTests(unittest.TestCase):
         out = self.cli("search", "date_sub", "-d", "Alpha").stdout.splitlines()
         self.assertEqual([l.split("  ")[2] for l in out],
                          ["date_sub(part, a, b)", "date_sub"])
-        self.assertNotIn("also", out[0])
+        self.assertNotIn("same section", out[0])
         r = self.cli("search", "date_sub", "-d", "Alpha", "--json")
         self.assertEqual(len(json.loads(r.stdout)), 2)
 
@@ -567,7 +567,7 @@ class SearchTests(unittest.TestCase):
         items = json.loads(self.cli("search", "date_sub", "-d", "Alpha",
                                     "--json").stdout)
         self.assertEqual(len(items), 1)
-        self.assertEqual(items[0]["also"], ["Alpha:1"])
+        self.assertEqual(items[0]["same_section"], ["Alpha:1"])
 
     def test_multi_word_queries(self):
         self.add("Alpha", [("hero:get_walking_speed()", "Method", "a.html"),
@@ -912,6 +912,9 @@ class ShowGrepTests(unittest.TestCase):
         for gone in ("header", "VARCHAR", "Options for read_csv"):
             self.assertNotIn(gone, r.stdout)
         self.assertIn("...", lines)  # skipped runs are marked
+        # says that nothing matching was left out
+        self.assertEqual(lines[-1], "(all 2 lines containing 'skip' are shown; "
+                                    "the section has 8 lines)")
 
     def test_grep_repeatable_and_no_match(self):
         r = self.cli("show", "Duck:1", "--grep", "skip", "--grep", "quote", "--no-notes")

@@ -648,7 +648,7 @@ def cmd_search(args):
             item = {"ref": "%s:%d" % (d, i), "docset": d, "type": t, "name": n,
                     "rank": r}
             if (d, i) in also:
-                item["also"] = also[(d, i)]
+                item["same_section"] = also[(d, i)]
             items.append(item)
         print(json.dumps(items, indent=2))
         return 0
@@ -666,7 +666,7 @@ def cmd_search(args):
                          "--- fuzzy matches (letters in order, often unrelated) ---")
         line = "%s:%d  %s  %s" % (d, i, t, n)
         if (d, i) in also:
-            line += "  (also %s)" % ", ".join(also[(d, i)])
+            line += "  (same section: %s)" % ", ".join(also[(d, i)])
         lines.append(line)
     if cut:
         lines.append("... %d fuzzy matches hidden (letters in order only, often "
@@ -1039,18 +1039,25 @@ def grep_lines(lines, patterns) -> List[str]:
 
 
 def _print_lines(lines, args):
+    footer = None
     if getattr(args, "grep", None):
         total = len(lines)
+        wanted = " or ".join(repr(g) for g in args.grep)
+        matched = sum(1 for l in lines if any(g.lower() in l.lower() for g in args.grep))
         lines = grep_lines(lines, args.grep)
         if not lines:
             print("no lines match %s in this section (%d lines); drop --grep to "
-                  "see it" % (" or ".join(repr(g) for g in args.grep), total))
+                  "see it" % (wanted, total))
             return
+        footer = ("(all %d lines containing %s are shown; the section has %d lines)"
+                  % (matched, wanted, total))
     if not args.full:
         lines = cap_lines(lines, args.max_lines,
                           "raise --max-lines or use --full for the whole section")
     for line in lines:
         print(line)
+    if footer:
+        print(footer)
 
 
 def cmd_show(args):

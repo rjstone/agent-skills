@@ -42,13 +42,13 @@ carry their own licences.
    words need no quotes; a name must contain all of them (`search walking
    speed` finds `hero:get_walking_speed()`). Hits below the "fuzzy matches"
    line only share letters in order; treat them as misses (when real hits
-   exist, fuzzy ones are hidden). `(also REF)` after a hit names other
-   entries that open the same section. No hits prints "no matches" and
+   exist, fuzzy ones are hidden). `(same section: REF)` names other entries
+   with the same text; don't open them. No hits prints "no matches" and
    exits 0; exit 5 means a named docset or REF doesn't exist.
 2. `show REF` prints that entry's trimmed section plus any notes, capped at
    150 lines (`--full` lifts the cap). For one option or table row of a long
-   section, add `--grep TEXT`: only matching lines, with their heading and
-   table header row.
+   section, add `--grep TEXT`: every matching line, with its heading and
+   table header row; `...` marks lines without a match.
 3. `fts QUERY` searches the text inside pages when entry names don't match.
    Function options, parameters and settings are often only in page text
    (e.g. `read_csv`'s `skip` is a row in a table), so look for them with
