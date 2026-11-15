@@ -60,6 +60,7 @@ plan:
 | `17aa682` | Progressive disclosure: `SKILL.md` keeps only lookups (`search`, `show`, `fts`, scope) and Kapeli's terms, 9.3 KB → 3.3 KB. First-run setup and "Other options" moved to `references/setup.md`, sources/install/update/remove and the allowlist to `references/installing.md`, notes authoring to `references/notes.md`. The "location not set" error now points agents to `references/setup.md`, since the "user chooses the location" rule no longer sits in `SKILL.md`. | the user, 2026-11-15: cut the per-session token cost |
 | `e0517c4` | Plain `where` with no location set also points agents to `references/setup.md` (it had its own message). | token trial 1 |
 | `5288a6c` | `show --grep TEXT` (matching lines plus heading and table header row); `fts` prints 5 hits by default and its cut line says to add words; `search` folds a whole-page entry into the anchored entry with the same short name on the same page, as `(also REF)`, and drops the repeated `(Docset)` suffix; `setup.md`: throwaway machines skip `--discover`. | token trial 1 |
+| `8f30f0b` | `show --grep` ends with "(all N lines containing 'X' are shown; the section has M lines)"; `search` prints `(same section: REF)` (JSON `same_section`) instead of `(also REF)`, and `SKILL.md` says not to open those. | token trial 2 |
 
 ## What the plan and design say that no longer holds
 
