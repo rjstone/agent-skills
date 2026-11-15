@@ -127,6 +127,43 @@ class SkeletonTests(unittest.TestCase):
         for name in SUBCOMMANDS:
             self.assertIn(name, r.stdout)
 
+    def test_top_help_is_the_command_reference(self):
+        import re
+        r = run_cli("--help")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertEqual(run_cli().returncode, 2)  # no command: same text, exit 2
+        head, _, rare = r.stdout.partition("Only if you need these")
+        opts = docset.subcommand_options(docset.build_parser())
+        for name, common in docset.COMMON_OPTIONS.items():
+            for o in common:
+                self.assertIn(o, opts[name], "%s %s is not a real option" % (name, o))
+                self.assertIn(o, head, "common %s %s missing from the command lines"
+                              % (name, o))
+        # every other option is named in the generated list, on its command's line
+        rare_lines = {l.split()[0]: l.split()[1:] for l in rare.splitlines()[1:]
+                      if l.startswith("  ") and l.split()}
+        for name, all_opts in opts.items():
+            for o in all_opts:
+                if o not in docset.COMMON_OPTIONS.get(name, set()):
+                    self.assertIn(o, rare_lines.get(name, []), "%s %s" % (name, o))
+        for line in r.stdout.splitlines():
+            self.assertLessEqual(len(line), 80, line)
+
+    def test_docs_mention_only_real_options(self):
+        import glob
+        import re
+        skill = os.path.dirname(os.path.dirname(SCRIPT))
+        known = {"--help", "--dir", "--version"}
+        for o in docset.subcommand_options(docset.build_parser()).values():
+            known.update(o)
+        known.update({"--docset"})  # long form of -d
+        files = [os.path.join(skill, "SKILL.md")] + glob.glob(
+            os.path.join(skill, "references", "*.md"))
+        for path in files:
+            with open(path, encoding="utf-8") as f:
+                for flag in re.findall(r"(?<![\w-])--[a-z][a-z-]*", f.read()):
+                    self.assertIn(flag, known, "%s: %s" % (os.path.basename(path), flag))
+
     def test_version(self):
         import re
         self.assertRegex(docset.VERSION, r"^\d+\.\d+\.\d+$")

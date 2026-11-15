@@ -13,8 +13,9 @@ metadata:
 
 Search Dash docsets offline with `python scripts/docset.py` (stdlib only;
 the path is relative to this skill's folder, so from elsewhere give its full
-path). `--help` and `<command> --help` are the command reference; this file
-covers only what they don't.
+path). Run its `--help` first: that is the command reference, with the usual
+command lines. A subcommand's own `--help` only adds the rarer options that
+`--help` names at its end. This file covers what help can't.
 
 Use for exact, version-pinned reference (signatures, options, return values)
 quoted from the docs. Prefer Context7 or web search when the library has no
@@ -38,29 +39,18 @@ carry their own licences.
 
 ## Looking things up
 
-1. `search QUERY` finds entries by name and prints a REF for each. Several
-   words need no quotes; a name must contain all of them (`search walking
-   speed` finds `hero:get_walking_speed()`). Hits below the "fuzzy matches"
-   line only share letters in order; treat them as misses (when real hits
-   exist, fuzzy ones are hidden). Entries that open the same section are
-   listed once. No hits prints "no matches" and exits 0; exit 5 means a
-   named docset or REF doesn't exist.
-2. `show REF` prints that entry's trimmed section (after a `(page: Title)`
-   line when the section is part of a larger page) plus any notes, capped at
-   150 lines (`--full` lifts the cap). For one option or table row of a long
-   section, add `--grep TEXT`: every matching line, with its heading and
-   table header row; `...` marks lines without a match.
-3. `fts QUERY` searches the text inside pages when entry names don't match.
-   Function options, parameters and settings are often only in page text
-   (e.g. `read_csv`'s `skip` is a row in a table), so look for them with
-   `fts`, with the function name too (`fts read_csv skip`, not `fts skip`):
-   it prints 5 hits, best first. Each hit prints a REF for the section
-   around the match: an entry REF (`<Name>:<id>`) when that section is an
-   entry's, else
-   `<Name>:page:<path>#<anchor>` (without `#<anchor>`, `show` prints the
-   whole page). The first `fts` on a docset builds its index (seconds for
-   large docsets).
-4. Scope: a project `"docsets"` list in `.dash-docset.json` limits searches
-   to those docsets. Without one, searches cover every docset unless more
-   than 4 are full-size; then narrow with `-d NAME` (repeatable; the name
-   `list` prints), set the list, or pass `--all`.
+- Try `search` first; use `fts` when names don't match. Function options,
+  parameters and settings are often only in page text (`read_csv`'s `skip`
+  is a row in a table), so look for them with `fts`, adding the function
+  name (`fts read_csv skip`, not `fts skip`).
+- Hits below a "fuzzy matches" line only share letters in order; treat them
+  as misses. Entries that open the same section are listed once.
+- For one option or row of a long section, `show REF --grep TEXT` prints
+  every matching line; `...` marks lines without a match, so there's no
+  need to rerun without `--grep`. A `(page: Title)` line names the page a
+  section belongs to.
+- Scope: a project `"docsets"` list in `.dash-docset.json` limits searches
+  to those docsets. Without one, searches cover every docset unless more
+  than 4 are full-size; then narrow with `-d NAME`, set the list, or pass
+  `--all`. The first `fts` on a docset builds its index (seconds for large
+  docsets).

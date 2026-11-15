@@ -189,6 +189,13 @@ metadata:
   `scripts/docset.py` has its own `VERSION` (used in `--version`,
   `--help` and the User-Agent), bumped only when the script changes; it
   may lag `metadata.version` but never lead it (a test checks).
+  The top-level `--help` (`TOP_HELP`) is the command reference agents
+  read: hand-written usual command lines, then the remaining options of
+  each subcommand by name only, generated from the parser. A new option
+  goes in that generated list unless it's added to `COMMON_OPTIONS` and to
+  a `TOP_HELP` line; `SKILL.md` and `references/` don't repeat syntax, and
+  a test fails on any flag they name that the script lacks (the user,
+  2026-11-15).
   Source lists, in order: GitHub API and Zeal's manifest (raw GitHub) for
   official docsets, Kapeli's `cheat.json` for cheat sheets, Kapeli's
   `index.json` for user-contributed; Zeal's catalog at api.zealdocs.org

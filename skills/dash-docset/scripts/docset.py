@@ -2409,19 +2409,90 @@ def cmd_remove(args):
     return 0
 
 
+EXIT_CODES = ("0 ok; 1 notes --check found problems; 2 usage, unknown name or "
+              "no FTS5; 3 storage location not set; 4 search scope too wide "
+              "(use -d, a project list or --all); 5 not found; 6 ambiguous "
+              "name (add a prefix); 7 network, archive or incomplete source list")
+
+# Top-level --help: the command lines agents normally need. Options used
+# here are listed in COMMON_OPTIONS; every other option of a subcommand is
+# named (not described) under "only if you need these", generated from the
+# parser, so a new option can't be left out (a test checks both lists).
+TOP_HELP = """\
+dash-docset {version}: search Dash docsets offline (stdlib only).
+This is the command reference; `<command> --help` adds only the options
+listed at the end. REF = <Docset>:<id> or <Docset>:page:<path>[#anchor],
+as search and fts print them; <Docset> is the name `list` prints.
+
+Look up (usual order):
+  search QUERY... [-d NAME]      entries whose names contain all the words;
+                                 prints one REF per entry, best first
+  show REF                       that entry's section (max 150 lines) plus
+                                 your notes for it
+  show REF --grep TEXT           only lines containing TEXT, with their
+                                 heading and table header row (repeatable)
+  fts QUERY... [-d NAME]         words inside pages, 5 best hits with REFs;
+                                 include the function name: fts read_csv skip
+
+Notes (format: references/notes.md in the skill folder):
+  notes DOCSET --path            the notes file to edit
+  notes DOCSET --check           after editing; prints "ok" when fine
+
+Set up and manage (references/setup.md, references/installing.md):
+  where                          the store in use; exit 3 = not set yet
+  where --set PATH --project|--user [--read-from DIR]
+                                 save the store the user chose
+  sources QUERY...               docsets you can install, with prefixed names
+  install [kapeli:|user:|cheat:]NAME...
+  list                           installed docsets and versions
+  update [NAME...] | remove NAME | index-text DOCSET (build fts index now)
+
+Only if you need these, see `<command> --help`:
+{rare}
+Global: --dir PATH (use this store for one run), --version.
+{exit_codes}
+"""
+COMMON_OPTIONS = {"search": {"-d"}, "fts": {"-d"}, "show": {"--grep"},
+                  "notes": {"--path", "--check"},
+                  "where": {"--set", "--project", "--user", "--read-from"}}
+
+
+def subcommand_options(parser) -> dict:
+    """{subcommand: its option strings (short form if any), minus -h}."""
+    out = {}
+    for name, p in parser._dash_sub.choices.items():
+        opts = []
+        for a in p._actions:
+            if a.option_strings and "-h" not in a.option_strings:
+                opts.append(a.option_strings[0])
+        out[name] = opts
+    return out
+
+
+def top_help(parser) -> str:
+    rare = []
+    for name, opts in subcommand_options(parser).items():
+        extra = [o for o in opts if o not in COMMON_OPTIONS.get(name, set())]
+        if extra:
+            rare.append("  %-10s %s" % (name, " ".join(extra)))
+    import textwrap
+    codes = textwrap.fill("Exit codes: " + EXIT_CODES, width=76,
+                          subsequent_indent="  ")
+    return TOP_HELP.format(version=VERSION, rare="\n".join(rare), exit_codes=codes)
+
+
 def build_parser():
     parser = argparse.ArgumentParser(
         prog="docset.py", description=f"dash-docset {VERSION}: {__doc__}",
-        epilog="exit codes: 0 ok; 1 notes --check found problems; 2 usage, "
-               "unknown name or no FTS5; 3 storage location not set; 4 search "
-               "scope too wide (use -d, a project list or --all); 5 not "
-               "found; 6 ambiguous name (add a prefix); 7 network, archive or "
-               "incomplete source list")
+        add_help=False)
+    parser.add_argument("-h", "--help", action="store_true",
+                        help="show the command reference")
     parser.add_argument("--version", action="version",
                         version=f"dash-docset {VERSION}")
     parser.add_argument("--dir", metavar="PATH",
                         help="use this docset store (overrides DASH_DOCSET_DIR and config)")
     sub = parser.add_subparsers(dest="command", metavar="COMMAND")
+    parser._dash_sub = sub
     for name, help_text in SUBCOMMANDS.items():
         p = sub.add_parser(name, help=help_text, description=help_text)
         if name == "where":
@@ -2531,8 +2602,8 @@ def main(argv=None):
     parser = build_parser()
     args = parser.parse_args(argv)
     if not getattr(args, "handler", None):
-        parser.print_help()
-        return 2
+        print(top_help(parser), end="")
+        return 0 if args.help else 2
     try:
         return args.handler(args)
     except CLIError as e:
