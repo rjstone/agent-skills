@@ -205,6 +205,23 @@ metadata:
   page but the index page (else the first entry's page), so fts still finds
   them once (the user, 2026-11-15). Bump `FTS_FORMAT` when what the index
   stores changes.
+  The project file `.dash-docset.json` is looked for from the current
+  folder upward, then, because agents often `cd` into the skill folder
+  first, upward from the script's folder (as invoked, symlinks not
+  resolved), from `OLDPWD`, and on Linux from the working folders of parent
+  processes (`/proc`), in that order, all before the user config. The
+  fallback walks check the home folder last and never a folder of users'
+  homes (`/home`, `/Users`) or a filesystem root, and a fallback hit prints
+  a note on stderr. No harness sets a project-root variable for its shell
+  (checked Claude Code and opencode), and nothing like `OLDPWD` exists in
+  PowerShell or cmd. `where --set --project` run inside the skill folder
+  writes to `OLDPWD` instead; `where --set` refuses to swap a store that is
+  already set unless `--replace` is given (the user, 2026-11-15).
+  Docset names match without regard to letter case in lookups (`-d`, REFs,
+  the project list, `notes`, `index-text`); `update` and `remove` need the
+  exact name. `show --grep` also prints the definition (`<dd>`) of a
+  matching term (`<dt>`) when it has at most 40 lines: page structure, not
+  a guess (the user, 2026-11-15).
   Source lists, in order: GitHub API and Zeal's manifest (raw GitHub) for
   official docsets, Kapeli's `cheat.json` for cheat sheets, Kapeli's
   `index.json` for user-contributed; Zeal's catalog at api.zealdocs.org
@@ -216,6 +233,31 @@ metadata:
   one, else the script downloads; on a throwaway machine, a store that
   persists, else on-demand installs only. Branch `skill/dash-docset` is not
   merged until Kapeli replies about the docset terms (the user asked).
+
+## Testing a skill with other models (opencode)
+
+Found 2026-11-15 with opencode 2.3.0; re-check when it changes.
+
+- opencode discovers skills in `~/.claude/skills` and `.claude/skills`
+  (also `~/.agents/skills`, `~/.config/opencode/skills`, `.opencode/skills`),
+  so a skill linked or copied there needs no opencode config.
+- One run: `opencode run --standalone --auto --archived --format json
+  --model <provider/model> "<prompt>"`, with the provider's key variable set
+  (a placeholder where a proxy injects the key). `--format json` prints one
+  event per line; `tool_use` events carry the tool name, input and output,
+  which is enough to score whether the skill was loaded and how it was used.
+- Don't name the skill in the prompt: whether a model loads it from the
+  description alone is part of the test.
+- In `opencode run` the question tool is cancelled ("make reasonable
+  assumptions"), so "ask the user first" rules can't be tested fairly there.
+- Give each model its own project folder and its own `HOME` (not just
+  `XDG_CONFIG_HOME`): agents write to `~/.local/share`, `~/.config` and
+  `/tmp`, and may install packages.
+- A provider outside opencode's catalog is added under `providers` in
+  `opencode.json` with `"package": "@opencode/ai/providers/openai-compatible"`
+  and `settings.baseURL`. Nous Research (`inference-api.nousresearch.com/v1`)
+  also needs `"body": {"tags": ["user=<client>"]}` or it answers 400
+  "missing tags".
 
 ## Decisions (the user, 2026-11-08)
 

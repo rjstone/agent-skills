@@ -41,6 +41,12 @@ writes `~/.config/dash-docset/config.json`, or
 `%APPDATA%\dash-docset\config.json` on Windows); quote a `~` path
 (`'~/.local/share/dash-docset'`) so the config keeps the portable form.
 
+`where --set` stops (exit 2) when a config already names a different
+store, or when a project file further up would be hidden: swapping stores
+drops the installed docsets out of use. Keep the existing store unless the
+user asks to switch; then add `--replace`. Run plain `where` first to see
+the store in use (`where --discover` prints it too).
+
 Never write into a Dash, Zeal or dasht folder; docsets found there are
 read-only to the script (`update` and `remove` refuse them). `install` skips
 a docset that is already installed at that version, or already available

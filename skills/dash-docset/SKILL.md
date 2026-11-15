@@ -12,9 +12,10 @@ metadata:
 # Dash docsets
 
 Search Dash docsets offline with `python scripts/docset.py` (stdlib only;
-the path is relative to this skill's folder, so from elsewhere give its full
-path). Run its `--help` first: that is the command reference, with the usual
-command lines. A subcommand's own `--help` only adds the rarer options that
+the path is relative to this skill's folder). Stay in the project folder and
+give the script's full path; don't `cd` to the skill folder, because a
+project's `.dash-docset.json` is found from the current folder. Run its
+`--help` first: that is the command reference, with the usual command lines. A subcommand's own `--help` only adds the rarer options that
 `--help` names at its end. This file covers what help can't.
 
 Use for exact, version-pinned reference (signatures, options, return values)
@@ -46,8 +47,9 @@ carry their own licences.
 - Hits below a "fuzzy matches" line only share letters in order; treat them
   as misses. Entries that open the same section are listed once.
 - For one option or row of a long section, `show REF --grep TEXT` prints
-  every matching line; `...` marks lines without a match, so there's no
-  need to rerun without `--grep`. A `(page: Title)` line names the page a
+  every matching line, and a matching parameter name comes with its
+  description; `...` marks lines without a match, so there's no need to
+  rerun without `--grep` or to pipe the section through `grep`. A `(page: Title)` line names the page a
   section belongs to.
 - Scope: a project `"docsets"` list in `.dash-docset.json` limits searches
   to those docsets. Without one, searches cover every docset unless more

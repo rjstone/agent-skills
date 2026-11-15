@@ -60,6 +60,7 @@ class Store:
     source: str
     read_from: List[str]
     project_docsets: Optional[List[str]]
+    note: Optional[str] = None  # set when the project file came from a fallback
 
 
 def _home(env):
@@ -104,6 +105,95 @@ def find_project_file(cwd):
         d = parent
 
 
+USERS_FOLDERS = {"home", "users"}  # /home; /Users (macOS); \Users (Windows)
+
+
+def walk_up(start, env) -> Iterator[str]:
+    """start, its parent, and so on, for the fallback searches. The home
+    folder is the last one checked; a folder that holds users' homes and a
+    filesystem root never are."""
+    home = os.path.normpath(_home(env))
+    d = os.path.abspath(start)
+    while True:
+        parent = os.path.dirname(d)
+        if parent == d or d == os.path.dirname(home):
+            return
+        if os.path.dirname(parent) == parent \
+                and os.path.basename(d).lower() in USERS_FOLDERS:
+            return
+        yield d
+        if d == home:
+            return
+        d = parent
+
+
+def script_dir() -> str:
+    """The script's folder as it was invoked (symlinks not resolved)."""
+    return os.path.dirname(os.path.abspath(__file__))
+
+
+def skill_dir() -> str:
+    d = script_dir()
+    return os.path.dirname(d) if os.path.basename(d) == "scripts" else d
+
+
+def _is_within(path, folder) -> bool:
+    path, folder = os.path.realpath(path), os.path.realpath(folder)
+    try:
+        return os.path.commonpath([path, folder]) == folder
+    except ValueError:  # different drives
+        return False
+
+
+def parent_process_dirs(limit=8) -> List[str]:
+    """Working folders of this process's ancestors, nearest first (Linux
+    /proc only; elsewhere an empty list). The shell that ran `cd X && python
+    ...` is in X, but the program that started that shell usually is still
+    in the project folder."""
+    out, pid = [], os.getppid()
+    for _ in range(limit):
+        if pid <= 1:
+            break
+        try:
+            cwd = os.readlink("/proc/%d/cwd" % pid)
+            with open("/proc/%d/stat" % pid) as f:
+                pid = int(f.read().rsplit(")", 1)[1].split()[1])
+        except (OSError, ValueError, IndexError):
+            break
+        if cwd not in out:
+            out.append(cwd)
+    return out
+
+
+def fallback_bases(env) -> List[Tuple[str, str]]:
+    """[(folder, what it is)] to search upward from when the current folder
+    and its parents have no project file."""
+    bases = [(script_dir(), "the script's folder")]
+    if env.get("OLDPWD"):
+        bases.append((env["OLDPWD"], "OLDPWD, the previous folder"))
+    bases += [(d, "a parent process's folder") for d in parent_process_dirs()]
+    seen, out = set(), []
+    for d, what in bases:
+        if os.path.isabs(d) and os.path.isdir(d) and d not in seen:
+            seen.add(d)
+            out.append((d, what))
+    return out
+
+
+def locate_project_file(cwd, env) -> Tuple[Optional[str], Optional[str]]:
+    """(project file, None) from the current folder upward, else (file, what
+    it was found from) from the fallback folders upward, else (None, None)."""
+    path = find_project_file(cwd)
+    if path:
+        return path, None
+    for base, what in fallback_bases(env):
+        for d in walk_up(base, env):
+            candidate = os.path.join(d, PROJECT_FILE)
+            if os.path.isfile(candidate):
+                return candidate, what
+    return None, None
+
+
 def _try_load(path):
     """(data, None) or ({}, CLIError) so a bad config only matters if it is used."""
     try:
@@ -115,10 +205,16 @@ def _try_load(path):
 def resolve_store(cli_dir, cwd, env) -> Optional[Store]:
     """--dir > DASH_DOCSET_DIR > project file > user config > None.
 
+    The project file is looked for from the current folder upward, then from
+    the script's folder, OLDPWD and parent processes' folders upward (see
+    locate_project_file); Store.note says so when a fallback found it.
+
     A malformed config is an error only when it is the one that decides; for
     --dir/DASH_DOCSET_DIR it is ignored (read_from then comes from the project
     config, else the user config, whichever parses)."""
-    project_path = find_project_file(cwd)
+    project_path, found_from = locate_project_file(cwd, env)
+    note = found_from and "using %s (found from %s; no %s in or above the " \
+        "current folder)" % (project_path, found_from, PROJECT_FILE)
     project, project_err = _try_load(project_path) if project_path else ({}, None)
     project_base = os.path.dirname(project_path) if project_path else cwd
     docsets = project.get("docsets") if project_path else None
@@ -144,7 +240,7 @@ def resolve_store(cli_dir, cwd, env) -> Optional[Store]:
         raise project_err
     if project.get("store"):
         return Store(_abs(project["store"], project_base, env), "project file",
-                     read_from(project, project_base), docsets)
+                     read_from(project, project_base), docsets, note)
     if user_err:
         raise user_err
     if user.get("store"):
@@ -257,16 +353,28 @@ def discover(env) -> List[str]:
     return found
 
 
+def looked_in(cwd, env) -> str:
+    """One line for the 'not set' messages: where a config was looked for."""
+    folders = [cwd] + [d for d, _ in fallback_bases(env) if d != cwd]
+    return ("Looked for %s in and above: %s; and for %s. A project's file is "
+            "found from the project folder: run the script there, by its full "
+            "path." % (PROJECT_FILE, "; ".join(folders), user_config_path(env)))
+
+
 def require_store(args, cwd=None, env=None) -> Store:
     """The resolved store, or CLIError(code 3) listing discovered folders."""
     env = os.environ if env is None else env
-    store = resolve_store(getattr(args, "dir", None), cwd or os.getcwd(), env)
+    cwd = cwd or os.getcwd()
+    store = resolve_store(getattr(args, "dir", None), cwd, env)
+    if store is not None and store.note:
+        print("note: " + store.note, file=sys.stderr)
     if store is None:
         lines = ["storage location not set",
                  "Set one with: docset.py where --set PATH (--project | --user),",
                  "or --dir PATH, or DASH_DOCSET_DIR.",
                  "Agents: first read references/setup.md in the skill folder; "
-                 "the user chooses the location."]
+                 "the user chooses the location.",
+                 looked_in(cwd, env)]
         found = discover(env)
         if found:
             lines.append("Existing docset folders found (other tools; read-only "
@@ -283,18 +391,55 @@ def _write_json(path, data):
         f.write("\n")
 
 
+def _refuse_other_store(args, target, base, data, env):
+    """where --set without --replace: stop before a store that is already
+    set gets swapped for another one (its docsets would drop out of use)."""
+    new = _abs(args.set, base, env)
+    if data.get("store"):
+        old, where = _abs(data["store"], base, env), target
+    elif args.project and not os.path.isfile(target):
+        above = find_project_file(base)
+        cfg = _try_load(above)[0] if above else {}
+        if not cfg.get("store"):
+            return
+        old, where = _abs(cfg["store"], os.path.dirname(above), env), above
+    else:
+        return
+    if old == new:
+        return
+    raise CLIError(
+        "%s already sets the store to %s. Nothing was changed. To keep using "
+        "that store, just run the commands (install adds to it). To switch to "
+        "%s anyway, add --replace%s." % (
+            where, old, new,
+            "" if where == target else " (the new file would hide that one)"), 2)
+
+
 def cmd_where(args):
     env, cwd = os.environ, os.getcwd()
     if args.set:
         if args.project == args.user:
             raise CLIError("where --set needs exactly one of --project or --user", 2)
         if args.project:
-            target = os.path.join(cwd, PROJECT_FILE)
             base = cwd
+            if _is_within(cwd, skill_dir()):
+                # `cd <skill folder> && python scripts/docset.py ...`: the
+                # project is the folder the shell came from, not the skill's
+                base = env.get("OLDPWD")
+                if not base or not os.path.isdir(base) or _is_within(base, skill_dir()):
+                    raise CLIError(
+                        "where --set --project: the current folder is inside the "
+                        "skill folder, so it is not the project. Run this from "
+                        "the project folder, giving the script's full path.", 2)
+                print("note: the current folder is inside the skill folder; "
+                      "writing the project file in %s (OLDPWD)" % base, file=sys.stderr)
+            target = os.path.join(base, PROJECT_FILE)
         else:
             target = user_config_path(env)
             base = os.path.dirname(target)
         data = _load_json(target) if os.path.isfile(target) else {}
+        if not args.replace:
+            _refuse_other_store(args, target, base, data, env)
         data["store"] = args.set
         if args.read_from:
             data["read_from"] = list(args.read_from)
@@ -302,7 +447,7 @@ def cmd_where(args):
         store_dir = _abs(args.set, base, env)
         os.makedirs(store_dir, exist_ok=True)
         if (args.project and os.path.basename(store_dir) == ".docsets"
-                and os.path.dirname(store_dir) == os.path.normpath(cwd)):
+                and os.path.dirname(store_dir) == os.path.normpath(base)):
             gi = os.path.join(store_dir, ".gitignore")
             if not os.path.exists(gi):
                 with open(gi, "w", encoding="utf-8") as f:
@@ -310,6 +455,9 @@ def cmd_where(args):
         print("wrote %s (store: %s)" % (target, store_dir))
         return 0
     if args.discover:
+        current = resolve_store(args.dir, cwd, env)
+        print("store: %s (%s)" % (current.path, current.source) if current
+              else "store: not set")
         apps = viewer_apps(env)
         for app, where in apps:
             print("app: %s (%s)" % (app, where))
@@ -325,8 +473,10 @@ def cmd_where(args):
     if store is None:
         print("storage location not set (use where --set PATH --project|--user)\n"
               "Agents: first read references/setup.md in the skill folder; "
-              "the user chooses the location.")
+              "the user chooses the location.\n" + looked_in(cwd, env))
         return 3
+    if store.note:
+        print("note: " + store.note, file=sys.stderr)
     print("store: %s" % store.path)
     print("source: %s" % store.source)
     for r in store.read_from:
@@ -543,17 +693,31 @@ def rank(query: str, name: str) -> Optional[int]:
     return 3
 
 
+def pick_docset(docsets, name, error=None) -> Docset:
+    """The docset with this name; if none has exactly it, the only one that
+    differs just in letter case (-d pandas finds Pandas)."""
+    error = error or (lambda msg: CLIError(msg, 5))
+    exact = next((d for d in docsets if d.name == name), None)
+    if exact:
+        return exact
+    close = [d for d in docsets if d.name.lower() == name.lower()]
+    if len(close) == 1:
+        return close[0]
+    if close:
+        raise error("docset %r: %s differ only in letter case; give the exact "
+                    "name" % (name, " and ".join(d.name for d in close)))
+    raise error("unknown docset %r (see: docset.py list)" % name)
+
+
 def select_docsets(store, all_docsets, names, use_all) -> List[Docset]:
     """Scope: -d names > project list > all if <= 4 full-size or use_all."""
-    by_name = {d.name: d for d in all_docsets}
     wanted = names or store.project_docsets
     if wanted:
         picked = []
         for n in wanted:
-            if n not in by_name:
-                raise ScopeError("unknown docset %r (see: docset.py list)" % n)
-            if by_name[n] not in picked:
-                picked.append(by_name[n])
+            d = pick_docset(all_docsets, n, ScopeError)
+            if d not in picked:
+                picked.append(d)
         return picked
     full = [d for d in all_docsets if d.full_size]
     if use_all or len(full) <= MAX_FULL_UNSCOPED:
@@ -853,13 +1017,40 @@ def entry_location(path: str) -> Tuple[str, Optional[str]]:
     return unquote(file_part), (anchor if sep and anchor else None)
 
 
-def trim_to_anchor(blocks: List[Block], anchor: Optional[str]) -> List[str]:
-    """Lines of the section the anchor names; whole page if none or not found."""
+DEFINITION_MAX_LINES = 40  # show --grep adds a matching term's definition up to this
+
+
+def definition_ends(blocks: List[Block], offset=0) -> dict:
+    """{line index of a definition term (<dt>): index after the last line of
+    its definition}: the blocks up to the next term at its level or the end
+    of its list. Line indexes count from `offset`."""
+    starts, n = [], offset
+    for b in blocks:
+        starts.append(n)
+        n += b.text.count("\n") + 1
+    starts.append(n)
+    ends = {}
+    for i, b in enumerate(blocks):
+        if b.tag != "dt" or b.level:
+            continue
+        j = i + 1
+        while j < len(blocks) and not blocks[j].level and blocks[j].depth >= b.depth \
+                and not (blocks[j].tag == "dt" and blocks[j].depth <= b.depth):
+            j += 1
+        if j > i + 1:
+            for ln in range(starts[i], starts[i + 1]):
+                ends[ln] = starts[j]
+    return ends
+
+
+def section_lines(blocks: List[Block], anchor: Optional[str]) -> Tuple[List[str], dict]:
+    """(lines of the section the anchor names, definition_ends for them);
+    the whole page if there is no anchor or it isn't found."""
     def lines_of(bs):
         return [ln for b in bs for ln in b.text.split("\n")]
 
     if not anchor:
-        return lines_of(blocks)
+        return lines_of(blocks), definition_ends(blocks)
     want = {anchor, unquote(anchor)}
     start = None
     for i, b in enumerate(blocks):
@@ -867,8 +1058,8 @@ def trim_to_anchor(blocks: List[Block], anchor: Optional[str]) -> List[str]:
             start = i
             break
     if start is None:
-        return ["note: anchor not found (%s); showing the whole page" % anchor] \
-            + lines_of(blocks)
+        return (["note: anchor not found (%s); showing the whole page" % anchor]
+                + lines_of(blocks), definition_ends(blocks, 1))
     first = blocks[start]
     end = len(blocks)
     for j in range(start + 1, len(blocks)):
@@ -881,7 +1072,12 @@ def trim_to_anchor(blocks: List[Block], anchor: Optional[str]) -> List[str]:
         if stop:
             end = j
             break
-    return lines_of(blocks[start:end])
+    return lines_of(blocks[start:end]), definition_ends(blocks[start:end])
+
+
+def trim_to_anchor(blocks: List[Block], anchor: Optional[str]) -> List[str]:
+    """Lines of the section the anchor names; whole page if none or not found."""
+    return section_lines(blocks, anchor)[0]
 
 
 def positive_int(text):
@@ -1100,16 +1296,21 @@ def _is_table_row(line) -> bool:
     return " | " in line or line.lstrip().startswith("|")
 
 
-def grep_lines(lines, patterns) -> List[str]:
+def grep_lines(lines, patterns, def_ends=None) -> List[str]:
     """Lines containing any pattern (case-insensitive), plus the nearest
-    heading above each and, for a table row, its table's first row (the
-    header). Runs of skipped lines become '...'."""
+    heading above each, for a table row its table's first row (the header),
+    and for a definition term its definition when def_ends (see
+    definition_ends) gives one of at most DEFINITION_MAX_LINES lines. Runs of
+    skipped lines become '...'."""
     pats = [p.lower() for p in patterns]
     keep = set()
     for i, line in enumerate(lines):
         if not any(p in line.lower() for p in pats):
             continue
         keep.add(i)
+        end = (def_ends or {}).get(i)
+        if end is not None and end - i - 1 <= DEFINITION_MAX_LINES:
+            keep.update(range(i + 1, end))
         head = next((j for j in range(i - 1, -1, -1) if lines[j].startswith("#")), None)
         if head is not None:
             keep.add(head)
@@ -1147,19 +1348,25 @@ def _print_page_title(blocks, lines):
         print("(page: %s)" % title)
 
 
-def _print_lines(lines, args):
+def _print_lines(lines, args, def_ends=None):
     footer = None
     if getattr(args, "grep", None):
         total = len(lines)
         wanted = " or ".join(repr(g) for g in args.grep)
-        matched = sum(1 for l in lines if any(g.lower() in l.lower() for g in args.grep))
-        lines = grep_lines(lines, args.grep)
+        hits = [i for i, l in enumerate(lines)
+                if any(g.lower() in l.lower() for g in args.grep)]
+        matched = len(hits)
+        with_def = any((def_ends or {}).get(i, i + 1) - i - 1 in
+                       range(1, DEFINITION_MAX_LINES + 1) for i in hits)
+        lines = grep_lines(lines, args.grep, def_ends)
         if not lines:
             print("no lines match %s in this section (%d lines); drop --grep to "
                   "see it" % (wanted, total))
             return
         footer = ("(all %d lines containing %s are shown; the section has %d lines)"
                   % (matched, wanted, total))
+        if with_def:
+            footer = footer[:-1] + "; a matching term is shown with its definition)"
     if not args.full:
         lines = cap_lines(lines, args.max_lines,
                           "raise --max-lines or use --full for the whole section")
@@ -1173,15 +1380,14 @@ def cmd_show(args):
     page_ref = parse_page_ref(args.ref)
     name, entry_id = page_ref if page_ref else parse_ref(args.ref)
     store = require_store(args)
-    ds = next((d for d in find_docsets(store) if d.name == name), None)
-    if ds is None:
-        raise CLIError("unknown docset %r (see: docset.py list)" % name, 5)
+    ds = pick_docset(find_docsets(store), name)
+    name = ds.name
     if page_ref:
         file_part, sep, anchor = entry_id.partition("#")
         blocks = page_blocks(store, ds, file_part)
-        lines = trim_to_anchor(blocks, anchor if sep and anchor else None)
+        lines, def_ends = section_lines(blocks, anchor if sep and anchor else None)
         _print_page_title(blocks, lines)
-        _print_lines(lines, args)
+        _print_lines(lines, args, def_ends)
         if not args.no_notes:
             for line in general_notes(store, name):
                 print(line)
@@ -1199,9 +1405,9 @@ def cmd_show(args):
         want = _short_name(entry_name)
         anchor = next((b.ids[0] for b in blocks if b.level and b.ids
                        and _short_name(b.text.lstrip("#").strip()) == want), None)
-    lines = trim_to_anchor(blocks, anchor)
+    lines, def_ends = section_lines(blocks, anchor)
     _print_page_title(blocks, lines)
-    _print_lines(lines, args)
+    _print_lines(lines, args, def_ends)
     if not args.no_notes:
         for line in notes_for(store, name, entry_name, entry_type):
             print(line)
@@ -1391,9 +1597,7 @@ def notes_matches(docset_name, text, entries) -> List[str]:
 def cmd_notes(args):
     store = require_store(args)
     notes_path(store, args.docset)  # rejects names that are not plain names
-    ds = next((d for d in find_docsets(store) if d.name == args.docset), None)
-    if ds is None:
-        raise CLIError("unknown docset %r (see: docset.py list)" % args.docset, 5)
+    ds = pick_docset(find_docsets(store), args.docset)
     path = notes_path(store, ds.name)
     if args.path:
         os.makedirs(os.path.dirname(path), exist_ok=True)
@@ -1648,15 +1852,15 @@ def cmd_index_text(args):
     _need_fts()
     store = require_store(args)
     all_docs = find_docsets(store)
-    by_name = {d.name: d for d in all_docs}
     if not args.args:
         raise CLIError("name the docsets to index", 2)
+    picked = {}
     for n in args.args:
-        if n not in by_name:
-            raise CLIError("unknown docset %r (see: docset.py list)" % n, 5)
-    for n in dict.fromkeys(args.args):
-        count = build_fts(store, by_name[n])
-        print("indexed %d pages of %s" % (count, n))
+        d = pick_docset(all_docs, n)
+        picked[d.name] = d
+    for d in picked.values():
+        count = build_fts(store, d)
+        print("indexed %d pages of %s" % (count, d.name))
     return 0
 
 
@@ -2564,7 +2768,9 @@ Look up (usual order):
   show REF                       that entry's section (max 150 lines) plus
                                  your notes for it
   show REF --grep TEXT           only lines containing TEXT, with their
-                                 heading and table header row (repeatable)
+                                 heading, table header row, and a matching
+                                 term's definition (repeatable; plain text,
+                                 not a pattern)
   fts QUERY... [-d NAME]         words inside pages, 5 best hits with REFs;
                                  include the function name: fts read_csv skip
 
@@ -2640,6 +2846,9 @@ def build_parser():
                            help="with --set: write the user config file")
             p.add_argument("--read-from", metavar="DIR", action="append",
                            help="with --set: extra read-only docset folder (repeatable)")
+            p.add_argument("--replace", action="store_true",
+                           help="with --set: switch stores although a config "
+                                "already names another one")
             p.set_defaults(handler=cmd_where)
             continue
         if name == "list":

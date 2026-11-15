@@ -103,7 +103,8 @@ def make_docset(root, name, form="searchIndex", entries=None, pages=None):
     return path
 
 
-LEAKY_ENV = ("DASH_DOCSET_DIR", "DASHT_DOCSETS_DIR", "APPDATA", "LOCALAPPDATA")
+LEAKY_ENV = ("DASH_DOCSET_DIR", "DASHT_DOCSETS_DIR", "APPDATA", "LOCALAPPDATA",
+             "OLDPWD")
 
 
 def clean_env():
@@ -404,6 +405,213 @@ class StoreTests(unittest.TestCase):
         self.assertNotEqual(r.returncode, 0)
 
 
+class ProjectFileFallbackTests(unittest.TestCase):
+    """Where .dash-docset.json is looked for when the current folder has none
+    (agents often cd into the skill folder before running the script)."""
+
+    def setUp(self):
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        self.tmp = os.path.realpath(tmp.name)
+        self.home = os.path.join(self.tmp, "home")
+        self.proj = os.path.join(self.home, "work", "proj")
+        self.sub = os.path.join(self.proj, "a", "b")
+        self.other = os.path.join(self.tmp, "other")
+        for d in (self.sub, self.other):
+            os.makedirs(d)
+        self.env = {"HOME": self.home, "USERPROFILE": self.home,
+                    "XDG_CONFIG_HOME": os.path.join(self.home, "cfg"),
+                    "XDG_DATA_HOME": os.path.join(self.home, "data")}
+        self.user_cfg = os.path.join(self.env["XDG_CONFIG_HOME"],
+                                     "dash-docset", "config.json")
+
+    def write_json(self, path, data):
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        with open(path, "w") as f:
+            json.dump(data, f)
+
+    def project(self, folder, store="s"):
+        self.write_json(os.path.join(folder, ".dash-docset.json"), {"store": store})
+
+    def script_copy(self, skill_dir):
+        """A copy of the script at <skill_dir>/scripts/docset.py."""
+        import shutil
+        dest = os.path.join(skill_dir, "scripts", "docset.py")
+        os.makedirs(os.path.dirname(dest))
+        shutil.copy(SCRIPT, dest)
+        return dest
+
+    def run_script(self, script, *args, cwd, **env):
+        full = clean_env()
+        full.update(self.env)
+        full.update(env)
+        return subprocess.run([sys.executable, script, *args], capture_output=True,
+                              text=True, env=full, cwd=cwd)
+
+    def test_found_from_oldpwd(self):
+        self.project(self.proj)
+        r = self.run_script(SCRIPT, "where", cwd=self.other, OLDPWD=self.sub)
+        self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+        self.assertIn("store: " + os.path.join(self.proj, "s"), r.stdout)
+        self.assertIn("source: project file", r.stdout)
+        # says which file it used and why, since it isn't under the current folder
+        self.assertIn(os.path.join(self.proj, ".dash-docset.json"), r.stderr)
+        self.assertIn("OLDPWD", r.stderr)
+
+    def test_found_from_script_folder(self):
+        self.project(self.proj)
+        script = self.script_copy(os.path.join(self.proj, ".claude", "skills", "dash-docset"))
+        r = self.run_script(script, "where", cwd=self.other)
+        self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+        self.assertIn("store: " + os.path.join(self.proj, "s"), r.stdout)
+        self.assertIn("script", r.stderr)
+
+    def test_current_folder_wins_and_prints_no_note(self):
+        self.project(self.proj, "mine")
+        elsewhere = os.path.join(self.home, "elsewhere")
+        os.makedirs(elsewhere)
+        self.project(elsewhere, "theirs")
+        r = self.run_script(SCRIPT, "where", cwd=self.sub, OLDPWD=elsewhere)
+        self.assertIn("store: " + os.path.join(self.proj, "mine"), r.stdout)
+        self.assertEqual(r.stderr, "")
+
+    def test_script_folder_before_oldpwd(self):
+        self.project(self.proj, "of-script")
+        script = self.script_copy(os.path.join(self.proj, "skills", "dash-docset"))
+        elsewhere = os.path.join(self.home, "elsewhere")
+        os.makedirs(elsewhere)
+        self.project(elsewhere, "of-oldpwd")
+        r = self.run_script(script, "where", cwd=self.other, OLDPWD=elsewhere)
+        self.assertIn("store: " + os.path.join(self.proj, "of-script"), r.stdout)
+
+    def test_fallback_before_user_config(self):
+        self.project(self.proj)
+        self.write_json(self.user_cfg, {"store": os.path.join(self.tmp, "user-store")})
+        r = self.run_script(SCRIPT, "where", cwd=self.other, OLDPWD=self.proj)
+        self.assertIn("store: " + os.path.join(self.proj, "s"), r.stdout)
+
+    def test_fallback_walk_checks_home_then_stops(self):
+        # the home folder itself is checked ...
+        self.project(self.home, "in-home")
+        r = self.run_script(SCRIPT, "where", cwd=self.other, OLDPWD=self.sub)
+        self.assertIn("store: " + os.path.join(self.home, "in-home"), r.stdout)
+        # ... but nothing above it
+        os.remove(os.path.join(self.home, ".dash-docset.json"))
+        self.project(self.tmp, "above-home")
+        outside = tempfile.TemporaryDirectory()  # not under self.tmp
+        self.addCleanup(outside.cleanup)
+        r = self.run_script(SCRIPT, "where", cwd=outside.name, OLDPWD=self.sub)
+        self.assertEqual(r.returncode, 3, r.stdout + r.stderr)
+
+    def test_walk_up_stops_below_users_folders(self):
+        w = docset.walk_up
+        env = {"HOME": os.path.join(os.sep, "home", "me")}
+        self.assertEqual(list(w(os.path.join(os.sep, "home", "me", "p", "q"), env)),
+                         [os.path.join(os.sep, "home", "me", "p", "q"),
+                          os.path.join(os.sep, "home", "me", "p"),
+                          os.path.join(os.sep, "home", "me")])
+        # someone else's home: stop before /home; never the filesystem root
+        self.assertEqual(list(w(os.path.join(os.sep, "home", "you", "p"), env)),
+                         [os.path.join(os.sep, "home", "you", "p"),
+                          os.path.join(os.sep, "home", "you")])
+        self.assertEqual(list(w(os.path.join(os.sep, "Users", "you"), env)),
+                         [os.path.join(os.sep, "Users", "you")])
+        self.assertEqual(list(w(os.path.join(os.sep, "opt", "skills", "x"), env)),
+                         [os.path.join(os.sep, "opt", "skills", "x"),
+                          os.path.join(os.sep, "opt", "skills"),
+                          os.path.join(os.sep, "opt")])
+
+    @unittest.skipUnless(sys.platform.startswith("linux"), "reads /proc")
+    def test_found_from_parent_process_folder(self):
+        self.project(self.proj)
+        full = clean_env()
+        full.update(self.env)
+        # outer sh stays in the project; inner sh changes folder; no OLDPWD
+        inner = "cd %s && env -u OLDPWD %s %s where" % (self.other, sys.executable, SCRIPT)
+        r = subprocess.run(["sh", "-c", "sh -c '%s'; true" % inner],
+                           capture_output=True, text=True, env=full, cwd=self.sub)
+        self.assertIn("store: " + os.path.join(self.proj, "s"), r.stdout, r.stderr)
+        self.assertIn("parent process", r.stderr)
+
+    def test_unset_message_names_where_it_looked(self):
+        r = self.run_script(SCRIPT, "list", cwd=self.other, OLDPWD=self.sub)
+        self.assertEqual(r.returncode, 3)
+        self.assertIn(".dash-docset.json", r.stderr)
+        self.assertIn(self.other, r.stderr)
+        self.assertIn(self.sub, r.stderr)
+        self.assertIn(self.user_cfg, r.stderr)
+        r = self.run_script(SCRIPT, "where", cwd=self.other, OLDPWD=self.sub)
+        self.assertEqual(r.returncode, 3)
+        self.assertIn(self.other, r.stdout)
+
+    def test_set_project_from_skill_folder_writes_to_previous_folder(self):
+        skill = os.path.join(self.tmp, "skills", "dash-docset")
+        script = self.script_copy(skill)
+        r = self.run_script(script, "where", "--set", ".docsets", "--project",
+                            cwd=skill, OLDPWD=self.proj)
+        self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+        self.assertTrue(os.path.isfile(os.path.join(self.proj, ".dash-docset.json")))
+        self.assertTrue(os.path.isdir(os.path.join(self.proj, ".docsets")))
+        self.assertFalse(os.path.exists(os.path.join(skill, ".dash-docset.json")))
+        self.assertFalse(os.path.exists(os.path.join(skill, ".docsets")))
+        self.assertIn(self.proj, r.stdout + r.stderr)
+
+    def test_set_project_from_skill_folder_without_a_project_folder_fails(self):
+        skill = os.path.join(self.tmp, "skills", "dash-docset")
+        script = self.script_copy(skill)
+        r = self.run_script(script, "where", "--set", ".docsets", "--project",
+                            cwd=os.path.join(skill, "scripts"), OLDPWD=skill)
+        self.assertEqual(r.returncode, 2, r.stdout + r.stderr)
+        self.assertIn("skill folder", r.stderr)
+        self.assertFalse(os.path.exists(os.path.join(skill, ".dash-docset.json")))
+        self.assertFalse(os.path.exists(os.path.join(skill, "scripts", ".dash-docset.json")))
+
+    def test_set_refuses_to_replace_another_store(self):
+        self.project(self.proj, "old")
+        cfg = os.path.join(self.proj, ".dash-docset.json")
+        r = self.run_script(SCRIPT, "where", "--set", "new", "--project", cwd=self.proj)
+        self.assertEqual(r.returncode, 2, r.stdout + r.stderr)
+        self.assertIn(os.path.join(self.proj, "old"), r.stderr)
+        self.assertIn("--replace", r.stderr)
+        with open(cfg) as f:
+            self.assertEqual(json.load(f), {"store": "old"})
+        self.assertFalse(os.path.exists(os.path.join(self.proj, "new")))
+        # the same store again is fine (e.g. to add --read-from)
+        r = self.run_script(SCRIPT, "where", "--set", "old", "--project",
+                            "--read-from", "../shared", cwd=self.proj)
+        self.assertEqual(r.returncode, 0, r.stderr)
+        r = self.run_script(SCRIPT, "where", "--set", "new", "--project", "--replace",
+                            cwd=self.proj)
+        self.assertEqual(r.returncode, 0, r.stderr)
+        with open(cfg) as f:
+            self.assertEqual(json.load(f)["store"], "new")
+
+    def test_set_project_refuses_to_shadow_a_project_file_above(self):
+        self.project(self.proj, "old")
+        r = self.run_script(SCRIPT, "where", "--set", "new", "--project", cwd=self.sub)
+        self.assertEqual(r.returncode, 2, r.stdout + r.stderr)
+        self.assertIn(os.path.join(self.proj, ".dash-docset.json"), r.stderr)
+        self.assertFalse(os.path.exists(os.path.join(self.sub, ".dash-docset.json")))
+
+    def test_set_user_refuses_to_replace_another_store(self):
+        self.write_json(self.user_cfg, {"store": os.path.join(self.tmp, "old")})
+        r = self.run_script(SCRIPT, "where", "--set", os.path.join(self.tmp, "new"),
+                            "--user", cwd=self.other)
+        self.assertEqual(r.returncode, 2, r.stdout + r.stderr)
+        self.assertIn("--replace", r.stderr)
+        r = self.run_script(SCRIPT, "where", "--set", os.path.join(self.tmp, "new"),
+                            "--user", "--replace", cwd=self.other)
+        self.assertEqual(r.returncode, 0, r.stderr)
+
+    def test_discover_prints_the_store_in_use(self):
+        r = self.run_script(SCRIPT, "where", "--discover", cwd=self.other)
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertIn("store: not set", r.stdout)
+        self.project(self.proj)
+        r = self.run_script(SCRIPT, "where", "--discover", cwd=self.sub)
+        self.assertIn("store: %s (project file)" % os.path.join(self.proj, "s"), r.stdout)
+
+
 def tmp_dir(case):
     t = tempfile.TemporaryDirectory()
     case.addCleanup(t.cleanup)
@@ -578,6 +786,26 @@ class SearchTests(unittest.TestCase):
                 json.dump(project, f)
         return run_cli("--dir", self.store_dir, *args, env={"HOME": self.tmp},
                        cwd=self.tmp)
+
+    def test_docset_name_is_case_insensitive(self):
+        self.add("Alpha", [("date_sub", "Function", "date.html#sub")])
+        r = self.cli("search", "date_sub", "-d", "alpha")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertIn("Alpha:1", r.stdout)
+        r = self.cli("search", "date_sub", project={"docsets": ["ALPHA"]})
+        self.assertIn("Alpha:1", r.stdout)
+
+    @unittest.skipIf(sys.platform in ("win32", "darwin"),
+                     "needs a case-sensitive filesystem")
+    def test_docset_name_exact_case_wins_when_two_differ_only_in_case(self):
+        self.add("Alpha", [("date_sub", "Function", "date.html#sub")])
+        self.add("ALPHA", [("other_fn", "Function", "o.html#x")])
+        r = self.cli("search", "date_sub", "-d", "Alpha")
+        self.assertIn("Alpha:1", r.stdout)
+        r = self.cli("search", "date_sub", "-d", "alpha")
+        self.assertNotEqual(r.returncode, 0)
+        self.assertIn("Alpha", r.stderr)
+        self.assertIn("ALPHA", r.stderr)
 
     def test_anchored_signature_beats_bare_page_entry(self):
         self.add("Alpha", [("date_sub", "Function", "date.html"),
@@ -970,6 +1198,56 @@ class ShowGrepTests(unittest.TestCase):
         self.assertEqual(r.returncode, 0)
         self.assertTrue(r.stdout.startswith("no lines match"), r.stdout)
         self.assertIn("drop --grep", r.stdout)
+
+    DL_PAGE = (
+        "<html><body><h2 id='f'>read_csv</h2>"
+        "<dl><dt id='sig'>read_csv(path, on_bad_lines='error', low_memory=True)</dt>"
+        "<dd><p>Read a file.</p><dl>"
+        "<dt><strong>on_bad_lines</strong> {'error', 'warn'}, default 'error'</dt>"
+        "<dd><p>What to do with a bad line. Allowed values are:</p>"
+        "<ul><li>'error', raise.</li><li>'warn', warn and skip.</li></ul>"
+        "<p>Changed in version 2.2.</p></dd>"
+        "<dt><strong>low_memory</strong> bool, default True</dt>"
+        "<dd><p>Process the file in chunks.</p></dd>"
+        "<dt><strong>long_one</strong> str</dt><dd>"
+        + "".join("<p>long line %d</p>" % i for i in range(60))
+        + "</dd></dl></dd></dl></body></html>")
+
+    def dl_cli(self, *args):
+        make_docset(self.store, "Pan", entries=[("read_csv", "Function", "d.html#f")],
+                    pages={"d.html": self.DL_PAGE})
+        return self.cli("show", "Pan:1", "--no-notes", *args)
+
+    def test_grep_on_a_definition_term_shows_its_definition(self):
+        r = self.dl_cli("--grep", "on_bad_lines")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        for kept in ("What to do with a bad line. Allowed values are:",
+                     "- 'error', raise.", "- 'warn', warn and skip.",
+                     "Changed in version 2.2."):
+            self.assertIn(kept, r.stdout)
+        # stops at the next term; the signature's own "definition" is the
+        # whole section, too long to add
+        self.assertNotIn("Process the file in chunks", r.stdout)
+        self.assertNotIn("Read a file.", r.stdout)
+        self.assertNotIn("long line", r.stdout)
+        self.assertIn("read_csv(path, on_bad_lines='error'", r.stdout)  # still a match
+        self.assertIn("(all 2 lines containing 'on_bad_lines' are shown", r.stdout)
+        self.assertIn("definition", r.stdout.splitlines()[-1])
+
+    def test_grep_long_definition_is_not_added(self):
+        r = self.dl_cli("--grep", "long_one")
+        self.assertIn("long_one", r.stdout)
+        self.assertNotIn("long line", r.stdout)
+
+    def test_grep_match_inside_a_definition_adds_nothing(self):
+        r = self.dl_cli("--grep", "warn and skip")
+        self.assertIn("- 'warn', warn and skip.", r.stdout)
+        self.assertNotIn("Changed in version", r.stdout)
+
+    def test_docset_name_in_ref_is_case_insensitive(self):
+        r = self.cli("show", "duck:1", "--grep", "skip", "--no-notes")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertIn("BIGINT", r.stdout)
 
     def test_grep_on_page_ref(self):
         r = self.cli("show", "Duck:page:p.html", "--grep", "skip", "--no-notes")
