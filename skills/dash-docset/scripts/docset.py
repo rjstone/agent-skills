@@ -581,6 +581,28 @@ def _join_query(args):
     args.query = " ".join(q).strip() if isinstance(q, list) else (q or "")
 
 
+def _fold_bare_entries(hits, no_anchor, page_of):
+    """Drop a whole-page entry when an anchored entry with the same short name
+    on the same page is also a hit: `show` opens the same section for both
+    (it starts a bare entry at the heading named like it). Returns the kept
+    hits and {(docset, id): [folded REFs]}; nothing is lost, the REF moves."""
+    twin = {}  # (docset, page, short name) -> first anchored hit
+    for h in hits:
+        key = (h[3], h[4])
+        if key in page_of and key not in no_anchor:
+            twin.setdefault((h[3], page_of[key], _short_name(h[2])), key)
+    kept, also = [], {}
+    for h in hits:
+        key = (h[3], h[4])
+        target = (twin.get((h[3], page_of[key], _short_name(h[2])))
+                  if key in no_anchor else None)
+        if target is not None:
+            also.setdefault(target, []).append("%s:%d" % key)
+        else:
+            kept.append(h)
+    return kept, also
+
+
 def cmd_search(args):
     _join_query(args)
     if not args.query:
@@ -594,6 +616,7 @@ def cmd_search(args):
     want_type = args.type.lower() if args.type else None
     hits = []
     no_anchor = set()  # (docset, id) of entries that point at a whole page
+    page_of = {}  # (docset, id) -> page file
     q_lower = args.query.lower()
     for ds in docs:
         try:
@@ -603,8 +626,11 @@ def cmd_search(args):
                 r = rank(args.query, name)
                 if r and _short_name(name) == q_lower:
                     r = 0  # 'f(a, b)' for query 'f' is an exact match
-                if "#" not in path and not re.match(r"https?://", path, re.I):
-                    no_anchor.add((ds.name, i))
+                if not re.match(r"https?://", path, re.I):
+                    file_part, anchor = entry_location(path)
+                    page_of[(ds.name, i)] = file_part
+                    if anchor is None:
+                        no_anchor.add((ds.name, i))
                 if (r is None or r == 3) and len(words) > 1 \
                         and all(w in name.lower() for w in words):
                     r = 2
@@ -614,10 +640,16 @@ def cmd_search(args):
             _warn("skipping %s: %s" % (ds.name, e))
     # within a rank, entries with an anchor (a section) before whole pages
     hits.sort(key=lambda h: (h[0], (h[3], h[4]) in no_anchor) + h[1:5])
+    hits, also = _fold_bare_entries(hits, no_anchor, page_of)
     hint = "raise --max-lines or narrow the query, -d or --type"
     if args.json:
-        items = [{"ref": "%s:%d" % (d, i), "docset": d, "type": t, "name": n,
-                  "rank": r} for r, _l, n, d, i, t in hits[:args.max_lines]]
+        items = []
+        for r, _l, n, d, i, t in hits[:args.max_lines]:
+            item = {"ref": "%s:%d" % (d, i), "docset": d, "type": t, "name": n,
+                    "rank": r}
+            if (d, i) in also:
+                item["also"] = also[(d, i)]
+            items.append(item)
         print(json.dumps(items, indent=2))
         return 0
     real = sum(1 for h in hits if h[0] < 3)
@@ -632,7 +664,10 @@ def cmd_search(args):
             lines.append("no exact, prefix or substring matches; fuzzy matches "
                          "(letters in order, often unrelated):" if k == 0 else
                          "--- fuzzy matches (letters in order, often unrelated) ---")
-        lines.append("%s:%d  %s  %s  (%s)" % (d, i, t, n, d))
+        line = "%s:%d  %s  %s" % (d, i, t, n)
+        if (d, i) in also:
+            line += "  (also %s)" % ", ".join(also[(d, i)])
+        lines.append(line)
     if cut:
         lines.append("... %d fuzzy matches hidden (letters in order only, often "
                      "unrelated)" % cut)
@@ -969,7 +1004,48 @@ def read_page_blocks(ds, file_part) -> List[Block]:
     return html_to_text(read_page_bytes(ds, file_part).decode("utf-8", errors="replace"))
 
 
+def _is_table_row(line) -> bool:
+    """Table rows render as cells joined by ' | '."""
+    return " | " in line or line.lstrip().startswith("|")
+
+
+def grep_lines(lines, patterns) -> List[str]:
+    """Lines containing any pattern (case-insensitive), plus the nearest
+    heading above each and, for a table row, its table's first row (the
+    header). Runs of skipped lines become '...'."""
+    pats = [p.lower() for p in patterns]
+    keep = set()
+    for i, line in enumerate(lines):
+        if not any(p in line.lower() for p in pats):
+            continue
+        keep.add(i)
+        head = next((j for j in range(i - 1, -1, -1) if lines[j].startswith("#")), None)
+        if head is not None:
+            keep.add(head)
+        if _is_table_row(line):
+            j = i
+            while j > 0 and _is_table_row(lines[j - 1]):
+                j -= 1
+            keep.add(j)
+    out, prev = [], -1
+    for i in sorted(keep):
+        if i != prev + 1:
+            out.append("...")
+        out.append(lines[i])
+        prev = i
+    if keep and prev != len(lines) - 1:
+        out.append("...")
+    return out
+
+
 def _print_lines(lines, args):
+    if getattr(args, "grep", None):
+        total = len(lines)
+        lines = grep_lines(lines, args.grep)
+        if not lines:
+            print("no lines match %s in this section (%d lines); drop --grep to "
+                  "see it" % (" or ".join(repr(g) for g in args.grep), total))
+            return
     if not args.full:
         lines = cap_lines(lines, args.max_lines,
                           "raise --max-lines or use --full for the whole section")
@@ -1427,6 +1503,9 @@ def cmd_index_text(args):
     return 0
 
 
+FTS_MAX_LINES = 11  # 5 hits (two lines each) plus the "more hits cut" line
+
+
 def cmd_fts(args):
     _join_query(args)
     if not args.query.strip():
@@ -1450,7 +1529,8 @@ def cmd_fts(args):
         print(h["ref"])
         print("    " + h["snippet"])
     if len(hits) > room:
-        print("... %s more hits cut; raise --max-lines or narrow the query or -d"
+        print("... %s more hits cut; add words (e.g. the function name), -d, or "
+              "raise --max-lines"
               % ("%d" % (len(hits) - room) if len(hits) < limit else "%d or" % (len(hits) - room)))
     return 0
 
@@ -2370,6 +2450,9 @@ def build_parser():
                            help="print at most N lines (default 150)")
             p.add_argument("--no-notes", action="store_true",
                            help="do not append notes")
+            p.add_argument("--grep", metavar="TEXT", action="append",
+                           help="print only lines containing TEXT (case-insensitive; "
+                           "repeatable), with their heading and table header row")
             p.set_defaults(handler=cmd_show)
             continue
         if name == "search":
@@ -2394,8 +2477,9 @@ def build_parser():
             p.add_argument("--all", action="store_true",
                            help="search every docset (needed when more than 4 "
                            "are full-size and no project list is set)")
-            p.add_argument("--max-lines", type=positive_int, default=40, metavar="N",
-                           help="print at most N lines (default 40)")
+            p.add_argument("--max-lines", type=positive_int, default=FTS_MAX_LINES,
+                           metavar="N", help="print at most N lines (default %d: "
+                           "%d hits)" % (FTS_MAX_LINES, (FTS_MAX_LINES - 1) // 2))
             p.add_argument("--json", action="store_true",
                            help="print a JSON list of {ref, docset, path, snippet}")
             p.set_defaults(handler=cmd_fts)

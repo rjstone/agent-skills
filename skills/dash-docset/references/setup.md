@@ -1,8 +1,9 @@
 # First run: pick a setup
 
 Read this when `python scripts/docset.py where` exits 3 (no location set).
-Run `where --discover`: it lists installed Dash or Zeal apps and existing
-docset folders. Then decide where you are running:
+On a cloud sandbox, CI or other throwaway machine, go straight to case 2.
+Otherwise run `where --discover`: it lists installed Dash or Zeal apps and
+existing docset folders. Then decide where you are running:
 
 1. **The user's own computer (a desktop):**
    - A. Dash or Zeal installed: use their docsets. Add the folder with

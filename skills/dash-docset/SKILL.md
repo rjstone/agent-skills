@@ -42,16 +42,20 @@ carry their own licences.
    words need no quotes; a name must contain all of them (`search walking
    speed` finds `hero:get_walking_speed()`). Hits below the "fuzzy matches"
    line only share letters in order; treat them as misses (when real hits
-   exist, fuzzy ones are hidden). No hits prints "no matches" and exits 0;
-   exit 5 means a named docset or REF doesn't exist.
+   exist, fuzzy ones are hidden). `(also REF)` after a hit names other
+   entries that open the same section. No hits prints "no matches" and
+   exits 0; exit 5 means a named docset or REF doesn't exist.
 2. `show REF` prints that entry's trimmed section plus any notes, capped at
-   150 lines (`--full` lifts the cap). Use `--max-lines` on `search`, `fts`
-   and `show` rather than dumping everything.
+   150 lines (`--full` lifts the cap). For one option or table row of a long
+   section, add `--grep TEXT`: only matching lines, with their heading and
+   table header row.
 3. `fts QUERY` searches the text inside pages when entry names don't match.
    Function options, parameters and settings are often only in page text
    (e.g. `read_csv`'s `skip` is a row in a table), so look for them with
-   `fts`. Each hit prints a REF for the section around the match: an entry
-   REF (`<Name>:<id>`) when that section is an entry's, else
+   `fts`, with the function name too (`fts read_csv skip`, not `fts skip`):
+   it prints 5 hits, best first. Each hit prints a REF for the section
+   around the match: an entry REF (`<Name>:<id>`) when that section is an
+   entry's, else
    `<Name>:page:<path>#<anchor>` (without `#<anchor>`, `show` prints the
    whole page). The first `fts` on a docset builds its index (seconds for
    large docsets).

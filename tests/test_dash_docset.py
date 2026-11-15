@@ -547,7 +547,27 @@ class SearchTests(unittest.TestCase):
                            ("date_subx", "Function", "date.html#x")])
         out = self.cli("search", "date_sub", "-d", "Alpha").stdout.splitlines()
         names = [l.split("  ")[2] for l in out]
-        self.assertEqual(names, ["date_sub(part, a, b)", "date_sub", "date_subx"])
+        # the bare page entry opens the same section: folded into the anchored one
+        self.assertEqual(names, ["date_sub(part, a, b)", "date_subx"])
+        self.assertTrue(out[0].endswith("  (also Alpha:1)"), out[0])
+
+    def test_bare_entry_kept_when_no_anchored_twin_on_its_page(self):
+        self.add("Alpha", [("date_sub", "Function", "other.html"),
+                           ("date_sub(part, a, b)", "Function", "date.html#sub")])
+        out = self.cli("search", "date_sub", "-d", "Alpha").stdout.splitlines()
+        self.assertEqual([l.split("  ")[2] for l in out],
+                         ["date_sub(part, a, b)", "date_sub"])
+        self.assertNotIn("also", out[0])
+        r = self.cli("search", "date_sub", "-d", "Alpha", "--json")
+        self.assertEqual(len(json.loads(r.stdout)), 2)
+
+    def test_folded_entries_in_json(self):
+        self.add("Alpha", [("date_sub", "Function", "date.html"),
+                           ("date_sub(part, a, b)", "Function", "date.html#sub")])
+        items = json.loads(self.cli("search", "date_sub", "-d", "Alpha",
+                                    "--json").stdout)
+        self.assertEqual(len(items), 1)
+        self.assertEqual(items[0]["also"], ["Alpha:1"])
 
     def test_multi_word_queries(self):
         self.add("Alpha", [("hero:get_walking_speed()", "Method", "a.html"),
@@ -595,7 +615,7 @@ class SearchTests(unittest.TestCase):
         self.assertTrue(r.stdout.startswith("no matches for 'qqq' (entry names only"))
         first = out[0].split("  ")
         self.assertEqual(first[1], "Guide")
-        self.assertEqual(first[3], "(Beta)")
+        self.assertEqual(len(first), 3)  # no repeated "(Docset)" suffix
         self.assertRegex(first[0], r"^Beta:\d+$")
         self.assertTrue(out[1].startswith("Alpha:2  "))
 
@@ -624,16 +644,16 @@ class SearchTests(unittest.TestCase):
         self.add("Beta", [("thing", "Function", "b.html")])
         r = self.cli("search", "thing", "-d", "Beta", project={"docsets": ["Alpha"]})
         self.assertEqual(r.returncode, 0, r.stderr)
-        self.assertIn("(Beta)", r.stdout)
-        self.assertNotIn("(Alpha)", r.stdout)
+        self.assertIn("Beta:", r.stdout)
+        self.assertNotIn("Alpha:", r.stdout)
 
     def test_scope_project_list(self):
         for n in "ABCDEF":
             self.add("Doc" + n, [("thing", "Function", "a.html")])
         r = self.cli("search", "thing", project={"docsets": ["DocB", "DocC"]})
         self.assertEqual(r.returncode, 0, r.stderr)
-        self.assertEqual(sorted(l.split("  ")[3] for l in r.stdout.splitlines()),
-                         ["(DocB)", "(DocC)"])
+        self.assertEqual(sorted(l.split(":")[0] for l in r.stdout.splitlines()),
+                         ["DocB", "DocC"])
 
     def test_scope_error_over_four_full(self):
         for n in "ABCDE":
@@ -691,7 +711,7 @@ class SearchTests(unittest.TestCase):
         con.close()
         r = self.cli("search", "thing")
         self.assertEqual(r.returncode, 0, r.stderr)
-        self.assertIn("(Good)", r.stdout)
+        self.assertIn("Good:", r.stdout)
         self.assertIn("Bad", r.stderr)
 
 
@@ -860,6 +880,52 @@ class ShowTests(unittest.TestCase):
         self.assertEqual(texts[3], "```\n  x = 1\n  y = 2\n```")
         self.assertNotIn("skip", "".join(texts))
         self.assertNotIn("bye", "".join(texts))
+
+
+class ShowGrepTests(unittest.TestCase):
+    PAGE = ("<html><body><h2 id='params'>Parameters</h2><p>Options for read_csv.</p>"
+            "<table><tr><th>Name</th><th>Type</th><th>Default</th></tr>"
+            "<tr><td>header</td><td>BOOL</td><td>false</td></tr>"
+            "<tr><td>sep</td><td>VARCHAR</td><td>,</td></tr>"
+            "<tr><td>skip</td><td>BIGINT</td><td>0</td></tr>"
+            "<tr><td>quote</td><td>VARCHAR</td><td>\"</td></tr></table>"
+            "<p>Use SKIP to ignore leading lines.</p></body></html>")
+
+    def setUp(self):
+        self.tmp = tmp_dir(self)
+        self.store = os.path.join(self.tmp, "store")
+        make_docset(self.store, "Duck", entries=[("Parameters", "Section", "p.html#params")],
+                    pages={"p.html": self.PAGE})
+
+    def cli(self, *args):
+        return run_cli("--dir", self.store, *args, env={"HOME": self.tmp}, cwd=self.tmp)
+
+    def test_grep_keeps_heading_table_header_and_matches(self):
+        r = self.cli("show", "Duck:1", "--grep", "skip", "--no-notes")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        lines = r.stdout.splitlines()
+        self.assertTrue(lines[0].startswith("## Parameters"), lines)
+        row = next(k for k, l in enumerate(lines) if "skip" in l and "BIGINT" in l)
+        self.assertIn("Name", lines[row - 2])  # the table's header row, then "..."
+        self.assertEqual(lines[row - 1], "...")
+        self.assertIn("Use SKIP to ignore leading lines.", r.stdout)  # case-insensitive
+        for gone in ("header", "VARCHAR", "Options for read_csv"):
+            self.assertNotIn(gone, r.stdout)
+        self.assertIn("...", lines)  # skipped runs are marked
+
+    def test_grep_repeatable_and_no_match(self):
+        r = self.cli("show", "Duck:1", "--grep", "skip", "--grep", "quote", "--no-notes")
+        self.assertIn("BIGINT", r.stdout)
+        self.assertIn("quote", r.stdout)
+        r = self.cli("show", "Duck:1", "--grep", "zzz", "--no-notes")
+        self.assertEqual(r.returncode, 0)
+        self.assertTrue(r.stdout.startswith("no lines match"), r.stdout)
+        self.assertIn("drop --grep", r.stdout)
+
+    def test_grep_on_page_ref(self):
+        r = self.cli("show", "Duck:page:p.html", "--grep", "skip", "--no-notes")
+        self.assertIn("BIGINT", r.stdout)
+        self.assertNotIn("VARCHAR", r.stdout)
 
 
 class AnchorlessShowTests(unittest.TestCase):
@@ -1110,6 +1176,16 @@ class FtsTests(unittest.TestCase):
         self.assertTrue(lines[1].startswith("    "))
         self.assertTrue(lines[2].startswith("... "))
         self.assertIn("more hits cut", lines[2])
+
+    def test_fts_default_is_five_hits_with_hint(self):
+        pages = {"p%02d.html" % i: "<p>needle %s</p>" % ("x " * i) for i in range(8)}
+        make_docset(self.store_dir, "Many", pages=pages,
+                    entries=[("x%d" % i, "Guide", p) for i, p in enumerate(pages)])
+        r = self.cli("fts", "needle", "-d", "Many")
+        lines = r.stdout.splitlines()
+        self.assertEqual(sum(1 for l in lines if l.startswith("Many:")), 5, lines)
+        self.assertIn("more hits cut", lines[-1])
+        self.assertIn("add words", lines[-1])
 
     def test_fts_first_build_says_so(self):
         r = self.cli("fts", "gather", "-d", "Py")
