@@ -314,6 +314,11 @@ came while revising the note (Morello) or checking its wording (Python), not
 to see whether it matched. Haiku called the `... N fuzzy matches hidden`
 line noise on exact-name searches (Python: ~1,450 hidden).
 
+Semantic search (embeddings) is dropped from `TODO.md` (the user,
+2026-11-15): after these changes, irrelevant hits are a small share of lookup
+output, and agents already rephrase queries for `fts`, so an embedding index
+(a dependency or a network service) wouldn't pay for itself.
+
 `SKILL.md` + the three references read on a first run: ~9.9k, about the old
 single `SKILL.md`; later sessions read only `SKILL.md` (~3.5k).
 
