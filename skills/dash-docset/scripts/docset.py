@@ -665,7 +665,11 @@ def cmd_search(args):
                          "(letters in order, often unrelated):" if k == 0 else
                          "--- fuzzy matches (letters in order, often unrelated) ---")
         lines.append("%s:%d  %s  %s" % (d, i, t, n))
-    if cut:
+    # silent when a hit holds the query as whole words (asyncio.gather for
+    # "gather"): nobody needs the fuzzy ones then
+    whole = re.compile(r"(?<![A-Za-z0-9_])%s(?![A-Za-z0-9_])" % r"[\W_]+".join(
+        re.escape(w) for w in words), re.I)
+    if cut and not any(h[0] < 3 and whole.search(h[2]) for h in hits):
         lines.append("... %d fuzzy matches hidden (letters in order only, often "
                      "unrelated)" % cut)
     if not hits:
@@ -1724,7 +1728,9 @@ RETRY_AFTER_FAILURE = 86400
 
 SOURCE_NAMES = ("kapeli", "user", "cheat")
 CACHE_MAX_AGE = 7 * 86400
-USER_AGENT = f"dash-docset/{VERSION}"
+# Unambiguous on purpose: a server can filter or rate-limit this script by it
+# (the user, 2026-11-15).
+USER_AGENT = f"docset-agent-skill-RJS/{VERSION}"
 NET_TIMEOUT = 60
 UNKNOWN_VERSION = "unknown"
 

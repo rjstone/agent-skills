@@ -167,7 +167,8 @@ class SkeletonTests(unittest.TestCase):
     def test_version(self):
         import re
         self.assertRegex(docset.VERSION, r"^\d+\.\d+\.\d+$")
-        self.assertEqual(docset.USER_AGENT, f"dash-docset/{docset.VERSION}")
+        # unambiguous, so a server can filter or rate-limit it (the user)
+        self.assertEqual(docset.USER_AGENT, f"docset-agent-skill-RJS/{docset.VERSION}")
         r = run_cli("--version")
         self.assertEqual(r.returncode, 0, r.stderr)
         self.assertIn(docset.VERSION, r.stdout)
@@ -629,8 +630,16 @@ class SearchTests(unittest.TestCase):
         r = self.cli("search", "timer", "-d", "Alpha")
         out = r.stdout.splitlines()
         self.assertEqual(sum(1 for l in out if "t_i_m_e_r" in l), docset.FUZZY_SHOWN)
-        self.assertEqual(out[-1], "... 9 fuzzy matches hidden (letters in order only, "
-                                  "often unrelated)")
+        # an exact match exists: the hidden fuzzy hits aren't mentioned
+        self.assertEqual(out, ["Alpha:1  Function  timer"])
+        self.add("Beta", [("timers", "Function", "a.html")] + entries[1:])
+        r = self.cli("search", "timer", "-d", "Beta")  # no whole-word hit
+        self.assertEqual(r.stdout.splitlines()[-1], "... 9 fuzzy matches hidden "
+                         "(letters in order only, often unrelated)")
+        self.add("Gamma", [("asyncio.gather", "Function", "a.html"),
+                           ("g_a_t_h_e_r", "Function", "a.html")])
+        r = self.cli("search", "gather", "-d", "Gamma")  # whole word in a dotted name
+        self.assertEqual(r.stdout.splitlines(), ["Gamma:1  Function  asyncio.gather"])
         r = self.cli("search", "tmr", "-d", "Alpha")  # only fuzzy: none cut
         self.assertEqual(sum(1 for l in r.stdout.splitlines() if "t_i_m_e_r" in l), 9)
 
@@ -642,9 +651,8 @@ class SearchTests(unittest.TestCase):
         r = self.cli("search", "sleep")
         self.assertEqual(r.returncode, 0, r.stderr)
         out = r.stdout.splitlines()
-        # fuzzy hits are hidden when real hits exist
-        self.assertEqual(out[4], "... 1 fuzzy matches hidden (letters in order only, "
-                                 "often unrelated)")
+        # fuzzy hits are hidden when real hits exist, silently with an exact one
+        self.assertEqual(len(out), 4, out)
         names = [l.split("  ")[2] for l in out[:4]]
         self.assertEqual(names, ["Sleep", "sleep", "sleep_long", "xsleepx"])
         r = self.cli("search", "slp", "-d", "Alpha")
