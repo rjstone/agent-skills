@@ -196,6 +196,12 @@ metadata:
   a `TOP_HELP` line; `SKILL.md` and `references/` don't repeat syntax, and
   a test fails on any flag they name that the script lacks (the user,
   2026-11-15).
+  Pages are never trimmed by guessing what looks like navigation. The one
+  exception is an exact repeat: trailing blocks that most pages end with
+  identically (a footer) are left out of `show` and the fts index on every
+  page but the index page (else the first entry's page), so fts still finds
+  them once (the user, 2026-11-15). Bump `FTS_FORMAT` when what the index
+  stores changes.
   Source lists, in order: GitHub API and Zeal's manifest (raw GitHub) for
   official docsets, Kapeli's `cheat.json` for cheat sheets, Kapeli's
   `index.json` for user-contributed; Zeal's catalog at api.zealdocs.org
