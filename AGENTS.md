@@ -195,6 +195,10 @@ metadata:
 - **Git:** repo-level changes (notes, tests, CI, tooling) go straight to
   `main`; use a branch only for large ones. Skills follow "Adding a skill" and
   "Updating a skill" below.
+- **Experiments** on a skill go on `exps/<skill-name>/<topic>`, branched from
+  the skill's branch (not `skill/<name>/...`: git can't nest a branch under
+  an existing branch name). CI doesn't run on `exps/**`; run the tests
+  locally (the user, 2026-11-15).
 - **Versioning:** no releases yet; skills.sh installs from the default branch.
   Add versioning with the first plugin format that has a version field.
 
