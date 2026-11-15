@@ -270,6 +270,13 @@ at all; help output 2,151 (one call) against 1.5k-2.8k before. `SKILL.md`
 lines"`, 235). Haiku displayed and matched the `## count_if` note heading
 without confusion this time.
 
+Run 6: Haiku at **low** effort on `a3315ed`, same task. All answers
+correct, the same four references at their triggers, 19 calls. Output 7,090
+(lookup 3,616, help 2,675: it also read `where --help`), about 10% more than
+run 5 at default effort. One confirmation call (`--grep Number`), which it
+called wasted itself. Unlike the Morello low-effort trial (which explored
+more), low effort barely changed the path here.
+
 `SKILL.md` + the three references read on a first run: ~9.9k, about the old
 single `SKILL.md`; later sessions read only `SKILL.md` (~3.5k).
 
