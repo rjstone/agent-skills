@@ -277,6 +277,25 @@ run 5 at default effort. One confirmation call (`--grep Number`), which it
 called wasted itself. Unlike the Morello low-effort trial (which explored
 more), low effort barely changed the path here.
 
+Runs 7-9: Haiku at default effort on `d312b10` with the other docsets, three
+questions plus a note each, rewritten from the earlier trials (Git: `git reset
+--keep <commit>`, `Git:68`, instead of the unanswerable `reset --soft`). All
+answers correct; the same three references opened at their triggers.
+
+| | Python 3.15 + Git cheat sheet | Solarus 1.6.0 | Morello 2022.01 |
+|---|---|---|---|
+| Calls | 23 | 23 | 16 |
+| Lookup output | 9,598 (169 lines) | 9,575 (101 lines) | 10,066 (145 lines) |
+| Earlier trials (lines) | 130-230 | 160-190 | ~130 |
+| Biggest call | `show Python:7368` (gather, 52 lines), 3,116 | `show solarus:803` (timer.start), 3,177 | `show arm64morello:2131`, 2,293 |
+
+Not worse than before, but about 3x DuckDB's 3.3k: these answers sit in long
+sections that agents opened whole before knowing which lines mattered.
+Repeats seen in every run, DuckDB included: after writing a note, a `show`
+of the entry to confirm the note appears (Morello twice, 3.6k; Python three
+variants). Morello's identical page footer (instruction-set links,
+proprietary notice, copyright; ~400 chars) is printed by every `show`.
+
 `SKILL.md` + the three references read on a first run: ~9.9k, about the old
 single `SKILL.md`; later sessions read only `SKILL.md` (~3.5k).
 
