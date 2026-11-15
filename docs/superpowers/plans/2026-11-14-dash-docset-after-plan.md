@@ -297,6 +297,22 @@ of the entry to confirm the note appears (Morello twice, 3.6k; Python three
 variants). Morello's identical page footer (instruction-set links,
 proprietary notice, copyright; ~400 chars) is printed by every `show`.
 
+Reruns 10-11 on `c9e1f56` (footer stripping, `notes --check` listing which
+REFs show each section), same prompts. All answers correct.
+
+| | Python + Git before → after | Morello before → after |
+|---|---|---|
+| Calls | 23 → 17 | 16 → 17 |
+| All script output | 13,441 → 12,833 | 13,176 → 9,405 (−29%) |
+| Lookup output | 9,598 → 8,454 | 10,066 → 5,986 (−41%) |
+| `show` after `notes --check` | 3 calls, 2,346 → 1 call, 624 | 2 calls, 4,081 → 1 call, 1,826 |
+
+Morello `show` output no longer has the footer (`show arm64morello:2131`:
+1,788 → 1,412 without notes). The remaining confirming `show` in each run
+came while revising the note (Morello) or checking its wording (Python), not
+to see whether it matched. Haiku called the `... N fuzzy matches hidden`
+line noise on exact-name searches (Python: ~1,450 hidden).
+
 `SKILL.md` + the three references read on a first run: ~9.9k, about the old
 single `SKILL.md`; later sessions read only `SKILL.md` (~3.5k).
 
