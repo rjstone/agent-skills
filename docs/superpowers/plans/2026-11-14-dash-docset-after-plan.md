@@ -62,6 +62,7 @@ plan:
 | `5288a6c` | `show --grep TEXT` (matching lines plus heading and table header row); `fts` prints 5 hits by default and its cut line says to add words; `search` folds a whole-page entry into the anchored entry with the same short name on the same page, as `(also REF)`, and drops the repeated `(Docset)` suffix; `setup.md`: throwaway machines skip `--discover`. | token trial 1 |
 | `8f30f0b` | `show --grep` ends with "(all N lines containing 'X' are shown; the section has M lines)"; `search` prints `(same section: REF)` (JSON `same_section`) instead of `(also REF)`, and `SKILL.md` says not to open those. | token trial 2 |
 | `e19861e` | `show` prints `(page: Title)` before a section whose heading isn't the page's own (DuckDB's `## Parameters` is on "CSV Import"); folded same-section REFs appear only in `--json` (`same_section`); the `fts` cut line says "more hits cut" without a count. | token trial 3 |
+| `8988b73` | Top-level `--help` is the command reference: usual command lines with a few words each, then each subcommand's other options named only, generated from the parser (`COMMON_OPTIONS`). `SKILL.md` defers syntax to it (2.9 KB). Tests: every option appears once in the help; docs name only real flags. | the user, 2026-11-15: avoid drift and subcommand `--help` reads |
 
 ## What the plan and design say that no longer holds
 
