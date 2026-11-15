@@ -316,6 +316,7 @@ class StoreTests(unittest.TestCase):
         os.makedirs(dasht)
         r = run_cli("where", env=self.cli_env(), cwd=self.sub)
         self.assertEqual(r.returncode, 3, r.stderr)  # same code as other commands
+        self.assertIn("references/setup.md", r.stdout)
         self.assertIn("not set", r.stdout)
         r = run_cli("where", "--discover", env=self.cli_env(), cwd=self.sub)
         self.assertEqual(r.returncode, 0, r.stderr)

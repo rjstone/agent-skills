@@ -323,7 +323,9 @@ def cmd_where(args):
         return 0
     store = resolve_store(args.dir, cwd, env)
     if store is None:
-        print("storage location not set (use where --set PATH --project|--user)")
+        print("storage location not set (use where --set PATH --project|--user)\n"
+              "Agents: first read references/setup.md in the skill folder; "
+              "the user chooses the location.")
         return 3
     print("store: %s" % store.path)
     print("source: %s" % store.source)
