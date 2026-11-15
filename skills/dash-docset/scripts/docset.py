@@ -767,6 +767,32 @@ def _fold_bare_entries(hits, no_anchor, page_of):
     return kept, also
 
 
+def _best_per_word(docs, words, want_type) -> List[Tuple[str, Optional[str]]]:
+    """[(word, 'REF  type  name' of its best non-fuzzy entry, or None)], for
+    a query whose words are never all in one name (several names at once)."""
+    out = []
+    for w in dict.fromkeys(words):
+        best = None
+        for ds in docs:
+            try:
+                for i, name, typ, path in iter_entries(ds, like_pattern(w)):
+                    if want_type is not None and typ.lower() != want_type:
+                        continue
+                    r = rank(w, name)
+                    if r is not None and _short_name(name) == w:
+                        r = 0
+                    if r is None or r >= 3:
+                        continue
+                    bare = entry_location(path)[1] is None
+                    key = (r, bare, len(name), name, ds.name, i)
+                    if best is None or key < best[0]:
+                        best = (key, "%s:%d  %s  %s" % (ds.name, i, typ, name))
+            except sqlite3.Error:
+                pass
+        out.append((w, best and best[1]))
+    return out
+
+
 def cmd_search(args):
     _join_query(args)
     if not args.query:
@@ -837,8 +863,16 @@ def cmd_search(args):
         lines.append("... %d fuzzy matches hidden (letters in order only, often "
                      "unrelated)" % cut)
     if not hits:
-        lines.append("no matches for %r (entry names only; fts searches the text "
-                     "inside pages)" % args.query)
+        each = _best_per_word(docs, words, want_type) if len(words) > 1 else []
+        if any(best for _w, best in each):
+            lines.append("no matches for %r: search wants all the words in one "
+                         "entry name. Best entry for each word:" % args.query)
+            for w, best in each:
+                lines.append(best or "(no entry name contains %r; fts searches "
+                                     "the text inside pages)" % w)
+        else:
+            lines.append("no matches for %r (entry names only; fts searches the "
+                         "text inside pages)" % args.query)
     for line in cap_lines(lines, args.max_lines, hint):
         print(line)
     return 0

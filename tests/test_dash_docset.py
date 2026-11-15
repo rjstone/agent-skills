@@ -787,6 +787,28 @@ class SearchTests(unittest.TestCase):
         return run_cli("--dir", self.store_dir, *args, env={"HOME": self.tmp},
                        cwd=self.tmp)
 
+    def test_several_names_at_once_lists_the_best_entry_for_each_word(self):
+        self.add("Alpha", [("date_diff(part, a, b)", "Function", "date.html#diff"),
+                           ("date_diff_old", "Function", "date.html#old"),
+                           ("date_sub(part, a, b)", "Function", "date.html#sub")])
+        r = self.cli("search", "date_diff", "date_sub", "zzz", "-d", "Alpha")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        out = r.stdout.splitlines()
+        # says why nothing matched: all the words must be in one name
+        self.assertIn("one entry name", out[0])
+        self.assertIn("'date_diff date_sub zzz'", out[0])
+        self.assertIn("Alpha:1  Function  date_diff(part, a, b)", out)
+        self.assertIn("Alpha:3  Function  date_sub(part, a, b)", out)
+        self.assertNotIn("date_diff_old", r.stdout)  # one entry per word, the best
+        self.assertTrue(any("'zzz'" in l and "no entry name" in l for l in out), out)
+
+    def test_several_words_none_in_any_name_keeps_the_plain_message(self):
+        self.add("Alpha", [("date_sub", "Function", "date.html#sub")])
+        r = self.cli("search", "enemy", "arrow", "-d", "Alpha")
+        self.assertTrue(r.stdout.startswith("no matches for 'enemy arrow' (entry names only"),
+                        r.stdout)
+        self.assertEqual(len(r.stdout.splitlines()), 1)
+
     def test_docset_name_is_case_insensitive(self):
         self.add("Alpha", [("date_sub", "Function", "date.html#sub")])
         r = self.cli("search", "date_sub", "-d", "alpha")

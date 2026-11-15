@@ -222,6 +222,10 @@ metadata:
   exact name. `show --grep` also prints the definition (`<dd>`) of a
   matching term (`<dt>`) when it has at most 40 lines: page structure, not
   a guess (the user, 2026-11-15).
+  `search` wants all the words in one entry name. When a query of several
+  words finds nothing but single words do match (agents often search two
+  or three function names at once), it prints the best entry for each word
+  instead of only "no matches" (the user, 2026-11-15).
   Source lists, in order: GitHub API and Zeal's manifest (raw GitHub) for
   official docsets, Kapeli's `cheat.json` for cheat sheets, Kapeli's
   `index.json` for user-contributed; Zeal's catalog at api.zealdocs.org
