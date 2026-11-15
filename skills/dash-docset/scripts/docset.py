@@ -264,7 +264,9 @@ def require_store(args, cwd=None, env=None) -> Store:
     if store is None:
         lines = ["storage location not set",
                  "Set one with: docset.py where --set PATH (--project | --user),",
-                 "or --dir PATH, or DASH_DOCSET_DIR."]
+                 "or --dir PATH, or DASH_DOCSET_DIR.",
+                 "Agents: first read references/setup.md in the skill folder; "
+                 "the user chooses the location."]
         found = discover(env)
         if found:
             lines.append("Existing docset folders found (other tools; read-only "

@@ -326,6 +326,7 @@ class StoreTests(unittest.TestCase):
                 type("A", (), {"dir": None})(), cwd=self.sub, env=self.env)
         self.assertEqual(cm.exception.code, 3)
         self.assertIn("storage location not set", str(cm.exception))
+        self.assertIn("references/setup.md", str(cm.exception))
         self.assertIn(dasht, str(cm.exception))
 
     def test_where_reports_store(self):
