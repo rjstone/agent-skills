@@ -333,7 +333,6 @@ single `SKILL.md`; later sessions read only `SKILL.md` (~3.5k).
     registry lookup and Zeal's menu path
   - the GitHub API listing (blocked in the sandbox; the fallbacks covered it)
 - **`TODO.md`:**
-  - semantic search
   - MCP mode (look at ZDocsetMCP first)
   - installing into Dash, Zeal or dasht folders on request
   - optional tarix storage for our own installs
