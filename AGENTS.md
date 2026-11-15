@@ -189,6 +189,9 @@ metadata:
   `scripts/docset.py` has its own `VERSION` (used in `--version`,
   `--help` and the User-Agent), bumped only when the script changes; it
   may lag `metadata.version` but never lead it (a test checks).
+  The User-Agent is `docset-agent-skill-RJS/<VERSION>`: unambiguous, so
+  Kapeli can filter or rate-limit this script by it; keep it (the user,
+  2026-11-15).
   The top-level `--help` (`TOP_HELP`) is the command reference agents
   read: hand-written usual command lines, then the remaining options of
   each subcommand by name only, generated from the parser. A new option
