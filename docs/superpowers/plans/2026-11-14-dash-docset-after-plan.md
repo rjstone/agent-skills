@@ -58,6 +58,8 @@ plan:
 | `dff734b` | `fts` prints the short entry REF when the matched section is an entry's, trying every id on the block (DuckDB headings carry a Dash `//apple_ref` id plus the entry's id). | DuckDB trial |
 | `b30f065` | Fixes from the Morello trials: `install` says the name to use when it differs from the source name (`user:Arm Morello A64 ISA` → `arm64morello`); fuzzy search hits are hidden when real hits exist; table cells spanning several columns are labelled (`Rm (5 cols)`), so encoding diagrams can be read as text; `SKILL.md`: the script path is relative to the skill folder, and note headings for variants. Navigation footers are left alone: nothing identifies them reliably, and stripping must never remove real docs (the user, 2026-11-14). | Morello trials |
 | `17aa682` | Progressive disclosure: `SKILL.md` keeps only lookups (`search`, `show`, `fts`, scope) and Kapeli's terms, 9.3 KB → 3.3 KB. First-run setup and "Other options" moved to `references/setup.md`, sources/install/update/remove and the allowlist to `references/installing.md`, notes authoring to `references/notes.md`. The "location not set" error now points agents to `references/setup.md`, since the "user chooses the location" rule no longer sits in `SKILL.md`. | the user, 2026-11-15: cut the per-session token cost |
+| `e0517c4` | Plain `where` with no location set also points agents to `references/setup.md` (it had its own message). | token trial 1 |
+| `5288a6c` | `show --grep TEXT` (matching lines plus heading and table header row); `fts` prints 5 hits by default and its cut line says to add words; `search` folds a whole-page entry into the anchored entry with the same short name on the same page, as `(also REF)`, and drops the repeated `(Docset)` suffix; `setup.md`: throwaway machines skip `--discover`. | token trial 1 |
 
 ## What the plan and design say that no longer holds
 
@@ -215,6 +217,40 @@ and the fuzzy noise.
 
 The "keep changes staged" question can't be answered from Kapeli's Git cheat
 sheet, which has no `reset --soft`. That's a content gap, not a skill bug.
+
+### Token trials (2026-11-15)
+
+Goal: measure the output agents don't need (the user, 2026-11-15). Haiku at
+default effort, sandbox path 2B, DuckDB 1.5.0, a trial copy of the skill whose
+`scripts/docset.py` wrapper logged every call's output. Questions: `date_diff`
+vs `date_sub` months (2 vs 1, `DuckDB:5097`/`5099`); `read_csv` `skip` (BIGINT,
+default 0, a row of `DuckDB:29`); `count_if(42)` (1; a non-zero number counts
+as true, `DuckDB:6072`); plus one note. The earlier DuckDB trial's "count_if
+is an alias of countif" isn't in this docset (two separate entries), so that
+question was replaced. Sizes are characters (tokens ≈ chars / 4).
+
+| | Run 1 (`17aa682`) | Run 2 (`5288a6c`) |
+|---|---|---|
+| Answers | all correct | all correct |
+| References opened | setup, installing, notes, each at its trigger | same |
+| All script output | 14,620 | 13,631 |
+| `search`/`show`/`fts` output | 11,417 | 9,911 |
+| Biggest call | `show DuckDB:29`, 5,551 (a whole parameters table) | `show DuckDB:29` without `--grep`, 6,658 |
+
+Run 1, lookup output against the answer spans: ~11% needed, ~40% irrelevant
+(`fts skip` hit at rank 7 of 17, a wrong Python-API page, overloads, a
+duplicate entry), ~49% excess (the whole table for one row).
+
+Run 2 used `fts read_csv skip` (right page first) and `show DuckDB:29 --grep
+skip` (385 chars), then reran `show DuckDB:29` without `--grep` "to confirm
+no second skip row was hidden" by the `...` gaps, and opened the `(also)`
+duplicate "to check it wasn't different text". Without those two calls the
+lookups would have been ~3.1k (−73%). Both were confirmation calls; the
+output didn't say that `--grep` shows every match, or that `(also)` entries
+are the same text.
+
+`SKILL.md` + the three references read on a first run: ~9.9k, about the old
+single `SKILL.md`; later sessions read only `SKILL.md` (~3.5k).
 
 ## Open
 
