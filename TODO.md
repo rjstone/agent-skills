@@ -71,6 +71,11 @@
     earlier skill's footer detection did.
   - `search` can't find function names in section-indexed docsets
     (DuckDB); consider matching in-page headings.
+  - `-d NAME` for a docset that isn't installed exits 4 "unknown docset";
+    when NAME is in DevDocs' list, say "not installed: install NAME".
+  - notes headings cache: no format-version key (an old-format cache would
+    be reused); `notes --check` skips pages that fail to render without
+    saying how many; the `--grep X` -> `--grep=X` rewrite ignores `--`.
 
 ## Automation
 
