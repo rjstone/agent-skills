@@ -5,6 +5,7 @@ import os
 import re
 import shutil
 import sys
+import tempfile
 import time
 import urllib.error
 import urllib.request
@@ -60,16 +61,20 @@ def build_page_index(db_path: str) -> Dict[str, Tuple[int, int]]:
     while True:
         while i < n and data[i] in b" \t\r\n,":
             i += 1
-        if i >= n or data[i] == 0x7D:  # }
+        if i >= n:
+            raise ValueError("truncated: no closing brace")
+        if data[i] == 0x7D:  # }
+            if data[i + 1:].strip(b" \t\r\n"):
+                raise ValueError("unexpected data after the closing brace")
             break
         if data[i] != 0x22:
             raise ValueError("unexpected byte at %d" % i)
         kend = string_end(i)
         key = json.loads(data[i:kend].decode("utf-8"))
         i = kend
-        while data[i] in b" \t\r\n:":
+        while i < n and data[i] in b" \t\r\n:":
             i += 1
-        if data[i] != 0x22:
+        if i >= n or data[i] != 0x22:
             raise ValueError("page %r is not a string" % key)
         vend = string_end(i)
         spans[key] = (i, vend)
@@ -122,6 +127,10 @@ class DevDocsDocset(Docset):
     def entries(self) -> List[Entry]:
         if self._entries is None:
             idx = _load(os.path.join(self.folder, "index.json"))
+            if not isinstance(idx, dict) or not isinstance(
+                    idx.get("entries", []), list):
+                raise ValueError("index.json: expected an object with an "
+                                 "entries list")
             out = []
             for e in idx.get("entries", []):
                 path = e["path"]
@@ -155,14 +164,19 @@ class DevDocsDocset(Docset):
             try:
                 index = build_page_index(self.db_path)
             except ValueError as e:
-                raise CLIError("docset %s: bad db.json: %s" % (self.name, e), 5)
+                raise CLIError("docset %s: damaged db.json (%s); reinstall with: "
+                               "docshelf.py install %s" % (self.name, e, self.name), 5)
             try:
                 os.makedirs(self.data_dir(), exist_ok=True)
-                tmp = cache + ".tmp"
-                with open(tmp, "w", encoding="utf-8") as f:
-                    json.dump({"db_size": size, "db_mtime": mtime,
-                               "pages": {k: list(v) for k, v in index.items()}}, f)
-                os.replace(tmp, cache)
+                fd, tmp = tempfile.mkstemp(dir=self.data_dir(), suffix=".tmp")
+                try:
+                    with os.fdopen(fd, "w", encoding="utf-8") as f:
+                        json.dump({"db_size": size, "db_mtime": mtime,
+                                   "pages": {k: list(v) for k, v in index.items()}}, f)
+                    os.replace(tmp, cache)
+                except BaseException:
+                    _discard(tmp)
+                    raise
             except OSError as e:
                 _warn("cannot write %s: %s" % (cache, e))
         self._index, self._idx_stat = index, (size, mtime)
@@ -220,6 +234,11 @@ class NetError(CLIError):
             "documents.devdocs.io)." % (host, reason), 7)
 
 
+def _write_error(path: str, e: OSError) -> CLIError:
+    return CLIError("cannot write %s: %s (check free disk space and that "
+                    "DOCSHELF_CACHE_DIR is a writable folder)" % (path, e), 2)
+
+
 def fetch(url: str, dest: Optional[str] = None) -> bytes:
     """GET url, redirects followed. With dest, stream the body to that file
     in chunks and return b""; else return the body."""
@@ -228,12 +247,19 @@ def fetch(url: str, dest: Optional[str] = None) -> bytes:
         with urllib.request.urlopen(req, timeout=NET_TIMEOUT) as r:
             if dest is None:
                 return r.read()
-            with open(dest, "wb") as f:
+            try:
+                f = open(dest, "wb")
+            except OSError as e:
+                raise _write_error(dest, e)
+            with f:
                 while True:
                     chunk = r.read(CHUNK)
                     if not chunk:
                         return b""
-                    f.write(chunk)
+                    try:
+                        f.write(chunk)
+                    except OSError as e:
+                        raise _write_error(dest, e)
     except urllib.error.HTTPError as e:
         raise NetError(url, "HTTP %d" % e.code)
     except (urllib.error.URLError, OSError, ValueError,
@@ -259,22 +285,31 @@ def get_manifest(cfg: Config, refresh: bool = False) -> List[dict]:
             rows = _manifest_rows(json.loads(fetch(MANIFEST_URL).decode("utf-8")))
         except ValueError as e:  # includes UnicodeDecodeError
             raise NetError(MANIFEST_URL, "not a DevDocs list: %s" % e)
-    except NetError:
+    except NetError as net_err:
         if age is None:
             raise
         try:
             rows = _manifest_rows(_load(path))
         except (OSError, ValueError):
-            raise
+            raise net_err
         date = datetime.fromtimestamp(os.path.getmtime(path)).strftime("%Y-%m-%d")
         print("note: using the cached DevDocs list from %s "
               "(could not reach devdocs.io)" % date, file=sys.stderr)
         return rows
-    os.makedirs(devdocs_dir(cfg), exist_ok=True)
-    tmp = path + ".tmp"
-    with open(tmp, "w", encoding="utf-8") as f:
-        json.dump(rows, f, ensure_ascii=False)
-    os.replace(tmp, path)
+    try:
+        os.makedirs(devdocs_dir(cfg), exist_ok=True)
+        fd, tmp = tempfile.mkstemp(dir=devdocs_dir(cfg), suffix=".tmp")
+        try:
+            with os.fdopen(fd, "w", encoding="utf-8") as f:
+                json.dump(rows, f, ensure_ascii=False)
+            os.replace(tmp, path)
+        except BaseException:
+            _discard(tmp)
+            raise
+    except OSError as e:
+        raise CLIError("cannot write the DevDocs list in %s: %s (set "
+                       "DOCSHELF_CACHE_DIR to a writable folder)"
+                       % (devdocs_dir(cfg), e), 2)
     return rows
 
 
@@ -341,15 +376,24 @@ def install(cfg: Config, row: dict) -> str:
     except (OSError, ValueError, AttributeError, TypeError):
         pass
     created = not os.path.isdir(folder)
-    os.makedirs(folder, exist_ok=True)
-    names = ("index.json", "db.json", "meta.json")
-    tmps = {n: os.path.join(folder, n + ".tmp") for n in names}
     try:
+        os.makedirs(folder, exist_ok=True)
+    except OSError as e:
+        raise CLIError("cannot create %s: %s (set DOCSHELF_CACHE_DIR to a "
+                       "writable folder)" % (folder, e), 2)
+    names = ("index.json", "db.json", "meta.json")
+    tmps = {}
+    try:
+        for n in names:
+            fd, tmps[n] = tempfile.mkstemp(dir=folder, prefix=n + ".",
+                                           suffix=".tmp")
+            os.close(fd)
         for n in names[:2]:
             fetch("%s/%s/%s" % (DOCUMENTS_BASE, slug, n), tmps[n])
         try:
             idx = _load(tmps["index.json"])
-            if not isinstance(idx.get("entries"), list):
+            if not isinstance(idx, dict) or not isinstance(
+                    idx.get("entries"), list):
                 raise ValueError("no entries list")
             build_page_index(tmps["db.json"])
         except (ValueError, AttributeError, UnicodeDecodeError) as e:
@@ -427,8 +471,10 @@ def cmd_update(cfg, args) -> int:
     if not targets:
         print("no docsets installed (install NAME; sources QUERY finds names)")
         return 0
-    rows = get_manifest(cfg)
-    by_slug = {r["slug"]: r for r in rows}
+    rows = get_manifest(cfg, refresh=True)
+    by_slug = {}
+    for r in rows:
+        by_slug.setdefault(r["slug"], r)  # first row wins, as in install
     for d in targets:
         row = by_slug.get(d.name)
         if row is None:
@@ -439,7 +485,32 @@ def cmd_update(cfg, args) -> int:
 
 
 def cmd_remove(cfg, args) -> int:
-    d = pick_docset(installed_docsets(cfg), args.name)
-    remove(cfg, d.name)
-    print("removed %s (notes untouched)" % d.name)
+    try:
+        name = pick_docset(installed_docsets(cfg), args.name).name
+    except CLIError as e:
+        name = _unloadable_folder(cfg, args.name)
+        if e.code != 5 or name is None:
+            raise
+    remove(cfg, name)
+    print("removed %s (notes untouched)" % name)
     return 0
+
+
+def _unloadable_folder(cfg: Config, name: str) -> Optional[str]:
+    """The docset folder called name (or whose meta.json slug is name) that
+    installed_docsets skipped as damaged; None if there is none."""
+    root = devdocs_dir(cfg)
+    try:
+        folders = sorted(os.listdir(root))
+    except OSError:
+        return None
+    for n in folders:
+        if not os.path.isdir(os.path.join(root, n)):
+            continue
+        try:
+            slug = _load(os.path.join(root, n, "meta.json")).get("slug")
+        except (OSError, ValueError, AttributeError):
+            slug = None
+        if n == name or slug == name:
+            return n
+    return None

@@ -1,11 +1,13 @@
 """docshelf lookup commands: search, show, fts, index-text."""
 import argparse
+import contextlib
 import json
 import os
 import pathlib
 import re
 import sqlite3
 import sys
+import tempfile
 import time
 from urllib.parse import unquote
 from typing import Dict, List, Optional, Tuple
@@ -266,10 +268,14 @@ def build_fts(cfg, ds) -> int:
     for e in ds.entries():
         refs_on.setdefault(e.page, []).append(e.ref)
     db = fts_path(ds)
-    os.makedirs(os.path.dirname(db), exist_ok=True)
-    tmp = db + ".tmp"
-    if os.path.exists(tmp):
-        os.unlink(tmp)
+    try:
+        os.makedirs(os.path.dirname(db), exist_ok=True)
+        fd, tmp = tempfile.mkstemp(dir=os.path.dirname(db), suffix=".tmp")
+        os.close(fd)  # sqlite opens it itself; the name is unique per build
+    except OSError as e:
+        raise CLIError("cannot write the index for %s in %s: %s (set "
+                       "DOCSHELF_CACHE_DIR to a writable folder)"
+                       % (ds.name, os.path.dirname(db), e), 2)
     con = sqlite3.connect(tmp)
     count = 0
     try:
@@ -295,10 +301,16 @@ def build_fts(cfg, ds) -> int:
         con.commit()
     except BaseException:
         con.close()
-        os.unlink(tmp)
+        with contextlib.suppress(OSError):
+            os.unlink(tmp)
         raise
     con.close()
-    os.replace(tmp, db)
+    try:
+        os.replace(tmp, db)  # a concurrent build may have won; last one wins
+    except OSError:
+        with contextlib.suppress(OSError):
+            os.unlink(tmp)
+        raise
     return count
 
 

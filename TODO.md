@@ -37,6 +37,32 @@
       whether such docsets ship their own text index that `fts` could use
       instead of building one, and whether "not supported" should skip
       indexing (the user, 2026-11-16).
+- [ ] `docshelf`: deferred from the v1 reviews:
+  - link hrefs with `?query` or percent-encoding get no REF; `..` past the
+    docset root clamps silently
+  - fts: punctuation-only query tokens zero the results; snippet highlights
+    only "return" for `return_exceptions` (unicode61 splits on `_`);
+    `--max-lines` < 3 overshoots by one line
+  - `sources` lists duplicate slugs (bun, vitest) twice; de-duplicate,
+    keeping the first row
+  - real `fetch()` untested (UA, redirects, error mapping): add a loopback
+    `http.server` test
+  - 404 from documents.devdocs.io still shows the allowlist hint
+  - same-mtime reinstall trusts `meta.json` without checking files exist;
+    page index built twice at install; a folder without `meta.json` can't be
+    removed via the CLI
+  - every command parses each installed docset's `index.json` for
+    `entry_count`; store the count in `meta.json` at install
+  - MCP: error text still says "(see: docshelf.py list)" and CLI flag
+    names; `initialize` has no "instructions"; `"id": null` treated as a
+    request; batch arrays rejected while 2025-03-26 is advertised;
+    `_parser_defaults` reads argparse private attributes
+  - backend interface before the Dash backend: add `display_name` to the
+    Docset base; a core installed-docsets aggregator; move href resolution
+    into a backend hook; `shelf_lookup` imports `_warn` from the backend
+  - tests: expected "skipping" warning leaks to test stderr; no tests for
+    `name=`-only anchors, CRLF notes, no-command help exit 2
+  - `show` reads the notes file twice via private `_read_notes`
 
 ## Automation
 

@@ -1,5 +1,6 @@
 """docshelf command line: the command table, parser and main()."""
 import argparse
+import sqlite3
 import sys
 import textwrap
 from dataclasses import dataclass
@@ -127,9 +128,10 @@ COMMANDS: List[Command] = [
 ]
 
 
-EXIT_CODES = ("0 ok; 1 notes --check found problems; 2 usage, unknown name or "
-              "no FTS5; 4 search scope too wide (use -d, a project list or "
-              "--all); 5 not found; 7 network (DevDocs could not be reached)")
+EXIT_CODES = ("0 ok; 1 notes --check found problems; 2 usage error, ambiguous "
+              "name or no FTS5; 4 search scope too wide (use -d, a project "
+              "list or --all) or unknown -d name; 5 not found (docset, page "
+              "or entry); 7 network (DevDocs could not be reached)")
 
 # Top-level --help: the command lines agents normally need. Options that
 # have rare=True in COMMANDS are only named (not described) under "only if
@@ -244,8 +246,14 @@ def main(argv: Optional[List[str]] = None) -> int:
     if args.help or not args.command:
         print(top_help(), end="")
         return 0 if args.help else 2
+    for stream in (sys.stdout, sys.stderr):  # Windows pipes default to cp1252
+        if hasattr(stream, "reconfigure"):
+            stream.reconfigure(encoding="utf-8", errors="replace")
     try:
         return args._command.func(shelf_core.load_config(), args)
     except CLIError as e:
         print(str(e), file=sys.stderr)
         return e.code
+    except (OSError, sqlite3.Error, ValueError) as e:
+        print("error: %s: %s" % (type(e).__name__, e), file=sys.stderr)
+        return 2

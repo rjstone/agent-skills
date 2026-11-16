@@ -11,6 +11,7 @@ import sqlite3
 import subprocess
 import sys
 import tempfile
+import threading
 import unittest
 from unittest import mock
 from typing import Dict, List, Optional, Tuple
@@ -27,6 +28,7 @@ SCRIPT = os.path.join(SKILL, "scripts", "docshelf.py")
 
 sys.path.insert(0, os.path.join(SKILL, "scripts"))
 import shelf_cli  # noqa: E402
+from shelf_core import CLIError  # noqa: E402
 import shelf_core  # noqa: E402
 import shelf_devdocs  # noqa: E402
 import shelf_lookup  # noqa: E402
@@ -1554,7 +1556,9 @@ class NetworkTests(unittest.TestCase):
 
     def test_update_gone_from_manifest_warns(self):
         self.main("install", "python~3.14", "node")
-        self.write_manifest([r for r in self.rows if r["slug"] != "python~3.14"])
+        rest = [r for r in self.rows if r["slug"] != "python~3.14"]
+        self.write_manifest(rest)
+        self.net.pages[shelf_devdocs.MANIFEST_URL] = json.dumps(rest)
         code, out, err = self.main("update")
         self.assertEqual(code, 0)
         self.assertIn("python~3.14", err)
@@ -1575,6 +1579,7 @@ class NetworkTests(unittest.TestCase):
         self.main("install", "python~3.14")
         newer = [dict(r, mtime=1800000000) for r in self.rows]
         self.write_manifest(newer)
+        self.net.pages[shelf_devdocs.MANIFEST_URL] = json.dumps(newer)
         url = "%s/python~3.14/db.json" % shelf_devdocs.DOCUMENTS_BASE
         self.net.pages[url] = shelf_devdocs.NetError(url, "boom")
         self.assertEqual(self.main("update")[0], 7)
@@ -1686,9 +1691,10 @@ Only if you need these, see `<command> --help`:
   fts        --all --max-lines --json
   sources    --refresh
 Global: --version, --mcp (run as a stdio MCP server; references/mcp.md).
-Exit codes: 0 ok; 1 notes --check found problems; 2 usage, unknown name or
-  no FTS5; 4 search scope too wide (use -d, a project list or --all); 5 not
-  found; 7 network (DevDocs could not be reached)
+Exit codes: 0 ok; 1 notes --check found problems; 2 usage error, ambiguous
+  name or no FTS5; 4 search scope too wide (use -d, a project list or --all)
+  or unknown -d name; 5 not found (docset, page or entry); 7 network
+  (DevDocs could not be reached)
 """
 
 
@@ -1711,10 +1717,19 @@ class HelpTests(unittest.TestCase):
     def test_skill_md_mentions_no_dash_docset(self):
         with open(os.path.join(SKILL, "SKILL.md"), encoding="utf-8") as f:
             text = f.read()
-        for bad in ("dash-docset", "docset.py", ".dash-docset"):
-            self.assertNotIn(bad, text)
         self.assertIn("## Credits", text)
         self.assertIn("https://devdocs.io", text)
+
+
+    def test_no_dash_docset_text_in_any_skill_file(self):
+        for dirpath, dirs, files in os.walk(SKILL):
+            dirs[:] = [d for d in dirs if d != "__pycache__"]
+            for name in files:
+                path = os.path.join(dirpath, name)
+                with open(path, encoding="utf-8", errors="replace") as f:
+                    text = f.read()
+                for bad in ("dash-docset", "docset.py", ".dash-docset"):
+                    self.assertNotIn(bad, text, path)
 
 
 class McpTests(unittest.TestCase):
@@ -1901,6 +1916,241 @@ class McpTests(unittest.TestCase):
         for needle in ("claude mcp add docshelf", "mcpServers",
                        "[mcp_servers.docshelf]", '"type": "local"'):
             self.assertIn(needle, text)
+
+
+class FinalReviewTests(unittest.TestCase):
+    """Fixes from the final whole-branch review (I1-I9, M1, M2)."""
+
+    def setUp(self):
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        self.tmp = os.path.realpath(tmp.name)
+        self.cache = os.path.join(self.tmp, "cache")
+        self.notes = os.path.join(self.tmp, "notes")
+        self.root = os.path.join(self.cache, "devdocs")
+        env = mock.patch.dict(os.environ, {"DOCSHELF_CACHE_DIR": self.cache,
+                                           "DOCSHELF_NOTES_DIR": self.notes})
+        env.start()
+        self.addCleanup(env.stop)
+
+    def main(self, *argv):
+        out, err = io.StringIO(), io.StringIO()
+        with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
+            code = shelf_cli.main(list(argv))
+        return code, out.getvalue(), err.getvalue()
+
+    def cfg(self):
+        return shelf_core.load_config(self.tmp, dict(os.environ))
+
+    def make(self, slug="py", **kw):
+        kw.setdefault("name", "Py")
+        kw.setdefault("release", "1")
+        kw.setdefault("entries", [("Guide", "Guide", "guide")])
+        kw.setdefault("pages", {"guide": "<p>gather</p>"})
+        return make_devdocs(self.cache, slug, **kw)
+
+    def net(self, rows, pages=None, entries=None):
+        entries = entries or [("Intro", "Guide", "intro")]
+        data = {shelf_devdocs.MANIFEST_URL: json.dumps(rows)}
+        for r in rows:
+            data.update(remote_docset(r["slug"], entries,
+                                      pages or {"intro": "<h1>Intro</h1>"}))
+        return FakeNet(self, data)
+
+    def write_file(self, path, text):
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        with open(path, "w", encoding="utf-8") as f:
+            f.write(text)
+
+    # I1
+    def test_fts_unwritable_data_dir_exits_2(self):
+        folder = self.make()
+        self.write_file(os.path.join(folder, ".docshelf"), "a file")
+        code, _, err = self.main("fts", "gather", "-d", "py")
+        self.assertEqual(code, 2, err)
+        self.assertIn("DOCSHELF_CACHE_DIR", err)
+        self.assertNotIn("Traceback", err)
+
+    def test_notes_path_dir_is_file_exits_2(self):
+        self.make()
+        self.write_file(self.notes, "a file")
+        code, _, err = self.main("notes", "py", "--path")
+        self.assertEqual(code, 2, err)
+        self.assertIn("DOCSHELF_NOTES_DIR", err)
+        self.assertNotIn("Traceback", err)
+
+    def test_sources_uncreatable_cache_exits_2(self):
+        self.write_file(self.cache, "a file")
+        self.net([row("Python", "python~3.15", "3.15.0")])
+        code, _, err = self.main("sources", "python")
+        self.assertEqual(code, 2, err)
+        self.assertIn("DOCSHELF_CACHE_DIR", err)
+        self.assertNotIn("Traceback", err)
+
+    def test_install_uncreatable_folder_exits_2(self):
+        rows = [row("Python", "python~3.15", "3.15.0")]
+        self.net(rows)
+        self.write_file(os.path.join(self.root, "docs.json"), json.dumps(rows))
+        self.write_file(os.path.join(self.root, "python~3.15"), "a file")
+        code, _, err = self.main("install", "python")
+        self.assertEqual(code, 2, err)
+        self.assertIn("DOCSHELF_CACHE_DIR", err)
+        self.assertNotIn("Traceback", err)
+
+    def test_last_resort_handler(self):
+        for exc, line in (
+                (ValueError("boom"), "error: ValueError: boom\n"),
+                (sqlite3.OperationalError("disk I/O error"),
+                 "error: OperationalError: disk I/O error\n"),
+                (PermissionError("denied"), "error: PermissionError: denied\n")):
+            with mock.patch.object(shelf_devdocs, "installed_docsets",
+                                   side_effect=exc):
+                code, out, err = self.main("list")
+            self.assertEqual((code, out, err), (2, "", line))
+
+    # I2
+    def test_download_write_error_is_local_not_network(self):
+        class Resp:
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *a):
+                return False
+
+            def read(self, n=-1):
+                return b"data"
+
+        dest = os.path.join(self.tmp, "no-such-dir", "db.json.tmp")
+        with mock.patch.object(shelf_devdocs.urllib.request, "urlopen",
+                               return_value=Resp()):
+            with self.assertRaises(CLIError) as cm:
+                shelf_devdocs.fetch(shelf_devdocs.DOCUMENTS_BASE + "/x/db.json",
+                                    dest)
+        self.assertEqual(cm.exception.code, 2)
+        self.assertIn("db.json.tmp", str(cm.exception))
+        self.assertNotIn("allowlist", str(cm.exception))
+        self.assertNotIsInstance(cm.exception, shelf_devdocs.NetError)
+
+    # I3
+    def test_concurrent_fts_builds(self):
+        self.make()
+        a = shelf_devdocs.installed_docsets(self.cfg())[0]
+        b = shelf_devdocs.installed_docsets(self.cfg())[0]
+        started, proceed = threading.Event(), threading.Event()
+        real = a.page_html
+
+        def slow(page):
+            started.set()
+            proceed.wait(30)
+            return real(page)
+
+        a.page_html = slow
+        errors = []
+
+        def run_a():
+            try:
+                shelf_lookup.build_fts(self.cfg(), a)
+            except BaseException as e:  # reported below
+                errors.append(e)
+
+        t = threading.Thread(target=run_a)
+        t.start()
+        self.assertTrue(started.wait(30))
+        shelf_lookup.build_fts(self.cfg(), b)  # finishes while a is mid-build
+        proceed.set()
+        t.join(30)
+        self.assertEqual(errors, [])
+        self.assertEqual(shelf_lookup._stored_stamp(shelf_lookup.fts_path(b)),
+                         shelf_lookup.fts_stamp(b))
+        left = [f for f in os.listdir(b.data_dir()) if f.endswith(".tmp")]
+        self.assertEqual(left, [])
+
+    # I4
+    def test_update_refreshes_cached_manifest(self):
+        old = [row("Python", "python~3.14", "3.14.8", version="3.14")]
+        self.net(old)
+        self.assertEqual(self.main("install", "python~3.14")[0], 0)
+        new = [dict(old[0], mtime=1800000000, release="3.14.9")]
+        self.net(new)  # the cached docs.json is fresh but old
+        code, out, err = self.main("update")
+        self.assertEqual((code, err), (0, ""))
+        self.assertTrue(out.startswith("updated python~3.14 (Python 3.14.9"), out)
+
+    def test_update_duplicate_slug_uses_first_row(self):
+        first = row("Bun", "bun", "1.4.0", mtime=1700000000)
+        second = row("Bun", "bun", "1.3.12", mtime=1800000000)
+        self.net([first, second])
+        self.assertEqual(self.main("install", "bun")[0], 0)
+        code, out, _ = self.main("update")
+        self.assertEqual(code, 0)
+        self.assertTrue(out.startswith("up to date bun ("), out)
+
+    # I5
+    def test_corrupt_cached_manifest_and_failed_fetch_exits_7(self):
+        path = os.path.join(self.root, "docs.json")
+        self.write_file(path, "{not json")
+        old = os.path.getmtime(path) - 3 * 86400
+        os.utime(path, (old, old))
+        url = shelf_devdocs.MANIFEST_URL
+        with mock.patch.object(shelf_devdocs, "fetch",
+                               side_effect=shelf_devdocs.NetError(url, "timed out")):
+            code, _, err = self.main("sources", "python")
+        self.assertEqual(code, 7, err)
+        self.assertIn("devdocs.io", err)
+        self.assertNotIn("Traceback", err)
+
+    # I6
+    def test_truncated_db_json_raises_value_error(self):
+        for text in ('{"a"', '{"a":', '{"a": ', '{"a": "x"', '{"a": "x",',
+                     '{"a": "x"} junk', '{'):
+            path = os.path.join(self.tmp, "db.json")
+            self.write_file(path, text)
+            with self.assertRaises(ValueError, msg=text):
+                shelf_devdocs.build_page_index(path)
+        self.write_file(path, ' {"a": "x" , "b": "y"} \n')
+        self.assertEqual(sorted(shelf_devdocs.build_page_index(path)), ["a", "b"])
+        self.write_file(path, "{}")
+        self.assertEqual(shelf_devdocs.build_page_index(path), {})
+
+    def test_show_on_truncated_db_json_exits_cleanly(self):
+        folder = self.make()
+        self.write_file(os.path.join(folder, "db.json"), '{"guide":')
+        code, _, err = self.main("show", "py:guide")
+        self.assertEqual(code, 5, err)
+        self.assertIn("reinstall", err)
+        self.assertNotIn("Traceback", err)
+
+    # I7
+    def test_index_json_not_an_object_is_skipped_and_removable(self):
+        self.make("good")
+        folder = self.make("bad")
+        self.write_file(os.path.join(folder, "index.json"), "[]")
+        code, out, err = self.main("list")
+        self.assertEqual(code, 0, err)
+        self.assertIn("skipping", err)
+        self.assertIn("good", out)
+        self.assertNotIn("bad", out)
+        code, out, err = self.main("remove", "bad")
+        self.assertEqual(code, 0, err)
+        self.assertFalse(os.path.exists(folder))
+        self.assertTrue(os.path.isdir(os.path.join(self.root, "good")))
+        self.assertEqual(self.main("remove", "bad")[0], 5)
+
+    def test_index_json_entries_not_a_list_is_skipped(self):
+        folder = self.make("bad")
+        self.write_file(os.path.join(folder, "index.json"), '{"entries": 3}')
+        code, out, err = self.main("list")
+        self.assertEqual(code, 0, err)
+        self.assertIn("skipping", err)
+
+    # I8
+    def test_show_with_cp1252_stdout(self):
+        self.make(pages={"guide": "<p>a \u2192 b</p>"})
+        env = {"DOCSHELF_CACHE_DIR": self.cache, "PYTHONIOENCODING": "cp1252"}
+        r = subprocess.run([sys.executable, SCRIPT, "show", "py:guide"],
+                           capture_output=True, env={**clean_env(), **env})
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertIn("a \u2192 b".encode("utf-8"), r.stdout)
 
 
 if __name__ == "__main__":

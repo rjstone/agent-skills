@@ -14,8 +14,9 @@ the commands below use the network.
   or alias picks the newest version, since DevDocs lists newest first; give
   the slug for another version. Prints `installed`, `updated` or
   `up to date`.
-- `update [NAME...]` re-downloads docsets whose DevDocs timestamp is newer;
-  with no names, every installed docset. One that DevDocs no longer lists is
+- `update [NAME...]` fetches the DevDocs list fresh (not the 24-hour copy)
+  and re-downloads docsets whose DevDocs timestamp is newer; with no names,
+  every installed docset. One that DevDocs no longer lists is
   skipped with a warning.
 - `remove NAME` deletes the downloaded docset. Notes are kept.
 
@@ -28,8 +29,10 @@ read the size column before installing a big one.
 
 Versions are separate docsets: `python~3.14` and `python~3.15`. Some
 families have an unsuffixed slug for the current release (`node`) beside
-numbered ones (`node~24_lts`). An alias such as `py` or `js` is a shorthand
-DevDocs defines for one docset.
+numbered ones (`node~24_lts`). An alias such as `py` or `ng` names a whole
+family (`py` is every `python~3.x`), not one docset. `install py` gets the
+newest release; `-d py` is ambiguous (exit 2, the slugs are listed) when two
+releases are installed.
 
 ## Exit code 7: the network
 

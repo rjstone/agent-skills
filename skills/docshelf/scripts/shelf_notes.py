@@ -168,7 +168,11 @@ def cmd_notes(cfg: Config, args) -> int:
         family = pick_docset(docsets, args.docset).family
     path = notes_path(cfg, family)
     if args.path:
-        os.makedirs(os.path.dirname(path), exist_ok=True)
+        try:
+            os.makedirs(os.path.dirname(path), exist_ok=True)
+        except OSError as e:
+            raise CLIError("cannot create %s: %s (set DOCSHELF_NOTES_DIR to "
+                           "a writable folder)" % (os.path.dirname(path), e), 2)
         print(path)
         return 0
     _, text = _read_notes(cfg, family)
