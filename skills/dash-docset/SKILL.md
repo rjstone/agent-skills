@@ -1,7 +1,7 @@
 ---
 name: dash-docset
-description: Use when you need exact API, framework or library reference from Dash docsets (Kapeli, user-contributed, cheat sheets) offline, including docsets Dash or Zeal downloaded, or when finding user-contributed docsets, searching or annotating docsets from the command line.
-compatibility: reads docsets that Dash or Zeal downloaded (it downloads none); network only to list user-contributed docsets (assets/allowlist.txt).
+description: Use when you need exact API, framework or library reference from Dash docsets (Kapeli, user-contributed, cheat sheets) offline, including docsets Dash or Zeal downloaded, or when finding which docsets Dash or Zeal can download, searching or annotating docsets from the command line.
+compatibility: reads docsets that Dash or Zeal downloaded (it downloads none); network only to list docset names (assets/allowlist.txt).
 license: MIT
 metadata:
   author: Robert Stone

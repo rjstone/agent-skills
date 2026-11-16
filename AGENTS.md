@@ -232,12 +232,15 @@ metadata:
   refuses them and redirects to them, and the script has no `install` or
   `update` (every docset archive, contributed ones included, is only on
   kapeli.com; the GitHub repo keeps only each docset's `docset.json`).
-  Don't add a download path or a Kapeli feed back (the user, 2026-11-16).
-  `sources` searches the user-contributed list only: the GitHub API listing
-  of `docsets/` in Kapeli/Dash-User-Contributions; Zeal's catalog at
-  api.zealdocs.org (a best-effort public service) only when that fails,
-  checked at most weekly with conditional requests and never retried
-  within a day of a failure (the user, 2026-11-14).
+  Don't add a download path back (the user, 2026-11-16).
+  `sources` searches docset names only, to tell the user what Dash or Zeal
+  can download: official ones from the GitHub API listing of the `*.xml`
+  files in Kapeli/feeds (the listing only, never a feed file, which holds
+  kapeli.com URLs), user-contributed ones from the listing of `docsets/` in
+  Kapeli/Dash-User-Contributions (the user, 2026-11-16). Zeal's catalog at
+  api.zealdocs.org (a best-effort public service) only when a listing
+  fails, checked at most weekly with conditional requests and never
+  retried within a day of a failure (the user, 2026-11-14).
   Setup order: on a desktop, use Dash's or Zeal's docsets (the user
   downloads them in the app), else suggest installing one; on a throwaway
   machine, only `.docset` folders the user copies in (the user,

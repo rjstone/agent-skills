@@ -15,12 +15,14 @@ or when `sources` fails.
   `.docset` folder from their own computer into the store: the script
   reads it like any other. Delete it by hand when done (`remove` refuses
   docsets the script didn't install).
-- User-contributed docsets: `sources QUERY` searches their names (Zeal's
-  catalog adds titles and versions when it is the source) and says which
-  are already here. Official docsets and cheat sheets aren't listed; browse
-  them in Dash or Zeal. The list is cached for a week; `sources --refresh`
-  re-checks it. A "note (no action needed)" on stderr says the list came
+- To tell the user what Dash or Zeal can download: `sources QUERY`
+  searches the names of official and user-contributed docsets (Zeal's
+  catalog adds titles and versions when it is the source), labels each,
+  and says which are already here. Cheat sheets aren't listed; browse them
+  in Dash or Zeal. The lists are cached for a week; `sources --refresh`
+  re-checks them. A "note (no action needed)" on stderr says a list came
   from Zeal's catalog because GitHub was unreachable; it is complete.
+  Exit 7 with results means one list is missing (the output says which).
 - If the network only reaches allowed hosts (a sandbox, a corporate proxy, a
   cloud agent environment) and `sources` fails (exit 7), give the user
   [../assets/allowlist.txt](../assets/allowlist.txt): the hosts to allow.

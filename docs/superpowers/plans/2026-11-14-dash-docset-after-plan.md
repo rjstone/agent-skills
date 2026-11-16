@@ -518,12 +518,20 @@ and a search of the contributed docsets.
   subdomains, and a redirect handler refuses redirects to them. A test
   checks that no URL in the script is on a blocked host and that the
   Kapeli feed, cheat-sheet and `user_contributed/build` paths are gone.
-- `sources QUERY` searches the user-contributed list only: the GitHub API
+- `sources QUERY` searches the user-contributed list: the GitHub API
   listing of `docsets/` in Kapeli/Dash-User-Contributions (names), else
   Zeal's catalog (names, titles, versions; 630 contributed docsets in
   2026-11). It marks docsets already here and says to download in Dash or
-  Zeal. Official docsets and cheat sheets aren't listed (their lists were
-  Kapeli's feeds and `cheat.json`).
+  Zeal. Cheat sheets aren't listed (their list was Kapeli's `cheat.json`).
+- Then the user asked to list official docsets too, so the user can be
+  told what Dash or Zeal offers: `sources` also searches the names of the
+  `*.xml` files in Kapeli/feeds, from one GitHub API listing of the repo
+  root (not code search, which needs authentication and pages at 100).
+  The feed files themselves are never read: they hold the kapeli.com
+  download URLs. Zeal's catalog (`com.kapeli.dash`, 214 entries) is the
+  fallback. Each match is labeled `(official)` or `(user-contributed)`; a
+  list that fails both sources is reported and the other's matches still
+  print (exit 7).
 - Removed: the Kapeli/feeds XML parser, version pins, Zeal's manifest,
   `cheat.json`, the cheat sheet `Last-Modified` versions, safe archive
   extraction, mirror fallback. Kept: reading Dash, Zeal and dasht folders,

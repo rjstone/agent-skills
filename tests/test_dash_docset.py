@@ -1749,6 +1749,9 @@ from unittest import mock  # noqa: E402
 CONTRIB = json.dumps([{"name": n, "type": "dir"} for n in
                       ("Solarus", "Arm_Morello_A64_ISA", "Ruby_on_Rails", "Foo")]
                      + [{"name": "README.md", "type": "file"}])
+FEEDS = json.dumps([{"name": n, "type": "file"} for n in
+                    ("Python_3.xml", "Ruby.xml", "README.md", "Solarus.txt")]
+                   + [{"name": "old.xml", "type": "dir"}])
 CATALOG = json.dumps([
     {"name": "Python", "title": "Python", "sourceId": "com.kapeli.dash",
      "versions": ["3.12"], "icon": "x" * 100},
@@ -1845,8 +1848,9 @@ class NetTests(unittest.TestCase):
             text = f.read()
         hosts = {urlsplit(u).hostname for u in re.findall(r"https?://[^\s\"'()<>]+", text)}
         self.assertFalse({h for h in hosts if h and docset.blocked_host("https://" + h)})
-        for gone in ("Kapeli/feeds", "Kapeli/cheatsheets", "cheat.json",
-                     "user_contributed/build"):
+        # feed files hold kapeli.com download URLs: list their names, never read them
+        for gone in ("raw.githubusercontent.com/Kapeli/feeds", "Kapeli/cheatsheets",
+                     "cheat.json", "user_contributed/build"):
             self.assertNotIn(gone, text)
 
     def test_install_and_update_removed(self):
@@ -1860,46 +1864,61 @@ class NetTests(unittest.TestCase):
                 self.assertIn("sources", err)
         self.assertEqual(net.fetched + net.cond, [])
 
-    # sources: the contributed docset list, from GitHub; Zeal's catalog last
+    # sources: names from GitHub listings (official: Kapeli/feeds *.xml;
+    # contributed: Dash-User-Contributions docsets/); Zeal's catalog last
 
-    def test_sources_lists_contributed_from_github(self):
-        net = FakeNet(self, pages={docset.CONTRIB_LIST_URL: CONTRIB})
-        code, out, err = self.main("sources", "ruby", "on")
+    def both(self):
+        return {docset.FEEDS_LIST_URL: FEEDS, docset.CONTRIB_LIST_URL: CONTRIB}
+
+    def test_sources_lists_official_and_contributed_from_github(self):
+        net = FakeNet(self, pages=self.both())
+        code, out, err = self.main("sources", "ruby")
         self.assertEqual(code, 0, err)
         lines = out.splitlines()
-        self.assertEqual(lines[0], "Ruby_on_Rails")
-        self.assertNotIn("Solarus", out)
+        self.assertEqual(lines[:2], ["Ruby  (official)", "Ruby_on_Rails  (user-contributed)"])
         self.assertNotIn("README", out)
         self.assertIn("Dash", out)
         self.assertIn("Zeal", out)
-        self.assertEqual([u for u, _e, _l in net.cond], [docset.CONTRIB_LIST_URL])
-        self.main("sources", "solarus")  # cached for a week
-        self.assertEqual(len(net.cond), 1)
+        self.assertEqual(sorted(u for u, _e, _l in net.cond),
+                         sorted([docset.FEEDS_LIST_URL, docset.CONTRIB_LIST_URL]))
+        self.assertEqual(net.fetched, [u for u, _e, _l in net.cond])  # nothing else
+        code, out, err = self.main("sources", "python", "3")  # words joined: python_3
+        self.assertIn("Python_3  (official)", out)
+        self.assertEqual(len(net.cond), 2)  # cached for a week
         self.main("sources", "--refresh", "solarus")
-        self.assertEqual(len(net.cond), 2)
+        self.assertEqual(len(net.cond), 4)
 
     def test_sources_marks_docsets_already_here(self):
-        FakeNet(self, pages={docset.CONTRIB_LIST_URL: CONTRIB})
+        FakeNet(self, pages=self.both())
         make_docset(self.store_dir, "Solarus")
         code, out, err = self.main("sources", "sol")
         self.assertEqual(code, 0, err)
-        self.assertIn("Solarus  (already here", out)
+        self.assertIn("Solarus  (user-contributed)  (already here as Solarus)", out)
 
     def test_sources_no_match(self):
-        FakeNet(self, pages={docset.CONTRIB_LIST_URL: CONTRIB})
-        code, out, err = self.main("sources", "python")
+        FakeNet(self, pages=self.both())
+        code, out, err = self.main("sources", "nosuchthing")
         self.assertEqual(code, 5)
-        self.assertIn("no contributed docset matches 'python'", out)
+        self.assertIn("no docset matches 'nosuchthing'", out)
         self.assertIn("Dash", out)
+
+    def test_sources_one_list_failing_says_so(self):
+        FakeNet(self, pages={docset.CONTRIB_LIST_URL: CONTRIB})
+        code, out, err = self.main("sources", "ruby")
+        self.assertEqual(code, 7)
+        self.assertIn("Ruby_on_Rails  (user-contributed)", out)
+        self.assertIn("cannot load the official docset list", err)
+        self.assertIn("incomplete", out)
 
     def test_sources_falls_back_to_zeal_catalog(self):
         net = FakeNet(self, pages={docset.ZEAL_CATALOG_URL: CATALOG})
         net.etags = {docset.ZEAL_CATALOG_URL: '"v1"'}
         code, out, err = self.main("sources")
         self.assertEqual(code, 0, err)
-        self.assertIn("Arm_Morello_A64_ISA  2022.01  (Arm Morello A64 ISA)", out)
-        self.assertNotIn("Python", out)  # official and cheat sheets are not listed
-        self.assertNotIn("Git", out)
+        self.assertIn("Arm_Morello_A64_ISA  2022.01  (Arm Morello A64 ISA)  "
+                      "(user-contributed)", out)
+        self.assertIn("Python  3.12  (official)", out)
+        self.assertNotIn("Git", out)  # cheat sheets are not listed
         self.assertIn("Zeal's catalog", err)
         code, out, err = self.main("sources", "morello a64")  # title words match
         self.assertIn("Arm_Morello_A64_ISA", out)
@@ -1907,7 +1926,7 @@ class NetTests(unittest.TestCase):
         with open(body) as f:
             self.assertNotIn("icon", f.read())  # cached without icons
         zeal = lambda: sum(u == docset.ZEAL_CATALOG_URL for u, _e, _l in net.cond)
-        self.assertEqual(zeal(), 1)
+        self.assertEqual(zeal(), 1)  # one request served both lists
         self.main("sources", "--refresh")
         self.assertEqual(zeal(), 1)  # --refresh does not re-check Zeal within the week
         meta_p = body[:-len(".body")] + ".meta.json"
@@ -1924,7 +1943,8 @@ class NetTests(unittest.TestCase):
         FakeNet(self)
         code, out, err = self.main("sources")
         self.assertEqual(code, 7)
-        self.assertIn("cannot load the contributed docset list", err)
+        self.assertIn("cannot load the user-contributed docset list", err)
+        self.assertIn("cannot load the official docset list", err)
 
     def test_failed_fetch_not_retried_within_a_day(self):
         net = FakeNet(self)

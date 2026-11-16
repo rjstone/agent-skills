@@ -1,9 +1,9 @@
 # Hosts scripts/docset.py contacts, for a network allowlist. Only `sources`
-# (the user-contributed docset list) uses the network; searching docsets
+# (lists of docset names) uses the network; searching docsets
 # needs none. The script never contacts kapeli.com (it refuses that host
 # and redirects to it), so don't add it for this skill.
 
-# The list of user-contributed docsets (GitHub API)
+# Official and user-contributed docset names (GitHub API listings)
 api.github.com
 
 # Last resort when GitHub fails (checked at most weekly)

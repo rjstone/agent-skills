@@ -32,7 +32,7 @@ GITIGNORE_LINES = ["*", "!.gitignore", "!notes/", "!notes/**"]
 
 SUBCOMMANDS = {
     "where": "show the docset store location",
-    "sources": "search the user-contributed docsets (Dash or Zeal downloads them)",
+    "sources": "search official and user-contributed docset names (Dash or Zeal downloads them)",
     "list": "list the docsets found and their versions",
     "remove": "remove a docset from the store",
     "search": "search a docset's index",
@@ -1932,21 +1932,25 @@ def cmd_fts(args):
 # tools add no load to his servers (the user, 2026-11-16). Every docset
 # archive (official, cheat sheet, user-contributed) is served only from
 # there, so the script downloads no docsets: Dash and Zeal do, and the
-# script reads their folders (--read-from). `sources` only searches the list
-# of user-contributed docsets. Every request goes through _request, which
-# refuses these hosts and redirects to them.
+# script reads their folders (--read-from). `sources` only searches docset
+# names, to tell the user what Dash or Zeal can download. Every request goes
+# through _request, which refuses these hosts and redirects to them.
 BLOCKED_HOSTS = ("kapeli.com",)
-# User-contributed docsets: one folder per docset under docsets/ in the
-# Kapeli/Dash-User-Contributions repo on GitHub (it keeps each docset.json,
-# not the archives). One request lists them all (630 in 2026-11; the API
-# lists at most 1000 entries of a folder).
+# Docset names, one GitHub API request each (the API lists at most 1000
+# entries of a folder). Official: the *.xml files at the root of the
+# Kapeli/feeds repo (214 in 2026-11). Only the listing is read, never a
+# feed file: those hold the kapeli.com download URLs (the user,
+# 2026-11-16). User-contributed: one folder per docset under docsets/ in
+# Kapeli/Dash-User-Contributions (630 in 2026-11; the repo keeps each
+# docset.json, not the archives).
+FEEDS_LIST_URL = "https://api.github.com/repos/Kapeli/feeds/contents/"
 CONTRIB_LIST_URL = ("https://api.github.com/repos/Kapeli/Dash-User-Contributions"
                     "/contents/docsets")
 # Zeal's combined catalog: a best-effort public service with no stability
 # promise. Used only when the GitHub list fails, checked at most weekly
 # (conditional request), never retried within a day of a failure, and
 # cached without its icons. Entries: {name, title, sourceId, versions, ...};
-# contributed docsets have sourceId com.kapeli.contrib.
+# sourceId com.kapeli.dash = official, com.kapeli.contrib = contributed.
 ZEAL_CATALOG_URL = "https://api.zealdocs.org/_api/v1/catalog.json"
 ZEAL_MAX_AGE = 7 * 86400
 RETRY_AFTER_FAILURE = 86400
@@ -1957,7 +1961,8 @@ USER_AGENT = f"docset-agent-skill-RJS/{VERSION}"
 NET_TIMEOUT = 60
 
 GET_DOCSETS = ("This script downloads no docsets. Download one in Dash (Settings > "
-               "Downloads > User Contributed) or Zeal (Tools > Docsets > Available), "
+               "Downloads; contributed ones under User Contributed) or Zeal (Tools > "
+               "Docsets > Available), "
                "then read Dash's or Zeal's docset folder with: docset.py where --set "
                "STORE --read-from DIR (where --discover finds DIR).")
 
@@ -2102,13 +2107,17 @@ def _slim_catalog(body: bytes) -> bytes:
                        for e in data if isinstance(e, dict) and e.get("name")]).encode()
 
 
-def _slim_contrib(body: bytes) -> bytes:
-    """GitHub folder listing -> the sorted names of its subfolders."""
-    data = json.loads(body.decode("utf-8"))
-    if not isinstance(data, list):
-        raise ValueError("the GitHub listing is not a list")
-    return json.dumps(sorted(str(i["name"]) for i in data if isinstance(i, dict)
-                             and i.get("type") == "dir" and i.get("name"))).encode()
+def _github_names(kind, suffix):
+    """transform for a GitHub folder listing: the sorted names of its entries
+    of type kind ("file" or "dir"), minus suffix; others are left out."""
+    def slim(body: bytes) -> bytes:
+        data = json.loads(body.decode("utf-8"))
+        if not isinstance(data, list):
+            raise ValueError("the GitHub listing is not a list")
+        names = [str(i["name"]) for i in data if isinstance(i, dict)
+                 and i.get("type") == kind and str(i.get("name") or "").endswith(suffix)]
+        return json.dumps(sorted(n[:len(n) - len(suffix)] for n in names if n != suffix)).encode()
+    return slim
 
 
 def zeal_catalog(store) -> List[dict]:
@@ -2124,24 +2133,31 @@ def _first_version(e) -> str:
 _SOURCE_ERRORS = (FetchError, ValueError, KeyError, TypeError, AttributeError)
 
 
-def contributed(store, refresh: bool) -> List[Tuple[str, str, str]]:
-    """(name, version, title) of each user-contributed docset: from GitHub
-    (names only), from Zeal's catalog only when GitHub fails."""
+# label: (cache key, GitHub listing URL, entry type, suffix, Zeal sourceId)
+DOCSET_LISTS = {
+    "official": ("feeds-list", FEEDS_LIST_URL, "file", ".xml", "com.kapeli.dash"),
+    "user-contributed": ("contrib-list", CONTRIB_LIST_URL, "dir", "", "com.kapeli.contrib"),
+}
+
+
+def docset_names(store, label, refresh: bool) -> List[Tuple[str, str, str]]:
+    """(name, version, title) of each docset of one DOCSET_LISTS kind: from
+    GitHub (names only), from Zeal's catalog only when GitHub fails."""
+    key, url, kind, suffix, source_id = DOCSET_LISTS[label]
     try:
-        names = json.loads(cached_get(store, "contrib-list", CONTRIB_LIST_URL,
-                                      CACHE_MAX_AGE, force=refresh,
-                                      transform=_slim_contrib).decode("utf-8"))
+        names = json.loads(cached_get(store, key, url, CACHE_MAX_AGE, force=refresh,
+                                      transform=_github_names(kind, suffix)).decode("utf-8"))
         return [(str(n), "", "") for n in names]
     except _SOURCE_ERRORS as first:
         try:
             out = [(str(e["name"]), _first_version(e), str(e.get("title") or ""))
                    for e in zeal_catalog(store)
-                   if isinstance(e, dict) and e.get("sourceId") == "com.kapeli.contrib"]
+                   if isinstance(e, dict) and e.get("sourceId") == source_id]
         except _SOURCE_ERRORS as e:
-            raise CLIError("cannot load the contributed docset list (GitHub: %s; "
-                           "Zeal's catalog: %s)" % (first, e), 7)
-        print("note (no action needed): the list came from Zeal's catalog; GitHub "
-              "was unreachable (%s)" % first, file=sys.stderr)
+            raise CLIError("cannot load the %s docset list (GitHub: %s; Zeal's "
+                           "catalog: %s)" % (label, first, e), 7)
+        print("note (no action needed): the %s list came from Zeal's catalog; "
+              "GitHub was unreachable (%s)" % (label, first), file=sys.stderr)
         return out
 
 
@@ -2154,33 +2170,42 @@ def cmd_sources(args):
     store = require_store(args)
     q = _norm(args.query) if args.query else ""
     here = {_norm(d.name): d.name for d in find_docsets(store)}
+    found, failed = [], []
+    for label in DOCSET_LISTS:
+        try:
+            found += [(n, v, t, label) for n, v, t in docset_names(store, label, args.refresh)]
+        except CLIError as e:
+            print(str(e), file=sys.stderr)
+            failed.append(label)
+    if failed == list(DOCSET_LISTS):
+        return 7
     lines = []
-    for name, version, title in sorted(contributed(store, args.refresh),
-                                       key=lambda x: x[0].lower()):
+    for name, version, title, label in sorted(found, key=lambda x: (x[0].lower(), x[3])):
         if q not in _norm(name) and not (title and q in _norm(title)):
             continue
         line = name + ("  " + version if version else "")
         if title and title != name:
             line += "  (%s)" % title
+        line += "  (%s)" % label
         have = here.get(_norm(name)) or (here.get(_norm(title)) if title else None)
         if have:
             line += "  (already here as %s)" % have
         lines.append(line)
     if not lines:
-        print("no contributed docset matches %r" % (args.query or ""))
-        print(GET_DOCSETS)
-        return 5
+        print("no docset matches %r" % (args.query or ""))
     for line in cap_lines(lines, args.max_lines, "raise --max-lines or give a QUERY"):
         print(line)
+    if failed:
+        print("note: incomplete: the %s list could not be loaded" % " and ".join(failed))
     print(GET_DOCSETS)
-    return 0
+    return 7 if failed else (0 if lines else 5)
 
 
 REMOVED_COMMANDS = ("install", "update")
 REMOVED_MESSAGE = ("`%s` was removed: this script no longer downloads docsets (every "
                    "docset archive is on kapeli.com, which it never contacts). "
                    "Download or update docsets in Dash or Zeal; `docset.py sources "
-                   "QUERY` searches the user-contributed ones. Docsets already in "
+                   "QUERY` says which ones they offer. Docsets already in "
                    "Dash's or Zeal's folder are read in place (references/setup.md).")
 
 
@@ -2221,8 +2246,8 @@ def cmd_remove(args):
 
 EXIT_CODES = ("0 ok; 1 notes --check found problems; 2 usage, unknown name or "
               "no FTS5; 3 storage location not set; 4 search scope too wide "
-              "(use -d, a project list or --all); 5 not found; 7 network (the "
-              "contributed docset list could not be loaded)")
+              "(use -d, a project list or --all); 5 not found; 7 network (a docset "
+              "list could not be loaded)")
 
 # Top-level --help: the command lines agents normally need. Options used
 # here are listed in COMMON_OPTIONS; every other option of a subcommand is
@@ -2257,8 +2282,9 @@ Set up and manage (references/setup.md, references/getting-docsets.md):
                                  save the store the user chose; DIR = Dash's
                                  or Zeal's docset folder (where --discover)
   list                           docsets found and their versions
-  sources QUERY...               user-contributed docsets to download in Dash
-                                 or Zeal (this script downloads none)
+  sources QUERY...               official and user-contributed docsets to
+                                 download in Dash or Zeal (this script
+                                 downloads none)
   remove NAME | index-text DOCSET (build fts index now)
 
 Only if you need these, see `<command> --help`:
