@@ -463,14 +463,18 @@ prompts are in it), `score_trials.py` and the `opencode.json` that adds
 Nous as a provider.
 
 Needs: Linux (on macOS, also GNU `timeout`), `opencode` (v2), `python3`,
-network access to the
-providers and to the hosts in the skill's `assets/allowlist.txt`, and an
-API key for each provider used.
+network access to the providers, an API key for each provider used, and
+(since 2026-11-16, see below) a folder of docsets downloaded with Zeal or
+Dash, given as `DOCSETS`; the header of `run_trials.sh` lists the docsets
+each set needs. The rounds above ran before that change, against docsets
+the script downloaded, with S3 asking it to install Flask; S3 and S4 now
+check that the reply sends the user to Dash or Zeal.
 
 ```bash
 # from the repo root; set the keys opencode reads for the providers you use
 export OPENROUTER_API_KEY=... NOUS_API_KEY=... OPENCODE_API_KEY=... REFLECTION_API_KEY=...
 export OUT="$HOME/dash-docset-trials"
+export DOCSETS=~/.local/share/Zeal/Zeal/docsets   # or a copy of it
 
 T=docs/superpowers/trials/dash-docset
 $T/run_trials.sh basic   opencode-go/gpt-6-luna opencode-go/mimo-v2.6-flash
@@ -497,22 +501,60 @@ python3 $T/score_trials.py "$OUT"/docsets/*/        # -v: every command and the 
 - Sizes came from the Hugging Face model pages; free models and prices
   from each provider's `/models` endpoint. Both change.
 
+## No downloads: Kapeli's reply (2026-11-16)
+
+Kapeli doesn't want more load on his servers. The user decided: remove
+everything that points to Kapeli's servers and feeds, and block kapeli.com
+in the request routine, leaving the docsets Dash or Zeal already downloaded
+and a search of the contributed docsets.
+
+- Every docset archive (official, cheat sheet, user-contributed) is served
+  only from kapeli.com and its mirrors. The Kapeli/Dash-User-Contributions
+  repo keeps only each docset's `docset.json`; its README says archives are
+  removed from the repo once they reach Kapeli's CDN. So no download path
+  is left, and `install` and `update` are gone (running either prints what
+  to do instead, exit 2).
+- `_request`, which every request goes through, refuses kapeli.com and its
+  subdomains, and a redirect handler refuses redirects to them. A test
+  checks that no URL in the script is on a blocked host and that the
+  Kapeli feed, cheat-sheet and `user_contributed/build` paths are gone.
+- `sources QUERY` searches the user-contributed list only: the GitHub API
+  listing of `docsets/` in Kapeli/Dash-User-Contributions (names), else
+  Zeal's catalog (names, titles, versions; 630 contributed docsets in
+  2026-11). It marks docsets already here and says to download in Dash or
+  Zeal. Official docsets and cheat sheets aren't listed (their lists were
+  Kapeli's feeds and `cheat.json`).
+- Removed: the Kapeli/feeds XML parser, version pins, Zeal's manifest,
+  `cheat.json`, the cheat sheet `Last-Modified` versions, safe archive
+  extraction, mirror fallback. Kept: reading Dash, Zeal and dasht folders,
+  docsets an earlier version installed or that the user copies into the
+  store, `remove`, notes, fts.
+- Docs: `references/installing.md` became `references/getting-docsets.md`;
+  `setup.md` no longer offers script downloads (on a throwaway machine the
+  user copies `.docset` folders in); `assets/allowlist.txt` lists only
+  api.github.com and api.zealdocs.org, and a test now checks it lists
+  exactly the hosts the script uses.
+- The trials harness reads docsets from `DOCSETS` (see above).
+- Checked live in the sandbox: `sources` (Zeal fallback; the GitHub API is
+  blocked there), the `install` message, a refused kapeli.com fetch.
+
 ## Open
 
-- **Waiting on Kapeli:** a reply about the docset terms and redistributing
-  the metadata. Bundling starter lists in `assets/` and merging both wait for
-  it.
+- **Kapeli's terms:** `SKILL.md` still points to the terms in the README of
+  Kapeli's feeds repo (personal use or with Dash or Zeal); that is a pointer
+  for the user, not something the script reads. Merging waits for the
+  user's go-ahead.
 - **Not tested on real machines:**
   - macOS and Windows
   - real Dash/Zeal installs, including the macOS plist key, the Windows
     registry lookup and Zeal's menu path
-  - the GitHub API listing (blocked in the sandbox; the fallbacks covered it)
+  - the GitHub API listing of contributed docsets (blocked in the sandbox;
+    the Zeal fallback covered it)
+- **Trials since the change:** none; the harness needs a `DOCSETS` folder.
 - **From the other-model trials, not changed:** `show` rejects `-d`
   (one model tried it); a `"docsets"` value that isn't a list gives
   "unknown docset '.'" (declined); models that never load the skill.
 - **`TODO.md`:**
   - MCP mode (look at ZDocsetMCP first)
-  - installing into Dash, Zeal or dasht folders on request
-  - optional tarix storage for our own installs
   - a separate `gen-docset` skill
   - the items deferred from the final review

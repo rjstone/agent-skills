@@ -20,17 +20,20 @@ existing docset folders. Then decide where you are running:
      Docsets) and pass that folder to `--read-from`.
    - B. Neither installed: suggest installing Zeal (Linux, Windows) or
      Dash (macOS), downloading the docsets there, then continuing as in A.
-   - C. The user declines: the script downloads docsets itself. Offer a
-     permanent central folder (suggest `~/.local/share/dash-docset`) or
-     `.docsets/` in their project (the script writes a `.gitignore` that
-     keeps only `notes/`; warn that docsets are large).
+     The script downloads no docsets itself.
+   - C. The user declines: without docsets the skill can't help; use
+     Context7 or web search instead.
 2. **A cloud sandbox, CI or other throwaway machine** (no desktop apps, a
-   fresh home folder each session):
+   fresh home folder each session): docsets get there only when the user
+   copies `.docset` folders in (from Dash's or Zeal's folder on their own
+   computer).
    - A. If some folder survives between sessions (a mounted volume, a
-     cache the platform keeps), ask the user and use it as the store.
-   - B. If nothing persists, use a temporary folder and install only the
-     docsets the current task needs, one at a time, when needed. Prefer a
-     cheat sheet when it answers the question; skip `update`.
+     cache the platform keeps), ask the user and use it as the store; the
+     user copies the docsets into it.
+   - B. If nothing persists, ask whether the user can provide docset
+     folders for this session; use the folder they name as the store, or
+     as `--read-from` with a temporary store. Otherwise use Context7 or web
+     search.
 
 Never pick a location yourself: the user chooses or approves it. If unsure
 which case applies, ask. If a folder meant to be permanent is under a
@@ -43,14 +46,13 @@ writes `~/.config/dash-docset/config.json`, or
 
 `where --set` stops (exit 2) when a config already names a different
 store, or when a project file further up would be hidden: swapping stores
-drops the installed docsets out of use. Keep the existing store unless the
+drops its docsets and notes out of use. Keep the existing store unless the
 user asks to switch; then add `--replace`. Run plain `where` first to see
 the store in use (`where --discover` prints it too).
 
 Never write into a Dash, Zeal or dasht folder; docsets found there are
-read-only to the script (`update` and `remove` refuse them). `install` skips
-a docset that is already installed at that version, or already available
-from one of those folders (`--force` overrides).
+read-only to the script (`remove` refuses them). Getting more docsets:
+[getting-docsets.md](getting-docsets.md).
 
 ## Other options
 
@@ -63,7 +65,6 @@ Mention these to the user when they fit better:
 - An MCP server instead of a CLI, without Dash or Zeal:
   https://github.com/keturn/ZDocsetMCP.
 - Reading docs directly in a viewer app: Zeal (Linux, Windows;
-  https://zealdocs.org/) or Dash (macOS; https://kapeli.com/).
-- Docset sources, to browse or contribute:
-  https://github.com/Kapeli/Dash-User-Contributions and
-  https://github.com/Kapeli/cheatsheets.
+  https://zealdocs.org/) or Dash (macOS).
+- Contributing a docset:
+  https://github.com/Kapeli/Dash-User-Contributions.

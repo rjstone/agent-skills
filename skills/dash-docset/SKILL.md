@@ -1,7 +1,7 @@
 ---
 name: dash-docset
-description: Use when you need exact API, framework or library reference from Dash docsets (Kapeli, user-contributed, cheat sheets) offline, or when installing, updating, searching or annotating docsets from the command line.
-compatibility: network access needed for docset downloads and source lists; searching installed docsets works offline. Host allowlist in assets/allowlist.txt.
+description: Use when you need exact API, framework or library reference from Dash docsets (Kapeli, user-contributed, cheat sheets) offline, including docsets Dash or Zeal downloaded, or when finding user-contributed docsets, searching or annotating docsets from the command line.
+compatibility: reads docsets that Dash or Zeal downloaded (it downloads none); network only to list user-contributed docsets (assets/allowlist.txt).
 license: MIT
 metadata:
   author: Robert Stone
@@ -34,8 +34,9 @@ carry their own licences.
 - `where` exits 3 (no location set), or the user asks how to set up:
   [references/setup.md](references/setup.md) (also lists alternatives such
   as Kapeli's Dash MCP server).
-- Before `sources`, `install`, `update` or `remove`, or on exit 7 (network
-  or incomplete source list): [references/installing.md](references/installing.md).
+- A needed docset is missing, or before `sources` or `remove`, or on exit
+  7 (network): [references/getting-docsets.md](references/getting-docsets.md).
+  The script downloads no docsets: Dash or Zeal do.
 - Before writing notes: [references/notes.md](references/notes.md).
 
 ## Looking things up

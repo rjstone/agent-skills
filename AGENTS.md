@@ -181,11 +181,12 @@ metadata:
 - `opencode-api` - opencode v2 server HTTP API: the published OpenAPI spec
   cached in `references/openapi.json`, searched with `scripts/api_lookup.py`
   (too large to read whole); calls via `opencode api` or Basic auth.
-- `dash-docset` - install Dash docsets (Kapeli, user-contributed, cheat
-  sheets) and search them offline with `scripts/docset.py` (stdlib only):
-  entry search, page text, full-text search and per-docset notes. The user
-  picks the storage location; the script never writes into Dash, Zeal or
-  dasht folders.
+- `dash-docset` - search Dash docsets (Kapeli, user-contributed, cheat
+  sheets) that Dash or Zeal downloaded, offline, with `scripts/docset.py`
+  (stdlib only): entry search, page text, full-text search and per-docset
+  notes, plus a search of the user-contributed docset list. The user picks
+  the storage location (notes, indexes, hand-copied docsets); the script
+  never writes into Dash, Zeal or dasht folders.
   `scripts/docset.py` has its own `VERSION` (used in `--version`,
   `--help` and the User-Agent), bumped only when the script changes; it
   may lag `metadata.version` but never lead it (a test checks).
@@ -218,25 +219,30 @@ metadata:
   writes to `OLDPWD` instead; `where --set` refuses to swap a store that is
   already set unless `--replace` is given (the user, 2026-11-15).
   Docset names match without regard to letter case in lookups (`-d`, REFs,
-  the project list, `notes`, `index-text`); `update` and `remove` need the
-  exact name. `show --grep` also prints the definition (`<dd>`) of a
+  the project list, `notes`, `index-text`); `remove` needs the exact
+  name. `show --grep` also prints the definition (`<dd>`) of a
   matching term (`<dt>`) when it has at most 40 lines: page structure, not
   a guess (the user, 2026-11-15).
   `search` wants all the words in one entry name. When a query of several
   words finds nothing but single words do match (agents often search two
   or three function names at once), it prints the best entry for each word
   instead of only "no matches" (the user, 2026-11-15).
-  Source lists, in order: GitHub API and Zeal's manifest (raw GitHub) for
-  official docsets, Kapeli's `cheat.json` for cheat sheets, Kapeli's
-  `index.json` for user-contributed; Zeal's catalog at api.zealdocs.org
-  (a best-effort public service) only when all of those fail, checked at
-  most weekly with conditional requests and never retried within a day of
-  a failure. Keep it that way (the user, 2026-11-14).
-  Setup order (the user, 2026-11-14): on a desktop, use Dash's or Zeal's
-  docsets (the user downloads them in the app), else suggest installing
-  one, else the script downloads; on a throwaway machine, a store that
-  persists, else on-demand installs only. Branch `skill/dash-docset` is not
-  merged until Kapeli replies about the docset terms (the user asked).
+  Kapeli wants no more load on his servers, so the script never contacts
+  kapeli.com or its subdomains: `_request` (every request goes through it)
+  refuses them and redirects to them, and the script has no `install` or
+  `update` (every docset archive, contributed ones included, is only on
+  kapeli.com; the GitHub repo keeps only each docset's `docset.json`).
+  Don't add a download path or a Kapeli feed back (the user, 2026-11-16).
+  `sources` searches the user-contributed list only: the GitHub API listing
+  of `docsets/` in Kapeli/Dash-User-Contributions; Zeal's catalog at
+  api.zealdocs.org (a best-effort public service) only when that fails,
+  checked at most weekly with conditional requests and never retried
+  within a day of a failure (the user, 2026-11-14).
+  Setup order: on a desktop, use Dash's or Zeal's docsets (the user
+  downloads them in the app), else suggest installing one; on a throwaway
+  machine, only `.docset` folders the user copies in (the user,
+  2026-11-14, downloads dropped 2026-11-16). Branch `skill/dash-docset` is
+  merged only when the user says so.
 
 ## Testing a skill with other models (opencode)
 

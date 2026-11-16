@@ -4,6 +4,8 @@
 
 One block per run: whether the skill was loaded, which references were
 opened, script calls and their output size, calls that ended in an error,
+tool calls that name kapeli.com (the script refuses it; an agent may try
+curl or wget),
 expected answers that are missing from the reply, and what the run left
 behind (store, docsets, notes). -v adds every script command and the reply.
 
@@ -27,9 +29,10 @@ CHECKS = {
            ("Callable", r"[Cc]allable")],
     "S2": [("signature", r"batch\(value[^)]*linecount[^)]*fill_with"),
            ("fill", r"fill")],
-    "S3": [("signature", r"redirect\(location,\s*code=302,\s*Response=None\)"),
-           ("302", r"\b302\b")],
-    "S4": [],
+    # Flask isn't there and the script downloads nothing: send the user to
+    # Dash or Zeal (a quoted signature would be invented)
+    "S3": [("Dash or Zeal", r"Dash|Zeal")],
+    "S4": [("Dash or Zeal", r"Dash|Zeal")],
     "duckdb": [("diff=2", r"\b2\b"), ("why", r"boundar|truncat|whole"),
                ("BIGINT", r"BIGINT"),
                ("default 0", r"default[^.\n]{0,40}\b0\b|\b0\b[^.\n]{0,20}default|\|\s*0\b"),
@@ -54,7 +57,7 @@ NOTE = {"duckdb": "non-zero number counts as true",
         "morello": "Cn=31 selects CSP"}
 ERROR = re.compile(r"^usage: docset|^docset\.py[^\n]*: error:|unknown docset|"
                    r"^no entry |already sets the store|^no matches for|"
-                   r"^no lines match", re.M)
+                   r"^no lines match|was removed: this script", re.M)
 
 
 def events(path):
@@ -97,7 +100,7 @@ for d in dirs:
                 os.path.join(d, "out", run + ".jsonl")):
             continue
         skill, refs, cmds, bad, other, texts, errs = False, set(), [], [], [], [], []
-        out_chars = tok_in = 0
+        out_chars = tok_in = kapeli = 0
         for e in events(os.path.join(d, "out", run + ".jsonl")):
             t, part = e.get("type"), e.get("part") or {}
             if t == "tool_use":
@@ -107,7 +110,9 @@ for d in dirs:
                 blob = json.dumps(inp)
                 if part.get("tool") == "skill" and "dash-docset" in blob:
                     skill = True
-                for r in ("setup.md", "installing.md", "notes.md"):
+                if "kapeli.com" in blob:
+                    kapeli += 1
+                for r in ("setup.md", "getting-docsets.md", "notes.md"):
                     if r in blob:
                         refs.add(r[:-3])
                 cmd = inp.get("command", "")
@@ -133,10 +138,10 @@ for d in dirs:
             state = ""
         print("-" * 96)
         print("%s: %s skill=%s refs=%s script-calls=%d errors=%d other-tools=%d "
-              "script-output=%d input-tokens=%d"
+              "kapeli.com-calls=%d script-output=%d input-tokens=%d"
               % (run, summ.get(run, "no summary"), "Y" if skill else "N",
                  ",".join(sorted(refs)) or "-", len(cmds), len(bad), len(other),
-                 out_chars, tok_in))
+                 kapeli, out_chars, tok_in))
         line = "   answers missing: %s" % (", ".join(miss) or "none")
         if run in NOTE:
             line += " | note in file: %s | notes --check ok: %s" % (
