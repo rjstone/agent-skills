@@ -1196,6 +1196,17 @@ class NotesTests(unittest.TestCase):
         r = self.cli("notes", "Missing", "--check")
         self.assertEqual(r.returncode, 5)
 
+    def test_underscore_family(self):
+        self.add("react_native", name="React Native",
+                 entries=[("Animated", "Class", "a#asyncio.gather")])
+        self.write_notes("react_native", "## Animated\nunderscore note\n")
+        r = self.cli("show", "react_native:a#asyncio.gather")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertIn("underscore note", r.stdout)
+        r = self.cli("notes", "react_native", "--path")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertTrue(r.stdout.strip().endswith("react_native.md"), r.stdout)
+
     def test_notes_name_cannot_escape(self):
         self.add("python")
         r = self.cli("notes", "../evil", "--path")
