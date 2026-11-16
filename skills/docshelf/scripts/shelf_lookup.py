@@ -2,10 +2,15 @@
 import argparse
 import json
 import re
+import sys
+from urllib.parse import unquote
 from typing import Dict, List, Optional, Tuple
 
 import shelf_devdocs
-from shelf_core import CLIError, Config, cap_lines, rank, select_docsets, short_name
+from shelf_render import (_print_lines, _print_page_title, html_to_text,
+                          section_lines)
+from shelf_core import (CLIError, Config, cap_lines, pick_docset, rank,
+                        select_docsets, short_name)
 
 FUZZY_SHOWN = 0  # fuzzy hits shown when exact, prefix or substring hits exist
 
@@ -137,4 +142,55 @@ def cmd_search(cfg: Config, args: argparse.Namespace) -> int:
                          "text inside pages)" % args.query)
     for line in cap_lines(lines, args.max_lines, hint):
         print(line)
+    return 0
+
+
+def _split_ref(ref):
+    name, sep, rest = ref.partition(":")
+    if not sep or not name or not rest:
+        raise CLIError("bad reference %r (expected <docset>:<path>[#anchor])"
+                       % ref, 2)
+    return name, rest
+
+
+def resolve_doc_path(page, href):
+    """href resolved against the page's folder: '..' pops, a leading '/' is
+    the docset root; returns (path, fragment or None)."""
+    rel, _, frag = href.partition("#")
+    segments = [] if rel.startswith("/") else page.split("/")[:-1]
+    for part in rel.split("/"):
+        if part in ("", "."):
+            continue
+        if part == "..":
+            if segments:
+                segments.pop()
+        else:
+            segments.append(part)
+    return "/".join(segments), frag or None
+
+
+def cmd_show(cfg: Config, args: argparse.Namespace) -> int:
+    name, rest = _split_ref(args.ref)
+    ds = pick_docset(shelf_devdocs.installed_docsets(cfg), name)
+    page, anchor, entry = ds.resolve(rest)
+    known = set(ds.pages())
+
+    def link(href):
+        target, frag = resolve_doc_path(page, href)
+        return ds.make_ref(target, frag) if target in known else None
+
+    blocks = html_to_text(ds.page_html(page), link=link)
+    if anchor:
+        want = {anchor, unquote(anchor)}
+        if not any(x in want or unquote(x) in want for b in blocks for x in b.ids):
+            print("warning: no #%s on %s" % (anchor, page), file=sys.stderr)
+            anchor = None
+    elif entry is not None:  # no anchor: start at a heading named like the entry
+        want_name = short_name(entry.name)
+        anchor = next((b.ids[0] for b in blocks if b.level and b.ids
+                       and short_name(b.text.lstrip("#").strip()) == want_name),
+                      None)
+    lines, def_ends = section_lines(blocks, anchor)
+    _print_page_title(blocks, lines)
+    _print_lines(lines, args, def_ends)
     return 0

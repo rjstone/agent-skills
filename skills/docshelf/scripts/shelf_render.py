@@ -133,7 +133,8 @@ class _TextParser(HTMLParser):
         elif tag == "a":
             href = (a.get("href") or "").strip()
             ref = None
-            if self.link and href and not href.lower().startswith(NO_REF_PREFIXES):
+            if (self.link and href and not self.in_pre and not self.level
+                    and not href.lower().startswith(NO_REF_PREFIXES)):
                 ref = self.link(href) or None
             self.refs.append(ref)
         elif tag == "br":

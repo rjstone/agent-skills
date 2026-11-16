@@ -381,6 +381,12 @@ class RenderTests(unittest.TestCase):
         self.assertEqual(self.text(html), ["# Title", "Body text here", "- a", "- b",
                                            "```\nx = 1\n  y = 2\n```"])
 
+    def test_no_link_suffix_in_pre_or_headings(self):
+        html = ("<h2 id='h'>See <a href='x'>x</a></h2><pre>a <a href='x'>x</a> b</pre>"
+                "<p>go <a href='x'>x</a></p>")
+        out = self.text(html, link=lambda h: "d:" + h)
+        self.assertEqual(out, ["## See x", "```\na x b\n```", "go x [d:x]"])
+
     def test_navigation_chrome_dropped(self):
         html = ('<div class="related" role="navigation"><h3>Navigation</h3>'
                 '<ul><li>index</li><li><div>nested</div></li></ul></div>'
@@ -724,6 +730,240 @@ class SearchTests(unittest.TestCase):
         self.add("alpha")
         r = self.cli("search", " ")
         self.assertEqual(r.returncode, 2)
+
+
+class ShowTests(unittest.TestCase):
+    PY_PAGE = ("<h1>Asyncio</h1><h2 id='asyncio.gather'>asyncio.gather</h2>"
+               "<p>Run awaitables concurrently.</p><pre>await asyncio.gather(a(), b())</pre>"
+               "<h2 id='asyncio.sleep'>asyncio.sleep</h2><p>Block for a while.</p>")
+
+    def setUp(self):
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        self.tmp = os.path.realpath(tmp.name)
+        self.cache = os.path.join(self.tmp, "cache")
+        self.env = {"HOME": self.tmp, "USERPROFILE": self.tmp,
+                    "DOCSHELF_CACHE_DIR": self.cache,
+                    "DOCSHELF_NOTES_DIR": os.path.join(self.tmp, "notes")}
+
+    def add(self, slug, entries, pages, name=None):
+        make_devdocs(self.cache, slug, name=name or slug.capitalize(),
+                     release="1", entries=entries, pages=pages)
+
+    def cli(self, *args):
+        return run_cli(*args, env=self.env, cwd=self.tmp)
+
+    def add_py(self):
+        self.add("py", [("asyncio.gather", "Function", "a#asyncio.gather"),
+                        ("asyncio.sleep", "Function", "a#asyncio.sleep"),
+                        ("Guide", "Guide", "guide")],
+                 {"a": self.PY_PAGE, "guide": "<h1>Guide</h1><p>Gather things.</p>"})
+
+    def test_show_trims_to_anchor(self):
+        self.add_py()
+        r = self.cli("show", "py:a#asyncio.gather")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertIn("Run awaitables concurrently.", r.stdout)
+        self.assertIn("await asyncio.gather(a(), b())", r.stdout)
+        self.assertNotIn("Block for", r.stdout)
+        r = self.cli("show", "py:guide")  # no anchor: whole page
+        self.assertIn("# Guide", r.stdout)
+        r = self.cli("show", "py:a#asyncio.gather", "--full", "--no-notes")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertNotIn("Block for", r.stdout)
+
+    def test_show_full_lifts_cap_on_long_section(self):
+        body = "".join("<p>row %d</p>" % i for i in range(300))
+        self.add("l", [("sec", "Section", "p#s")],
+                 {"p": "<h2 id='s'>Sec</h2>" + body + "<h2 id='t'>Next</h2><p>other</p>"})
+        r = self.cli("show", "l:p#s")
+        self.assertEqual(len(r.stdout.splitlines()), 151)
+        self.assertIn("--full", r.stdout.splitlines()[-1])
+        r = self.cli("show", "l:p#s", "--max-lines", "10")
+        self.assertEqual(len(r.stdout.splitlines()), 11)
+        r = self.cli("show", "l:p#s", "--full")
+        self.assertEqual(len(r.stdout.splitlines()), 301)
+        self.assertNotIn("other", r.stdout)
+
+    def test_ref_path_with_colon(self):
+        self.add("cpp", [("std::vector", "Class", "cpp/container/vector#std::vector")],
+                 {"cpp/container/vector": "<h2 id='std::vector'>std::vector</h2><p>dyn array</p>"})
+        r = self.cli("show", "cpp:cpp/container/vector#std::vector")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertIn("dyn array", r.stdout)
+
+    def test_docset_name_in_ref_is_case_insensitive(self):
+        self.add_py()
+        r = self.cli("show", "PY:a#asyncio.sleep")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertIn("Block for a while.", r.stdout)
+
+    def test_unknown_page_exit_5(self):
+        self.add_py()
+        r = self.cli("show", "py:nope")
+        self.assertEqual(r.returncode, 5)
+        self.assertIn("nope", r.stderr)
+        r = self.cli("show", "zzz:a")
+        self.assertEqual(r.returncode, 5)
+        self.assertIn("zzz", r.stderr)
+
+    def test_unknown_anchor_shows_page_start(self):
+        self.add_py()
+        r = self.cli("show", "py:a#x")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertIn("warning: no #x on a", r.stderr)
+        self.assertEqual(r.stdout.splitlines()[0], "# Asyncio")
+        self.assertIn("Block for a while.", r.stdout)
+        self.assertNotIn("anchor not found", r.stdout)
+
+    def test_bad_ref_exit_2(self):
+        self.add_py()
+        for bad in ("garbage", ":a", "py:"):
+            with self.subTest(ref=bad):
+                r = self.cli("show", bad)
+                self.assertEqual(r.returncode, 2, r.stderr)
+                self.assertIn("bad reference", r.stderr)
+                self.assertIn("<docset>:<path>[#anchor]", r.stderr)
+
+    def test_max_lines_below_one_rejected(self):
+        self.add_py()
+        for cmd in (("search", "sleep"), ("show", "py:a")):
+            for bad in ("0", "-3", "x"):
+                with self.subTest(cmd=cmd[0], bad=bad):
+                    r = self.cli(*cmd, "--max-lines", bad)
+                    self.assertEqual(r.returncode, 2, r.stderr)
+
+    def test_links_become_refs_for_existing_pages_only(self):
+        self.add("d", [("a", "Guide", "dir/a"), ("b", "Guide", "dir/b")],
+                 {"dir/a": ("<p><a href='b#sec'>rel</a> <a href='../top#x'>up</a> "
+                            "<a href='/dir/b'>root</a> <a href='./b'>dot</a> "
+                            "<a href='missing'>gone</a> <a href='#here'>self</a> "
+                            "<a href='https://e.com/x'>web</a></p>"),
+                  "dir/b": "<p>B</p>", "top": "<p>T</p>"})
+        r = self.cli("show", "d:dir/a")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        out = r.stdout
+        self.assertIn("rel [d:dir/b#sec]", out)
+        self.assertIn("up [d:top#x]", out)
+        self.assertIn("root [d:dir/b]", out)
+        self.assertIn("dot [d:dir/b]", out)
+        self.assertIn("gone self web", out)  # no suffix for these
+
+    def test_no_notes_flag_accepted(self):
+        self.add_py()
+        r = self.cli("show", "py:guide", "--no-notes")
+        self.assertEqual(r.returncode, 0, r.stderr)
+
+
+class ShowGrepTests(unittest.TestCase):
+    PAGE = ("<html><body><h2 id='params'>Parameters</h2><p>Options for read_csv.</p>"
+            "<table><tr><th>Name</th><th>Type</th><th>Default</th></tr>"
+            "<tr><td>header</td><td>BOOL</td><td>false</td></tr>"
+            "<tr><td>sep</td><td>VARCHAR</td><td>,</td></tr>"
+            "<tr><td>skip</td><td>BIGINT</td><td>0</td></tr>"
+            "<tr><td>quote</td><td>VARCHAR</td><td>\"</td></tr></table>"
+            "<p>Use SKIP to ignore leading lines.</p></body></html>")
+    DL_PAGE = (
+        "<html><body><h2 id='f'>read_csv</h2>"
+        "<dl><dt id='sig'>read_csv(path, on_bad_lines='error', low_memory=True)</dt>"
+        "<dd><p>Read a file.</p><dl>"
+        "<dt><strong>on_bad_lines</strong> {'error', 'warn'}, default 'error'</dt>"
+        "<dd><p>What to do with a bad line. Allowed values are:</p>"
+        "<ul><li>'error', raise.</li><li>'warn', warn and skip.</li></ul>"
+        "<p>Changed in version 2.2.</p></dd>"
+        "<dt><strong>low_memory</strong> bool, default True</dt>"
+        "<dd><p>Process the file in chunks.</p></dd>"
+        "<dt><strong>long_one</strong> str</dt><dd>"
+        + "".join("<p>long line %d</p>" % i for i in range(60))
+        + "</dd></dl></dd></dl></body></html>")
+
+    def setUp(self):
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        self.tmp = os.path.realpath(tmp.name)
+        self.cache = os.path.join(self.tmp, "cache")
+        self.env = {"HOME": self.tmp, "USERPROFILE": self.tmp,
+                    "DOCSHELF_CACHE_DIR": self.cache,
+                    "DOCSHELF_NOTES_DIR": os.path.join(self.tmp, "notes")}
+        make_devdocs(self.cache, "duck", name="Duck", release="1",
+                     entries=[("Parameters", "Section", "p#params")],
+                     pages={"p": self.PAGE})
+        make_devdocs(self.cache, "pan", name="Pan", release="1",
+                     entries=[("read_csv", "Function", "d#f")],
+                     pages={"d": self.DL_PAGE})
+
+    def cli(self, *args):
+        return run_cli(*args, env=self.env, cwd=self.tmp)
+
+    def test_grep_keeps_heading_table_header_and_matches(self):
+        r = self.cli("show", "duck:p#params", "--grep", "skip", "--no-notes")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        lines = r.stdout.splitlines()
+        self.assertTrue(lines[0].startswith("## Parameters"), lines)
+        row = next(k for k, l in enumerate(lines) if "skip" in l and "BIGINT" in l)
+        self.assertIn("Name", lines[row - 2])  # the table's header row, then "..."
+        self.assertEqual(lines[row - 1], "...")
+        self.assertIn("Use SKIP to ignore leading lines.", r.stdout)
+        for gone in ("header", "VARCHAR", "Options for read_csv"):
+            self.assertNotIn(gone, r.stdout)
+        self.assertEqual(lines[-1], "(all 2 lines containing 'skip' are shown; "
+                                    "the section has 8 lines)")
+
+    def test_grep_repeatable_and_no_match(self):
+        r = self.cli("show", "duck:p#params", "--grep", "skip", "--grep", "quote")
+        self.assertIn("BIGINT", r.stdout)
+        self.assertIn("quote", r.stdout)
+        r = self.cli("show", "duck:p#params", "--grep", "zzz")
+        self.assertEqual(r.returncode, 0)
+        self.assertTrue(r.stdout.startswith("no lines match"), r.stdout)
+        self.assertIn("drop --grep", r.stdout)
+
+    def test_grep_on_a_definition_term_shows_its_definition(self):
+        r = self.cli("show", "pan:d#f", "--grep", "on_bad_lines")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        for kept in ("What to do with a bad line. Allowed values are:",
+                     "- 'error', raise.", "- 'warn', warn and skip.",
+                     "Changed in version 2.2."):
+            self.assertIn(kept, r.stdout)
+        self.assertNotIn("Process the file in chunks", r.stdout)
+        self.assertNotIn("Read a file.", r.stdout)
+        self.assertNotIn("long line", r.stdout)
+        self.assertIn("read_csv(path, on_bad_lines='error'", r.stdout)
+        self.assertIn("(all 2 lines containing 'on_bad_lines' are shown", r.stdout)
+        self.assertIn("definition", r.stdout.splitlines()[-1])
+
+    def test_grep_long_definition_is_not_added(self):
+        r = self.cli("show", "pan:d#f", "--grep", "long_one")
+        self.assertIn("long_one", r.stdout)
+        self.assertNotIn("long line", r.stdout)
+
+    def test_grep_match_inside_a_definition_adds_nothing(self):
+        r = self.cli("show", "pan:d#f", "--grep", "warn and skip")
+        self.assertIn("- 'warn', warn and skip.", r.stdout)
+        self.assertNotIn("Changed in version", r.stdout)
+
+
+class AnchorlessShowTests(unittest.TestCase):
+    def test_show_starts_at_heading_named_like_entry(self):
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        root = os.path.realpath(tmp.name)
+        cache = os.path.join(root, "cache")
+        page = ("<html><body><h1>Date Functions</h1><p>intro</p>"
+                "<h4 id='date_subpart'>date_sub(part, a, b)</h4><p>signed length</p>"
+                "<h4 id='other'>other()</h4><p>nope</p></body></html>")
+        make_devdocs(cache, "duck", name="Duck", release="1",
+                     entries=[("date_sub", "Function", "d")], pages={"d": page})
+        r = run_cli("show", "duck:d", env={"HOME": root, "DOCSHELF_CACHE_DIR": cache,
+                                           "DOCSHELF_NOTES_DIR": os.path.join(root, "n")},
+                    cwd=root)
+        self.assertEqual(r.returncode, 0, r.stderr)
+        lines = r.stdout.splitlines()
+        self.assertEqual(lines[0], "(page: Date Functions)")
+        self.assertTrue(lines[1].startswith("#### date_sub(part, a, b)"), r.stdout)
+        self.assertIn("signed length", r.stdout)
+        self.assertNotIn("intro", r.stdout)
+        self.assertNotIn("nope", r.stdout)
 
 
 if __name__ == "__main__":

@@ -14,7 +14,7 @@ from shelf_core import CLIError, Config
 class Param:
     flags: Tuple[str, ...]
     help: str
-    kind: str = "str"  # "str", "int" or "flag"
+    kind: str = "str"  # "str", "int", "posint" (>= 1) or "flag"
     nargs: Optional[str] = None
     repeat: bool = False
     rare: bool = False
@@ -68,11 +68,30 @@ COMMANDS: List[Command] = [
         Param(("-d", "--docset"), "Docset to search (repeatable).", repeat=True),
         Param(("--type",), "Only entries of this type.", rare=True),
         Param(("--all",), "Search every installed docset.", kind="flag", rare=True),
-        Param(("--max-lines",), "Output line cap.", kind="int", rare=True,
+        Param(("--max-lines",), "Output line cap.", kind="posint", rare=True,
               default=40),
         Param(("--json",), "Print JSON.", kind="flag", rare=True),
     ]),
+    Command("show", "Show a page or section as text.", shelf_lookup.cmd_show, [
+        Param(("ref",), "REF from search: <docset>:<path>[#anchor]."),
+        Param(("--grep",), "Only lines containing this text (repeatable).",
+              repeat=True),
+        Param(("--full",), "No line cap.", kind="flag", rare=True),
+        Param(("--max-lines",), "Output line cap.", kind="posint", rare=True,
+              default=150),
+        Param(("--no-notes",), "Do not print notes.", kind="flag", rare=True),
+    ]),
 ]
+
+
+def positive_int(text):
+    try:
+        n = int(text)
+    except ValueError:
+        n = 0
+    if n < 1:
+        raise argparse.ArgumentTypeError("%r: must be an integer >= 1" % text)
+    return n
 
 
 def _add_param(parser, p: Param):
@@ -82,6 +101,8 @@ def _add_param(parser, p: Param):
     else:
         if p.kind == "int":
             kwargs["type"] = int
+        elif p.kind == "posint":
+            kwargs["type"] = positive_int
         if p.nargs:
             kwargs["nargs"] = p.nargs
         if p.repeat:
