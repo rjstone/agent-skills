@@ -1,4 +1,4 @@
-"""Offline tests for skills/docshelf. No network: docsets are built by
+"""Offline tests for skills/docshelf. No network: docvols are built by
 make_devdocs() in temp dirs. Run from the repo root:
 python3 -m unittest discover -s tests -v
 """
@@ -58,7 +58,7 @@ def make_devdocs(cache: str, slug: str, *, name: str, release: str,
                  alias: Optional[str] = None, mtime: int = 1700000000,
                  version: Optional[str] = None) -> str:
     """Write <cache>/devdocs/<slug>/{index.json, db.json, meta.json} and append
-    the manifest row to <cache>/devdocs/docs.json; return the docset folder.
+    the manifest row to <cache>/devdocs/docs.json; return the docvol folder.
 
     entries are (name, type, path) tuples; pages maps path -> HTML."""
     root = os.path.join(cache, "devdocs")
@@ -142,24 +142,24 @@ class SkeletonTests(unittest.TestCase):
         proj = os.path.join(self.home, "proj")
         os.makedirs(proj)
         with open(os.path.join(proj, ".docshelf.json"), "w") as f:
-            json.dump({"docsets": ["python~3.12"]}, f)
+            json.dump({"docvols": ["python~3.12"]}, f)
         r = run_cli("where", env=self.env(OLDPWD=proj), cwd=SKILL)
         self.assertEqual(r.returncode, 0, r.stderr)
         self.assertIn("project: %s" % os.path.join(proj, ".docshelf.json"), r.stdout)
         self.assertIn("OLDPWD", r.stderr)
 
-    def test_bad_project_docsets(self):
+    def test_bad_project_docvols(self):
         with open(os.path.join(self.work, ".docshelf.json"), "w") as f:
-            json.dump({"docsets": "x"}, f)
+            json.dump({"docvols": "x"}, f)
         r = run_cli("where", env=self.env(), cwd=self.work)
         self.assertEqual(r.returncode, 2)
         self.assertIn(".docshelf.json", r.stderr)
 
-    def test_load_config_reads_docsets(self):
+    def test_load_config_reads_docvols(self):
         with open(os.path.join(self.work, ".docshelf.json"), "w") as f:
-            json.dump({"docsets": ["a", "b~1"]}, f)
+            json.dump({"docvols": ["a", "b~1"]}, f)
         cfg = shelf_core.load_config(self.work, self.env())
-        self.assertEqual(cfg.project_docsets, ["a", "b~1"])
+        self.assertEqual(cfg.project_docvols, ["a", "b~1"])
         self.assertEqual(cfg.cache_source, "env")
 
 
@@ -181,10 +181,10 @@ class ProjectFileFallbackTests(unittest.TestCase):
                     "DOCSHELF_CACHE_DIR": os.path.join(self.tmp, "cache"),
                     "DOCSHELF_NOTES_DIR": os.path.join(self.tmp, "notes")}
 
-    def project(self, folder, docsets=("x",)):
+    def project(self, folder, docvols=("x",)):
         os.makedirs(folder, exist_ok=True)
         with open(os.path.join(folder, ".docshelf.json"), "w") as f:
-            json.dump({"docsets": list(docsets)}, f)
+            json.dump({"docvols": list(docvols)}, f)
 
     def script_copy(self, skill_dir):
         """A copy of the scripts at <skill_dir>/scripts/."""
@@ -296,23 +296,23 @@ class DevDocsDiskTests(unittest.TestCase):
 
     def test_index_rebuilt_when_db_changes(self):
         folder = self.make()
-        d = shelf_devdocs.installed_docsets(self.cfg())[0]
+        d = shelf_devdocs.installed_docvols(self.cfg())[0]
         self.assertEqual(d.page_html("guide"), "<p>hi</p>")
         db = os.path.join(folder, "db.json")
         with open(db, "w", encoding="utf-8") as f:
             json.dump({"guide": "<p>new text</p>"}, f, ensure_ascii=False)
         os.utime(db, (1800000000, 1800000000))
-        d2 = shelf_devdocs.installed_docsets(self.cfg())[0]
+        d2 = shelf_devdocs.installed_docvols(self.cfg())[0]
         self.assertEqual(d2.page_html("guide"), "<p>new text</p>")
         self.assertEqual(d.page_html("guide"), "<p>new text</p>")  # same object too
 
     def test_works_without_derived_dir(self):
         folder = self.make()
-        d = shelf_devdocs.installed_docsets(self.cfg())[0]
+        d = shelf_devdocs.installed_docvols(self.cfg())[0]
         d.page_html("guide")
         derived = os.path.join(folder, ".docshelf")
         shutil.rmtree(derived)
-        d2 = shelf_devdocs.installed_docsets(self.cfg())[0]
+        d2 = shelf_devdocs.installed_docvols(self.cfg())[0]
         self.assertEqual(d2.page_html("guide"), "<p>hi</p>")
         self.assertTrue(os.path.isfile(os.path.join(derived, "pages.json")))
 
@@ -320,7 +320,7 @@ class DevDocsDiskTests(unittest.TestCase):
         self.make(entries=[("Guide", "Guide", "guide"),
                            ("Sec", "Guide", "guide#sec")],
                   pages={"guide": "<p>x</p>"})
-        d = shelf_devdocs.installed_docsets(self.cfg())[0]
+        d = shelf_devdocs.installed_docvols(self.cfg())[0]
         e = d.entries()[1]
         self.assertEqual((e.ref, e.page, e.anchor), ("vite:guide#sec", "guide", "sec"))
         page, anchor, entry = d.resolve("guide#sec")
@@ -337,14 +337,14 @@ class DevDocsDiskTests(unittest.TestCase):
         self.make("zed", name="Zed")
         self.make("alpha", name="Alpha")
         os.makedirs(os.path.join(self.cache, "devdocs", "broken"))
-        names = [d.name for d in shelf_devdocs.installed_docsets(self.cfg())]
+        names = [d.name for d in shelf_devdocs.installed_docvols(self.cfg())]
         self.assertEqual(names, ["alpha", "zed"])
 
     def test_list(self):
         r = run_cli("list", env=self.env, cwd=self.work)
         self.assertEqual(r.returncode, 0, r.stderr)
         self.assertEqual(r.stdout.strip(),
-                         "no docsets installed (install NAME; sources QUERY finds names)")
+                         "no docvols installed (install NAME; sources QUERY finds names)")
         self.make("vite", name="Vite", release="5")
         big = {"p%d" % i: "x" for i in range(500)}
         self.make("big~2", name="Big", release="2",
@@ -362,24 +362,24 @@ class DevDocsDiskTests(unittest.TestCase):
         self.make("vite")
         self.make("node~24_lts", name="Node.js", release="24.14.0")
         self.make("ruby~3.4", name="Ruby", release="3.4.1", version="3.4 x")
-        ds = shelf_devdocs.installed_docsets(self.cfg())
+        ds = shelf_devdocs.installed_docvols(self.cfg())
         for q in ("python", "py"):
             with self.assertRaises(shelf_core.CLIError) as cm:
-                shelf_core.pick_docset(ds, q)
+                shelf_core.pick_docvol(ds, q)
             self.assertEqual(cm.exception.code, 2)
             self.assertIn("python~3.13", str(cm.exception))
             self.assertIn("python~3.14", str(cm.exception))
-        self.assertEqual(shelf_core.pick_docset(ds, "Python 3.14").name, "python~3.14")
-        self.assertEqual(shelf_core.pick_docset(ds, "VITE").name, "vite")
-        self.assertEqual(shelf_core.pick_docset(ds, "Vite").title, "Vite")
-        self.assertEqual(shelf_core.pick_docset(ds, "Node.js 24 LTS").name, "node~24_lts")
-        self.assertEqual(shelf_core.pick_docset(ds, "Ruby 3.4 x").name, "ruby~3.4")
+        self.assertEqual(shelf_core.pick_docvol(ds, "Python 3.14").name, "python~3.14")
+        self.assertEqual(shelf_core.pick_docvol(ds, "VITE").name, "vite")
+        self.assertEqual(shelf_core.pick_docvol(ds, "Vite").title, "Vite")
+        self.assertEqual(shelf_core.pick_docvol(ds, "Node.js 24 LTS").name, "node~24_lts")
+        self.assertEqual(shelf_core.pick_docvol(ds, "Ruby 3.4 x").name, "ruby~3.4")
         with self.assertRaises(shelf_core.CLIError) as cm:
-            shelf_core.pick_docset(ds, "nope")
+            shelf_core.pick_docvol(ds, "nope")
         self.assertEqual(cm.exception.code, 5)
         with self.assertRaises(shelf_core.ScopeError):
-            shelf_core.select_docsets(self.cfg(), ds, ["nope"], False)
-        self.assertEqual(len(shelf_core.select_docsets(self.cfg(), ds, [], False)), 5)
+            shelf_core.select_docvols(self.cfg(), ds, ["nope"], False)
+        self.assertEqual(len(shelf_core.select_docvols(self.cfg(), ds, [], False)), 5)
 
 
 class RenderTests(unittest.TestCase):
@@ -568,12 +568,12 @@ class SearchTests(unittest.TestCase):
             "no matches for 'enemy arrow' (entry names only"), r.stdout)
         self.assertEqual(len(r.stdout.splitlines()), 1)
 
-    def test_docset_name_is_case_insensitive(self):
+    def test_docvol_name_is_case_insensitive(self):
         self.add("alpha", [("date_sub", "Function", "date#sub")])
         r = self.cli("search", "date_sub", "-d", "ALPHA")
         self.assertEqual(r.returncode, 0, r.stderr)
         self.assertIn("alpha:date#sub", r.stdout)
-        r = self.cli("search", "date_sub", project={"docsets": ["Alpha"]})
+        r = self.cli("search", "date_sub", project={"docvols": ["Alpha"]})
         self.assertIn("alpha:date#sub", r.stdout)
 
     def test_anchored_signature_beats_bare_page_entry(self):
@@ -633,7 +633,7 @@ class SearchTests(unittest.TestCase):
         self.assertEqual(sum(1 for l in r.stdout.splitlines()
                              if "t_i_m_e_r" in l), 9)
 
-    def test_search_ranks_across_docsets(self):
+    def test_search_ranks_across_docvols(self):
         self.add("alpha", [("sleep_long", "Function", "a"),
                            ("sleep", "Function", "b")])
         self.add("beta", [("Sleep", "Guide", "c"), ("xsleepx", "Guide", "d"),
@@ -665,7 +665,7 @@ class SearchTests(unittest.TestCase):
         r = self.cli("search", "%")
         self.assertEqual([l.split("  ")[2] for l in r.stdout.splitlines()], ["100%"])
 
-    def test_unknown_docset_exits_4(self):
+    def test_unknown_docvol_exits_4(self):
         self.add("alpha")
         r = self.cli("search", "x", "-d", "Nope")
         self.assertEqual(r.returncode, 4)
@@ -675,7 +675,7 @@ class SearchTests(unittest.TestCase):
         self.add("alpha", [("thing", "Function", "a")])
         self.add("beta", [("thing", "Function", "b")])
         r = self.cli("search", "thing", "-d", "beta",
-                     project={"docsets": ["alpha"]})
+                     project={"docvols": ["alpha"]})
         self.assertEqual(r.returncode, 0, r.stderr)
         self.assertIn("beta:", r.stdout)
         self.assertNotIn("alpha:", r.stdout)
@@ -683,7 +683,7 @@ class SearchTests(unittest.TestCase):
     def test_scope_project_list(self):
         for n in "abcdef":
             self.add("doc" + n, [("thing", "Function", "a")])
-        r = self.cli("search", "thing", project={"docsets": ["docb", "docc"]})
+        r = self.cli("search", "thing", project={"docvols": ["docb", "docc"]})
         self.assertEqual(r.returncode, 0, r.stderr)
         self.assertEqual(sorted(l.split(":")[0] for l in r.stdout.splitlines()),
                          ["docb", "docc"])
@@ -697,13 +697,13 @@ class SearchTests(unittest.TestCase):
         self.assertEqual(r.returncode, 4)
         for n in "abcde":
             self.assertIn("doc" + n, r.stderr)
-        for hint in ("-d", "docsets", ".docshelf.json", "--all"):
+        for hint in ("-d", "docvols", ".docshelf.json", "--all"):
             self.assertIn(hint, r.stderr)
         r = self.cli("search", "thing", "--all")
         self.assertEqual(r.returncode, 0, r.stderr)
         self.assertEqual(len(r.stdout.splitlines()), 5)
 
-    def test_scope_small_docsets_dont_count(self):
+    def test_scope_small_docvols_dont_count(self):
         big = [("thing", "Function", "a")] + [
             ("f%d" % i, "Function", "p%d" % i) for i in range(500)]
         for n in "abcd":
@@ -730,8 +730,8 @@ class SearchTests(unittest.TestCase):
         self.assertEqual(r.returncode, 0, r.stderr)
         data = json.loads(r.stdout)
         self.assertEqual([d["name"] for d in data], ["sleep", "sleeper"])
-        self.assertEqual(set(data[0]), {"ref", "docset", "type", "name", "rank"})
-        self.assertEqual((data[0]["docset"], data[0]["rank"], data[1]["rank"]),
+        self.assertEqual(set(data[0]), {"ref", "docvol", "type", "name", "rank"})
+        self.assertEqual((data[0]["docvol"], data[0]["rank"], data[1]["rank"]),
                          ("alpha", 0, 1))
         self.assertEqual(data[0]["ref"], "alpha:a")
         r = self.cli("search", "sleep", "--json", "--max-lines", "1")
@@ -803,7 +803,7 @@ class ShowTests(unittest.TestCase):
         self.assertEqual(r.returncode, 0, r.stderr)
         self.assertIn("dyn array", r.stdout)
 
-    def test_docset_name_in_ref_is_case_insensitive(self):
+    def test_docvol_name_in_ref_is_case_insensitive(self):
         self.add_py()
         r = self.cli("show", "PY:a#asyncio.sleep")
         self.assertEqual(r.returncode, 0, r.stderr)
@@ -834,7 +834,7 @@ class ShowTests(unittest.TestCase):
                 r = self.cli("show", bad)
                 self.assertEqual(r.returncode, 2, r.stderr)
                 self.assertIn("bad reference", r.stderr)
-                self.assertIn("<docset>:<path>[#anchor]", r.stderr)
+                self.assertIn("<docvol>:<path>[#anchor]", r.stderr)
 
     def test_max_lines_below_one_rejected(self):
         self.add_py()
@@ -1005,7 +1005,7 @@ class NotesTests(unittest.TestCase):
                                      "guide": "<h1>Guide</h1><p>Text.</p>"})
 
     def ds(self, name):
-        return shelf_core.pick_docset(shelf_devdocs.installed_docsets(self.cfg),
+        return shelf_core.pick_docvol(shelf_devdocs.installed_docvols(self.cfg),
                                       name)
 
     def write_notes(self, family, text):
@@ -1042,7 +1042,7 @@ class NotesTests(unittest.TestCase):
         r = self.cli("notes", "python", "--check")
         self.assertEqual(r.returncode, 0, r.stdout)
         lines = r.stdout.splitlines()
-        self.assertIn("## General: shown by every show of this docset", lines)
+        self.assertIn("## General: shown by every show of this docvol", lines)
         self.assertIn("## asyncio.gather: shown by show python:a#asyncio.gather",
                       lines)
         self.assertIn("## Guide (Guide): shown by show python:guide", lines)
@@ -1264,7 +1264,7 @@ class FtsTests(unittest.TestCase):
         r = self.cli("fts", "Gather things", "-d", "py", "--json")
         items = json.loads(r.stdout)
         self.assertEqual(items[0]["ref"], "py:guide")
-        self.assertEqual(sorted(items[0]), ["docset", "page", "ref", "snippet"])
+        self.assertEqual(sorted(items[0]), ["docvol", "page", "ref", "snippet"])
         self.assertEqual(items[0]["page"], "guide")
         r = self.cli("fts", "zzzznothing", "-d", "py")
         self.assertEqual(r.returncode, 0)
@@ -1352,14 +1352,14 @@ class FtsTests(unittest.TestCase):
         refs = {x for (x,) in con.execute("SELECT ref FROM page_entries")}
         self.assertIn("py:a#asyncio.sleep", refs)
         keys = {k for k, _ in con.execute("SELECT key, value FROM meta")}
-        self.assertEqual(keys, {"docset_version", "built_at"})
+        self.assertEqual(keys, {"docvol_version", "built_at"})
         con.close()
         r = self.cli("fts", "gather", "-d", "py")  # already built: silent
         self.assertEqual(r.stderr, "")
         r = self.cli("index-text", "nope")
         self.assertEqual(r.returncode, 5)
 
-    def test_fts_rebuilds_when_docset_rewritten(self):
+    def test_fts_rebuilds_when_docvol_rewritten(self):
         self.cli("fts", "gather", "-d", "py")
         self.add("py", [("asyncio.gather", "Function", "a#asyncio.gather"),
                         ("Guide", "Guide", "guide")],
@@ -1447,7 +1447,7 @@ class FakeNet:
         return b""
 
 
-def remote_docset(slug, entries, pages):
+def remote_docvol(slug, entries, pages):
     """The two documents documents.devdocs.io serves for a slug."""
     base = "%s/%s/" % (shelf_devdocs.DOCUMENTS_BASE, slug)
     index = {"entries": [{"name": n, "type": t, "path": p} for n, t, p in entries],
@@ -1487,7 +1487,7 @@ class NetworkTests(unittest.TestCase):
     def docs_pages(self, rows):
         pages = {shelf_devdocs.MANIFEST_URL: json.dumps(rows)}
         for r in rows:
-            pages.update(remote_docset(r["slug"], self.entries, self.pages))
+            pages.update(remote_docvol(r["slug"], self.entries, self.pages))
         return pages
 
     def write_manifest(self, rows, age=0):
@@ -1575,7 +1575,7 @@ class NetworkTests(unittest.TestCase):
         leftovers = [f for _, _, fs in os.walk(folder) for f in fs]
         self.assertEqual(leftovers, [])
 
-    def test_failed_update_keeps_old_docset(self):
+    def test_failed_update_keeps_old_docvol(self):
         self.main("install", "python~3.14")
         newer = [dict(r, mtime=1800000000) for r in self.rows]
         self.write_manifest(newer)
@@ -1657,8 +1657,9 @@ class NetworkTests(unittest.TestCase):
 TOP_HELP_EXPECTED = """\
 docshelf 0.1.0: look up DevDocs documentation offline (stdlib only).
 This is the command reference; `<command> --help` adds only the options
-listed at the end. REF = <docset>:<path>[#anchor], as search and fts print
-them; <docset> is the name `list` prints.
+listed at the end. REF = <docvol>:<path>[#anchor], as search and fts print
+them; <docvol> is the name `list` prints.
+A docvol is one installed documentation (from DevDocs).
 
 Look up (usual order):
   search QUERY... [-d NAME]      entries whose names contain all the words;
@@ -1673,17 +1674,17 @@ Look up (usual order):
                                  include the function name: fts read_csv skip
 
 Notes (format: references/notes.md in the skill folder):
-  notes DOCSET --path            the notes file to edit
-  notes DOCSET --check           after editing: which REFs show each section,
+  notes DOCVOL --path            the notes file to edit
+  notes DOCVOL --check           after editing: which REFs show each section,
                                  then "ok"
 
-Get and manage docsets (references/getting-docsets.md):
-  list                           installed docsets and their versions
-  sources QUERY...               docsets DevDocs offers, with sizes
+Get and manage docvols (references/getting-docvols.md):
+  list                           installed docvols and their versions
+  sources QUERY...               documentations DevDocs offers, with sizes
   install NAME...                download one (NAME without a version = the
                                  newest); update [NAME...]; remove NAME
   where                          cache, notes folder and project file
-  index-text DOCSET              build the fts index now
+  index-text DOCVOL              build the fts index now
 
 Only if you need these, see `<command> --help`:
   search     --type --all --max-lines --json
@@ -1693,7 +1694,7 @@ Only if you need these, see `<command> --help`:
 Global: --version, --mcp (run as a stdio MCP server; references/mcp.md).
 Exit codes: 0 ok; 1 notes --check found problems; 2 usage error, ambiguous
   name or no FTS5; 4 search scope too wide (use -d, a project list or --all)
-  or unknown -d name; 5 not found (docset, page or entry); 7 network
+  or unknown -d name; 5 not found (docvol, page or entry); 7 network
   (DevDocs could not be reached)
 """
 
@@ -1714,21 +1715,21 @@ class HelpTests(unittest.TestCase):
         self.assertEqual(r.returncode, 0, r.stderr)
         self.assertIn("--max-lines", r.stdout)
 
-    def test_skill_md_mentions_no_dash_docset(self):
+    def test_skill_md_mentions_no_dash_docvol(self):
         with open(os.path.join(SKILL, "SKILL.md"), encoding="utf-8") as f:
             text = f.read()
         self.assertIn("## Credits", text)
         self.assertIn("https://devdocs.io", text)
 
 
-    def test_no_dash_docset_text_in_any_skill_file(self):
+    def test_no_dash_docvol_text_in_any_skill_file(self):
         for dirpath, dirs, files in os.walk(SKILL):
             dirs[:] = [d for d in dirs if d != "__pycache__"]
             for name in files:
                 path = os.path.join(dirpath, name)
                 with open(path, encoding="utf-8", errors="replace") as f:
                     text = f.read()
-                for bad in ("dash-docset", "docset.py", ".dash-docset"):
+                for bad in ("dash-docvol", "docvol.py", ".dash-docvol"):
                     self.assertNotIn(bad, text, path)
 
 
@@ -1796,12 +1797,12 @@ class McpTests(unittest.TestCase):
         self.assertIn("query", q["required"])
         self.assertEqual(q["properties"]["max_lines"]["type"], "integer")
         self.assertEqual(q["properties"]["all"]["type"], "boolean")
-        self.assertEqual(q["properties"]["docsets"]["type"], "array")
+        self.assertEqual(q["properties"]["docvols"]["type"], "array")
         self.assertEqual(sorted(by_name["notes"]["inputSchema"]["properties"]),
-                         ["check", "docset"])
+                         ["check", "docvol"])
 
     def test_search_matches_cli(self):
-        r = self.call("search", {"query": ["frobnicate"], "docsets": ["alpha"]})
+        r = self.call("search", {"query": ["frobnicate"], "docvols": ["alpha"]})
         self.assertFalse(r["isError"], r)
         cli = run_cli("search", "frobnicate", "-d", "alpha", env=self.env,
                       cwd=self.tmp)
@@ -1863,17 +1864,17 @@ class McpTests(unittest.TestCase):
         self.assertFalse(replies[2]["result"]["isError"])
 
     def test_notes_tool(self):
-        r = self.call("notes", {"docset": "alpha"})
+        r = self.call("notes", {"docvol": "alpha"})
         self.assertFalse(r["isError"], r)
         self.assertIn("notes file not present", r["content"][0]["text"])
         os.makedirs(os.path.join(self.tmp, "notes"))
         with open(os.path.join(self.tmp, "notes", "alpha.md"), "w",
                   encoding="utf-8") as f:
             f.write("## frobnicate\nUse it twice.\n")
-        r = self.call("notes", {"docset": "alpha"})
+        r = self.call("notes", {"docvol": "alpha"})
         self.assertFalse(r["isError"], r)
         self.assertEqual(r["content"][0]["text"], "## frobnicate\nUse it twice.\n")
-        r = self.call("notes", {"docset": "alpha", "check": True})
+        r = self.call("notes", {"docvol": "alpha", "check": True})
         self.assertFalse(r["isError"], r)
         self.assertIn("ok", r["content"][0]["text"])
 
@@ -1953,7 +1954,7 @@ class FinalReviewTests(unittest.TestCase):
         entries = entries or [("Intro", "Guide", "intro")]
         data = {shelf_devdocs.MANIFEST_URL: json.dumps(rows)}
         for r in rows:
-            data.update(remote_docset(r["slug"], entries,
+            data.update(remote_docvol(r["slug"], entries,
                                       pages or {"intro": "<h1>Intro</h1>"}))
         return FakeNet(self, data)
 
@@ -2003,7 +2004,7 @@ class FinalReviewTests(unittest.TestCase):
                 (sqlite3.OperationalError("disk I/O error"),
                  "error: OperationalError: disk I/O error\n"),
                 (PermissionError("denied"), "error: PermissionError: denied\n")):
-            with mock.patch.object(shelf_devdocs, "installed_docsets",
+            with mock.patch.object(shelf_devdocs, "installed_docvols",
                                    side_effect=exc):
                 code, out, err = self.main("list")
             self.assertEqual((code, out, err), (2, "", line))
@@ -2034,8 +2035,8 @@ class FinalReviewTests(unittest.TestCase):
     # I3
     def test_concurrent_fts_builds(self):
         self.make()
-        a = shelf_devdocs.installed_docsets(self.cfg())[0]
-        b = shelf_devdocs.installed_docsets(self.cfg())[0]
+        a = shelf_devdocs.installed_docvols(self.cfg())[0]
+        b = shelf_devdocs.installed_docvols(self.cfg())[0]
         started, proceed = threading.Event(), threading.Event()
         real = a.page_html
 
@@ -2226,7 +2227,7 @@ class NotesPageHeadingTests(unittest.TestCase):
         r = self.cli("notes", "duckdb", "--check")
         self.assertEqual(r.returncode, 1, r.stdout)
         self.assertIn("matches no entry or page heading", r.stdout)
-        self.assertNotIn("matches no entry in the docset", r.stdout)
+        self.assertNotIn("matches no entry in the docvol", r.stdout)
 
     def test_headings_cache_rebuilt_when_db_changes(self):
         self.write_notes("## count_if\nx\n## sum\ny\n")
@@ -2237,7 +2238,7 @@ class NotesPageHeadingTests(unittest.TestCase):
         self.assertTrue(os.path.isfile(cache))
         with open(cache, encoding="utf-8") as f:
             self.assertEqual(json.load(f)["stamp"],
-                             shelf_devdocs.DevDocsDocset(self.folder).stamp())
+                             shelf_devdocs.DevDocsDocvol(self.folder).stamp())
         with open(os.path.join(self.folder, "db.json"), encoding="utf-8") as f:
             pages = json.load(f)
         pages["sql/other"] = self.OTHER + "<h3 id='sumx'>sum(x)</h3><p>Adds.</p>"
@@ -2248,7 +2249,7 @@ class NotesPageHeadingTests(unittest.TestCase):
         self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
 
     def test_heading_without_id_uses_enclosing_anchor(self):
-        shelf_ds = shelf_devdocs.DevDocsDocset(self.folder)
+        shelf_ds = shelf_devdocs.DevDocsDocvol(self.folder)
         blocks = shelf_render.html_to_text(
             "<h2 id='a'>A</h2><h4>no_id(x)</h4><h2>Bare</h2>")
         self.assertEqual(shelf_notes.heading_refs(blocks),

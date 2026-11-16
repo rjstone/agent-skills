@@ -1,4 +1,4 @@
-"""docshelf DevDocs backend: docsets on disk, byte-span page index."""
+"""docshelf DevDocs backend: docvols on disk, byte-span page index."""
 import http.client
 import json
 import os
@@ -13,7 +13,7 @@ from datetime import datetime, timezone
 from typing import Dict, List, Optional, Tuple
 from urllib.parse import urlsplit
 
-from shelf_core import VERSION, CLIError, Config, Docset, Entry, pick_docset
+from shelf_core import VERSION, CLIError, Config, Docvol, Entry, pick_docvol
 
 DERIVED = ".docshelf"
 MANIFEST_URL = "https://devdocs.io/docs.json"
@@ -98,7 +98,7 @@ def _load(path):
         return json.load(f)
 
 
-class DevDocsDocset(Docset):
+class DevDocsDocvol(Docvol):
     def __init__(self, folder: str):
         self.folder = folder
         meta = _load(os.path.join(folder, "meta.json"))
@@ -145,7 +145,7 @@ class DevDocsDocset(Docset):
         try:
             st = os.stat(self.db_path)
         except OSError:
-            raise CLIError("docset %s: db.json is missing" % self.name, 5)
+            raise CLIError("docvol %s: db.json is missing" % self.name, 5)
         return st.st_size, int(st.st_mtime)
 
     def page_index(self) -> Dict[str, Tuple[int, int]]:
@@ -164,7 +164,7 @@ class DevDocsDocset(Docset):
             try:
                 index = build_page_index(self.db_path)
             except ValueError as e:
-                raise CLIError("docset %s: damaged db.json (%s); reinstall with: "
+                raise CLIError("docvol %s: damaged db.json (%s); reinstall with: "
                                "docshelf.py install %s" % (self.name, e, self.name), 5)
             try:
                 os.makedirs(self.data_dir(), exist_ok=True)
@@ -204,7 +204,7 @@ class DevDocsDocset(Docset):
         return "%d|%d" % (self.mtime, self._db_stat()[0])
 
 
-def installed_docsets(cfg: Config) -> List[DevDocsDocset]:
+def installed_docvols(cfg: Config) -> List[DevDocsDocvol]:
     root = devdocs_dir(cfg)
     try:
         names = sorted(os.listdir(root))
@@ -216,7 +216,7 @@ def installed_docsets(cfg: Config) -> List[DevDocsDocset]:
         if not os.path.isdir(folder):
             continue
         try:
-            out.append(DevDocsDocset(folder))
+            out.append(DevDocsDocvol(folder))
         except (OSError, ValueError, KeyError, TypeError) as e:
             _warn("skipping %s: %s" % (folder, e))
     return out
@@ -268,7 +268,7 @@ def fetch(url: str, dest: Optional[str] = None) -> bytes:
 
 
 def get_manifest(cfg: Config, refresh: bool = False) -> List[dict]:
-    """The DevDocs docset list, cached in <cache>/devdocs/docs.json for 24 h.
+    """The DevDocs documentation list, cached in <cache>/devdocs/docs.json for 24 h.
     If it cannot be fetched, a cached copy (any age) is used with a note."""
     path = os.path.join(devdocs_dir(cfg), "docs.json")
     try:
@@ -316,7 +316,7 @@ def get_manifest(cfg: Config, refresh: bool = False) -> List[dict]:
 def _manifest_rows(data) -> List[dict]:
     if not isinstance(data, list) or not all(
             isinstance(r, dict) and isinstance(r.get("slug"), str) for r in data):
-        raise ValueError("expected a list of docset rows")
+        raise ValueError("expected a list of documentation rows")
     return data
 
 
@@ -337,7 +337,7 @@ def resolve_install(manifest: List[dict], name: str) -> dict:
         return found
     close = [r["slug"] for r in manifest
              if low in r["slug"].lower() or low in str(r.get("name", "")).lower()]
-    msg = "no DevDocs docset matches %r" % name
+    msg = "no DevDocs documentation matches %r" % name
     if close:
         msg += "; close: " + ", ".join(close[:5])
     raise CLIError(msg + " (see: docshelf.py sources QUERY)", 5)
@@ -361,10 +361,10 @@ def _discard(path: str):
 
 
 def install(cfg: Config, row: dict) -> str:
-    """Download row's docset: 'installed', 'updated' or 'up to date'."""
+    """Download row's documentation: 'installed', 'updated' or 'up to date'."""
     slug = row["slug"]
     if not SLUG_RE.match(slug):
-        raise CLIError("refusing docset slug %r: not a plain name" % slug, 2)
+        raise CLIError("refusing documentation slug %r: not a plain name" % slug, 2)
     folder = os.path.join(devdocs_dir(cfg), slug)
     meta_path = os.path.join(folder, "meta.json")
     status = "installed"
@@ -418,19 +418,19 @@ def install(cfg: Config, row: dict) -> str:
             except OSError:
                 pass
         raise
-    DevDocsDocset(folder).page_index()
+    DevDocsDocvol(folder).page_index()
     return status
 
 
 def remove(cfg: Config, slug: str) -> None:
     if not SLUG_RE.match(slug):
-        raise CLIError("refusing docset slug %r: not a plain name" % slug, 2)
+        raise CLIError("refusing documentation slug %r: not a plain name" % slug, 2)
     shutil.rmtree(os.path.join(devdocs_dir(cfg), slug))
 
 
 # --- commands --------------------------------------------------------------
 def _describe(cfg: Config, status: str, slug: str) -> str:
-    d = DevDocsDocset(os.path.join(devdocs_dir(cfg), slug))
+    d = DevDocsDocvol(os.path.join(devdocs_dir(cfg), slug))
     return "%s %s (%s %s, %d entries)" % (status, slug, d.display_name,
                                           d.release, d.entry_count)
 
@@ -438,7 +438,7 @@ def _describe(cfg: Config, status: str, slug: str) -> str:
 def cmd_sources(cfg, args) -> int:
     rows = get_manifest(cfg, args.refresh)
     words = [w.lower() for w in args.query]
-    have = {d.name for d in installed_docsets(cfg)}
+    have = {d.name for d in installed_docvols(cfg)}
     hits = [r for r in rows
             if all(w in r["slug"].lower() or w in str(r.get("name", "")).lower()
                    for w in words)]
@@ -449,7 +449,7 @@ def cmd_sources(cfg, args) -> int:
             (r.get("db_size") or 0) / 1_000_000,
             "  (installed)" if r["slug"] in have else ""))
     if not hits:
-        print("no DevDocs docset matches %s" % " ".join(args.query))
+        print("no DevDocs documentation matches %s" % " ".join(args.query))
     return 0
 
 
@@ -463,13 +463,13 @@ def cmd_install(cfg, args) -> int:
 
 
 def cmd_update(cfg, args) -> int:
-    have = installed_docsets(cfg)
+    have = installed_docvols(cfg)
     if args.names:
-        targets = [pick_docset(have, n) for n in args.names]
+        targets = [pick_docvol(have, n) for n in args.names]
     else:
         targets = have
     if not targets:
-        print("no docsets installed (install NAME; sources QUERY finds names)")
+        print("no docvols installed (install NAME; sources QUERY finds names)")
         return 0
     rows = get_manifest(cfg, refresh=True)
     by_slug = {}
@@ -486,7 +486,7 @@ def cmd_update(cfg, args) -> int:
 
 def cmd_remove(cfg, args) -> int:
     try:
-        name = pick_docset(installed_docsets(cfg), args.name).name
+        name = pick_docvol(installed_docvols(cfg), args.name).name
     except CLIError as e:
         name = _unloadable_folder(cfg, args.name)
         if e.code != 5 or name is None:
@@ -497,8 +497,8 @@ def cmd_remove(cfg, args) -> int:
 
 
 def _unloadable_folder(cfg: Config, name: str) -> Optional[str]:
-    """The docset folder called name (or whose meta.json slug is name) that
-    installed_docsets skipped as damaged; None if there is none."""
+    """The docvol folder called name (or whose meta.json slug is name) that
+    installed_docvols skipped as damaged; None if there is none."""
     root = devdocs_dir(cfg)
     try:
         folders = sorted(os.listdir(root))

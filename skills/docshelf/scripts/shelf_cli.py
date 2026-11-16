@@ -51,11 +51,11 @@ def cmd_where(cfg: Config, args: argparse.Namespace) -> int:
 
 
 def cmd_list(cfg: Config, args: argparse.Namespace) -> int:
-    docsets = shelf_devdocs.installed_docsets(cfg)
-    if not docsets:
-        print("no docsets installed (install NAME; sources QUERY finds names)")
+    docvols = shelf_devdocs.installed_docvols(cfg)
+    if not docvols:
+        print("no docvols installed (install NAME; sources QUERY finds names)")
         return 0
-    for d in docsets:
+    for d in docvols:
         print("%s  %s  %s  %d entries  %s" % (
             d.name, d.display_name,
             d.release, d.entry_count, "full" if d.full_size else "small"))
@@ -65,19 +65,19 @@ def cmd_list(cfg: Config, args: argparse.Namespace) -> int:
 COMMANDS: List[Command] = [
     Command("where", "Show the cache, notes and project file in use.",
             cmd_where, [], mcp=False),
-    Command("list", "List installed docsets.", cmd_list, []),
+    Command("list", "List installed docvols.", cmd_list, []),
     Command("search", "Search entry names (exact, prefix, substring, fuzzy).",
             shelf_lookup.cmd_search, [
         Param(("query",), "Words to find in entry names.", nargs="+"),
-        Param(("-d", "--docset"), "Docset to search (repeatable).", repeat=True),
+        Param(("-d", "--docvol"), "Docvol to search (repeatable).", repeat=True),
         Param(("--type",), "Only entries of this type.", rare=True),
-        Param(("--all",), "Search every installed docset.", kind="flag", rare=True),
+        Param(("--all",), "Search every installed docvol.", kind="flag", rare=True),
         Param(("--max-lines",), "Output line cap.", kind="posint", rare=True,
               default=40),
         Param(("--json",), "Print JSON.", kind="flag", rare=True),
     ]),
     Command("show", "Show a page or section as text.", shelf_lookup.cmd_show, [
-        Param(("ref",), "REF from search: <docset>:<path>[#anchor]."),
+        Param(("ref",), "REF from search: <docvol>:<path>[#anchor]."),
         Param(("--grep",), "Only lines containing this text (repeatable).",
               repeat=True),
         Param(("--full",), "No line cap.", kind="flag", rare=True),
@@ -88,38 +88,38 @@ COMMANDS: List[Command] = [
     Command("fts", "Full-text search inside pages (SQLite FTS5).",
             shelf_lookup.cmd_fts, [
         Param(("query",), "Words that must all appear in a page.", nargs="+"),
-        Param(("-d", "--docset"), "Docset to search (repeatable).", repeat=True),
-        Param(("--all",), "Search every installed docset.", kind="flag", rare=True),
+        Param(("-d", "--docvol"), "Docvol to search (repeatable).", repeat=True),
+        Param(("--all",), "Search every installed docvol.", kind="flag", rare=True),
         Param(("--max-lines",), "Output line cap.", kind="posint", rare=True,
               default=shelf_lookup.FTS_MAX_LINES),
         Param(("--json",), "Print JSON.", kind="flag", rare=True),
     ]),
-    Command("index-text", "Build the full-text index of docsets ahead of fts.",
+    Command("index-text", "Build the full-text index of docvols ahead of fts.",
             shelf_lookup.cmd_index_text, [
-        Param(("docset",), "Docset name (several allowed).", nargs="+"),
+        Param(("docvol",), "Docvol name (several allowed).", nargs="+"),
     ], mcp=False),
-    Command("sources", "Search the DevDocs list of docsets to install.",
+    Command("sources", "Search the DevDocs list of documentations to install.",
             shelf_devdocs.cmd_sources, [
         Param(("query",), "Words in the slug or name.", nargs="+"),
         Param(("--refresh",), "Fetch the list again now.", kind="flag", rare=True),
     ]),
-    Command("install", "Download docsets from DevDocs.",
+    Command("install", "Download documentations from DevDocs.",
             shelf_devdocs.cmd_install, [
         Param(("names",), "Slug, alias or family (python, python~3.14).",
               nargs="+"),
     ]),
-    Command("update", "Re-download docsets that DevDocs has updated.",
+    Command("update", "Re-download documentations that DevDocs has updated.",
             shelf_devdocs.cmd_update, [
-        Param(("names",), "Docsets to update (default: all installed).",
+        Param(("names",), "Docvols to update (default: all installed).",
               nargs="*"),
     ], mcp=False),
-    Command("remove", "Delete an installed docset (notes are kept).",
+    Command("remove", "Delete an installed docvol (notes are kept).",
             shelf_devdocs.cmd_remove, [
-        Param(("name",), "Docset name."),
+        Param(("name",), "Docvol name."),
     ]),
-    Command("notes", "Find, print or check a docset's notes file.",
+    Command("notes", "Find, print or check a docvol's notes file.",
             shelf_notes.cmd_notes, [
-        Param(("docset",), "Docset name or family (python for python~3.13)."),
+        Param(("docvol",), "Docvol name or family (python for python~3.13)."),
         Param(("--path",), "Print the notes file path (creates its folder).",
               kind="flag"),
         Param(("--check",), "List which REFs show each section; warn on "
@@ -130,7 +130,7 @@ COMMANDS: List[Command] = [
 
 EXIT_CODES = ("0 ok; 1 notes --check found problems; 2 usage error, ambiguous "
               "name or no FTS5; 4 search scope too wide (use -d, a project "
-              "list or --all) or unknown -d name; 5 not found (docset, page "
+              "list or --all) or unknown -d name; 5 not found (docvol, page "
               "or entry); 7 network (DevDocs could not be reached)")
 
 # Top-level --help: the command lines agents normally need. Options that
@@ -140,8 +140,9 @@ EXIT_CODES = ("0 ok; 1 notes --check found problems; 2 usage error, ambiguous "
 TOP_HELP = """\
 docshelf {version}: look up DevDocs documentation offline (stdlib only).
 This is the command reference; `<command> --help` adds only the options
-listed at the end. REF = <docset>:<path>[#anchor], as search and fts print
-them; <docset> is the name `list` prints.
+listed at the end. REF = <docvol>:<path>[#anchor], as search and fts print
+them; <docvol> is the name `list` prints.
+A docvol is one installed documentation (from DevDocs).
 
 Look up (usual order):
   search QUERY... [-d NAME]      entries whose names contain all the words;
@@ -156,17 +157,17 @@ Look up (usual order):
                                  include the function name: fts read_csv skip
 
 Notes (format: references/notes.md in the skill folder):
-  notes DOCSET --path            the notes file to edit
-  notes DOCSET --check           after editing: which REFs show each section,
+  notes DOCVOL --path            the notes file to edit
+  notes DOCVOL --check           after editing: which REFs show each section,
                                  then "ok"
 
-Get and manage docsets (references/getting-docsets.md):
-  list                           installed docsets and their versions
-  sources QUERY...               docsets DevDocs offers, with sizes
+Get and manage docvols (references/getting-docvols.md):
+  list                           installed docvols and their versions
+  sources QUERY...               documentations DevDocs offers, with sizes
   install NAME...                download one (NAME without a version = the
                                  newest); update [NAME...]; remove NAME
   where                          cache, notes folder and project file
-  index-text DOCSET              build the fts index now
+  index-text DOCVOL              build the fts index now
 
 Only if you need these, see `<command> --help`:
 {rare}

@@ -1,5 +1,7 @@
 # docshelf skill: design
 
+> Terminology: after this was written, docshelf's unit was renamed from "docset" to "docvol" (the user, 2026-11-16); "docset" now means only a Dash/Zeal docset.
+
 Status: approved by the user (2026-11-16, review on PR #7).
 
 ## Intent

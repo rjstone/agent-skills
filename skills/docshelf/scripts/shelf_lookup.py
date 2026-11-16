@@ -17,8 +17,8 @@ import shelf_notes
 from shelf_devdocs import _warn
 from shelf_render import (_print_lines, _print_page_title, html_to_text,
                           section_headings, section_lines)
-from shelf_core import (CLIError, Config, cap_lines, pick_docset, rank,
-                        select_docsets, short_name)
+from shelf_core import (CLIError, Config, cap_lines, pick_docvol, rank,
+                        select_docvols, short_name)
 
 FUZZY_SHOWN = 0  # fuzzy hits shown when exact, prefix or substring hits exist
 
@@ -34,7 +34,7 @@ def _fold_bare_entries(hits, no_anchor, page_of):
     on the same page is also a hit: `show` opens the same section for both
     (it starts a bare entry at the heading named like it). Returns the kept
     hits and {ref: [folded REFs]}; nothing is lost, the REF moves."""
-    twin = {}  # (docset, page, short name) -> ref of first anchored hit
+    twin = {}  # (docvol, page, short name) -> ref of first anchored hit
     for h in hits:
         ref = h[4]
         if ref not in no_anchor:
@@ -77,8 +77,8 @@ def cmd_search(cfg: Config, args: argparse.Namespace) -> int:
     _join_query(args)
     if not args.query:
         raise CLIError("empty search query", 2)
-    docs = select_docsets(cfg, shelf_devdocs.installed_docsets(cfg),
-                          args.docset or [], args.all)
+    docs = select_docvols(cfg, shelf_devdocs.installed_docvols(cfg),
+                          args.docvol or [], args.all)
     words = args.query.lower().split()
     want_type = args.type.lower() if args.type else None
     hits = []
@@ -111,7 +111,7 @@ def cmd_search(cfg: Config, args: argparse.Namespace) -> int:
     if args.json:
         items = []
         for r, _l, n, d, ref, t in hits[:args.max_lines]:
-            item = {"ref": ref, "docset": d, "type": t, "name": n, "rank": r}
+            item = {"ref": ref, "docvol": d, "type": t, "name": n, "rank": r}
             if ref in also:
                 item["same_section"] = also[ref]
             items.append(item)
@@ -156,14 +156,14 @@ def cmd_search(cfg: Config, args: argparse.Namespace) -> int:
 def _split_ref(ref):
     name, sep, rest = ref.partition(":")
     if not sep or not name or not rest:
-        raise CLIError("bad reference %r (expected <docset>:<path>[#anchor])"
+        raise CLIError("bad reference %r (expected <docvol>:<path>[#anchor])"
                        % ref, 2)
     return name, rest
 
 
 def resolve_doc_path(page, href):
     """href resolved against the page's folder: '..' pops, a leading '/' is
-    the docset root; returns (path, fragment or None)."""
+    the docvol root; returns (path, fragment or None)."""
     rel, _, frag = href.partition("#")
     segments = [] if rel.startswith("/") else page.split("/")[:-1]
     for part in rel.split("/"):
@@ -179,7 +179,7 @@ def resolve_doc_path(page, href):
 
 def cmd_show(cfg: Config, args: argparse.Namespace) -> int:
     name, rest = _split_ref(args.ref)
-    ds = pick_docset(shelf_devdocs.installed_docsets(cfg), name)
+    ds = pick_docvol(shelf_devdocs.installed_docvols(cfg), name)
     page, anchor, entry = ds.resolve(rest)
     known = set(ds.pages())
 
@@ -255,7 +255,7 @@ def _stored_stamp(db):
         con = _open_ro(db)
         try:
             row = con.execute(
-                "SELECT value FROM meta WHERE key='docset_version'").fetchone()
+                "SELECT value FROM meta WHERE key='docvol_version'").fetchone()
         finally:
             con.close()
     except sqlite3.Error:
@@ -264,7 +264,7 @@ def _stored_stamp(db):
 
 
 def build_fts(cfg, ds) -> int:
-    """(Re)build the docset's full-text index; return the pages indexed."""
+    """(Re)build the docvol's full-text index; return the pages indexed."""
     refs_on = {}  # page -> [entry REFs]
     for e in ds.entries():
         refs_on.setdefault(e.page, []).append(e.ref)
@@ -297,7 +297,7 @@ def build_fts(cfg, ds) -> int:
                             [(page, r) for r in refs_on.get(page, [])])
             count += 1
         con.executemany("INSERT INTO meta VALUES (?, ?)", [
-            ("docset_version", stamp),
+            ("docvol_version", stamp),
             ("built_at", time.strftime("%Y-%m-%dT%H:%M:%S", time.gmtime()))])
         con.commit()
     except BaseException:
@@ -322,7 +322,7 @@ def ensure_fts(cfg, ds) -> None:
         return
     if stored is None:
         print("note: building the full-text index for %s (first use; large "
-              "docsets take a while; index-text builds it ahead)" % ds.name,
+              "docvols take a while; index-text builds it ahead)" % ds.name,
               file=sys.stderr)
     build_fts(cfg, ds)
     if stored is not None:
@@ -392,12 +392,12 @@ def _anchor_entries(ds) -> dict:
     return found
 
 
-def fts_search(cfg, docsets, query, limit) -> List[dict]:
+def fts_search(cfg, docvols, query, limit) -> List[dict]:
     expr = fts_match_expr(query)
     if not expr:
         return []
     scored = []
-    for ds in docsets:
+    for ds in docvols:
         entry_at = None  # built on the first hit with an anchor
         try:
             con = _open_ro(fts_path(ds))
@@ -417,7 +417,7 @@ def fts_search(cfg, docsets, query, limit) -> List[dict]:
                                     if (page, _unquote_all(a)) in entry_at),
                                    ds.make_ref(page, ids[0]))
                     scored.append((score, ds.name, page, {
-                        "ref": ref, "docset": ds.name, "page": page,
+                        "ref": ref, "docvol": ds.name, "page": page,
                         "snippet": " ".join(snip.split()).replace(
                             "\x02", "[").replace("\x03", "]")}))
             finally:
@@ -436,10 +436,10 @@ def _need_fts():
 
 def cmd_index_text(cfg: Config, args: argparse.Namespace) -> int:
     _need_fts()
-    all_docs = shelf_devdocs.installed_docsets(cfg)
+    all_docs = shelf_devdocs.installed_docvols(cfg)
     picked = {}
-    for n in args.docset:
-        d = pick_docset(all_docs, n)
+    for n in args.docvol:
+        d = pick_docvol(all_docs, n)
         picked[d.name] = d
     for d in picked.values():
         print("indexed %d pages of %s" % (build_fts(cfg, d), d.name))
@@ -451,8 +451,8 @@ def cmd_fts(cfg: Config, args: argparse.Namespace) -> int:
     if not args.query.strip():
         raise CLIError("empty search query", 2)
     _need_fts()
-    docs = select_docsets(cfg, shelf_devdocs.installed_docsets(cfg),
-                          args.docset or [], args.all)
+    docs = select_docvols(cfg, shelf_devdocs.installed_docvols(cfg),
+                          args.docvol or [], args.all)
     for ds in docs:
         ensure_fts(cfg, ds)
     # text output takes two lines per hit: fetch enough hits to reach the line cap

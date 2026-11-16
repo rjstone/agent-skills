@@ -1,6 +1,6 @@
 ---
 name: docshelf
-description: Use when you need exact, version-pinned API, library or tool reference offline from DevDocs documentation sets, or must search, install or annotate such docsets instead of guessing from memory.
+description: Use when you need exact, version-pinned API, library or tool reference offline from DevDocs documentation, or must search, install or annotate offline documentation instead of guessing from memory.
 compatibility: Network access only for sources, install and update; Python sqlite3 built with FTS5 for full-text search.
 license: MIT
 metadata:
@@ -22,20 +22,22 @@ that `--help` names at its end. This file covers what help can't. If `docshelf` 
 (`mcp__docshelf__search` and so on) are available, use them instead of the
 script.
 
+A docvol is one installed documentation (from DevDocs).
+
 Use for exact, version-pinned reference (signatures, options, return values)
 quoted from the docs. Prefer Context7 or web search when the library has no
-docset or you need the very latest release, and a per-library skill when one
-covers the task. Docsets can be stale: `list` shows versions.
+docvol or you need the very latest release, and a per-library skill when one
+covers the task. Docvols can be stale: `list` shows versions.
 
 The documentation comes from DevDocs (https://devdocs.io); docshelf is not
-affiliated with DevDocs, and each docset keeps its own licence: the table on
-https://devdocs.io/about lists each docset's sources and licence.
+affiliated with DevDocs, and each documentation keeps its own licence: the table on
+https://devdocs.io/about lists each one's sources and licence.
 
 ## Read when needed
 
-- A needed docset is missing, or before `sources`, `install`, `update` or
+- A needed docvol is missing, or before `sources`, `install`, `update` or
   `remove`, or on exit 7 (network):
-  [references/getting-docsets.md](references/getting-docsets.md). `sources`,
+  [references/getting-docvols.md](references/getting-docvols.md). `sources`,
   `install` and `update` use the network; lookups do not.
 - Before writing notes: [references/notes.md](references/notes.md).
 - Registering docshelf as an MCP server: [references/mcp.md](references/mcp.md).
@@ -52,12 +54,12 @@ https://devdocs.io/about lists each docset's sources and licence.
   every matching line, and a matching parameter name comes with its
   description; `...` marks lines without a match, so there's no need to
   rerun without `--grep` or to pipe the section through `grep`. REF is the
-  `<docset>:<path>[#anchor]` that `search` and `fts` print.
-- Scope: a project `"docsets"` list in `.docshelf.json` limits searches to
-  those docsets. Without one, searches cover every installed docset unless
+  `<docvol>:<path>[#anchor]` that `search` and `fts` print.
+- Scope: a project `"docvols"` list in `.docshelf.json` limits searches to
+  those docvols. Without one, searches cover every installed docvol unless
   more than 4 are full-size; then (exit 4) narrow with `-d NAME`, set the
-  list, or pass `--all`. The first `fts` on a docset builds its index
-  (seconds for large docsets); `index-text DOCSET` builds it ahead.
+  list, or pass `--all`. The first `fts` on a docvol builds its index
+  (seconds for large docvols); `index-text DOCVOL` builds it ahead.
 
 ## Credits
 

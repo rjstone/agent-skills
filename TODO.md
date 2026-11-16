@@ -24,8 +24,8 @@
       (verify each against the installed `@opencode/plugin` types).
 - [ ] `docshelf`: a read-only Dash/Zeal backend for docsets the user
       already has (from `skill/dash-docset` before it is archived). It
-      downloads nothing and may be preferred over downloading a DevDocs
-      docset with the same documentation. Same CLI and MCP interface,
+      downloads nothing and may be preferred over downloading the same
+      documentation from DevDocs. Same CLI and MCP interface,
       equivalent search and FTS (the user, 2026-11-16).
 - [ ] `docshelf`: agent trials as dash-docset ran them (no-skill baseline,
       Haiku, the opencode model set, CLI vs `--mcp`): fine-tuning after v1
@@ -39,7 +39,7 @@
       indexing (the user, 2026-11-16).
 - [ ] `docshelf`: deferred from the v1 reviews:
   - link hrefs with `?query` or percent-encoding get no REF; `..` past the
-    docset root clamps silently
+    docvol root clamps silently
   - fts: punctuation-only query tokens zero the results; snippet highlights
     only "return" for `return_exceptions` (unicode61 splits on `_`);
     `--max-lines` < 3 overshoots by one line
@@ -54,14 +54,14 @@
     permissions (matters only for a cache shared between users); a process
     killed mid-build leaves a random-named `*.tmp` behind, which nothing
     cleans up
-  - every command parses each installed docset's `index.json` for
+  - every command parses each installed docvol's `index.json` for
     `entry_count`; store the count in `meta.json` at install
   - MCP: error text still says "(see: docshelf.py list)" and CLI flag
     names; `initialize` has no "instructions"; `"id": null` treated as a
     request; batch arrays rejected while 2025-03-26 is advertised;
     `_parser_defaults` reads argparse private attributes
   - backend interface before the Dash backend: add `display_name` to the
-    Docset base; a core installed-docsets aggregator; move href resolution
+    Docvol base; a core installed-docvols aggregator; move href resolution
     into a backend hook; `shelf_lookup` imports `_warn` from the backend
   - tests: expected "skipping" warning leaks to test stderr; no tests for
     `name=`-only anchors, CRLF notes, no-command help exit 2
@@ -69,9 +69,9 @@
 - [ ] `docshelf`: from the Haiku trials with the earlier prompts (2026-11-16):
   - strip a footer repeated on every page (LÖVE's licence line), as the
     earlier skill's footer detection did.
-  - `search` can't find function names in section-indexed docsets
+  - `search` can't find function names in section-indexed docvols
     (DuckDB); consider matching in-page headings.
-  - `-d NAME` for a docset that isn't installed exits 4 "unknown docset";
+  - `-d NAME` for a docvol that isn't installed exits 4 "unknown docvol";
     when NAME is in DevDocs' list, say "not installed: install NAME".
   - notes headings cache: no format-version key (an old-format cache would
     be reused); `notes --check` skips pages that fail to render without

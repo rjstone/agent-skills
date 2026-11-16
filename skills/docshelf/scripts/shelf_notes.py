@@ -8,7 +8,7 @@ import tempfile
 from typing import Dict, Iterable, List, Optional, Tuple
 
 import shelf_devdocs
-from shelf_core import CLIError, Config, pick_docset, short_name
+from shelf_core import CLIError, Config, pick_docvol, short_name
 from shelf_render import html_to_text
 
 NOTES_GENERAL_MAX = 50
@@ -22,7 +22,7 @@ _FAMILY = re.compile(r"^[a-z0-9][a-z0-9._+-]*$", re.I)
 def notes_path(cfg: Config, family: str) -> str:
     """<notes dir>/<family>.md; the family must be a plain file name."""
     if not family or not _FAMILY.match(family):
-        raise CLIError("invalid docset name %r" % (family,), 2)
+        raise CLIError("invalid docvol name %r" % (family,), 2)
     return os.path.join(cfg.notes_dir, family + ".md")
 
 
@@ -173,8 +173,8 @@ def heading_refs(blocks) -> List[Tuple[str, Optional[str]]]:
     return out
 
 
-def docset_headings(ds) -> Dict[str, List[List[Optional[str]]]]:
-    """{page: [[heading, anchor], ...]} for the whole docset, cached in
+def docvol_headings(ds) -> Dict[str, List[List[Optional[str]]]]:
+    """{page: [[heading, anchor], ...]} for the whole docvol, cached in
     <data dir>/headings.json under ds.stamp() (rebuilt when it changes)."""
     stamp = ds.stamp()
     cache = os.path.join(ds.data_dir(), "headings.json")
@@ -219,7 +219,7 @@ def notes_matches(text, entries, page_headings=()) -> List[str]:
             written.setdefault(line[3:].strip().lower(), line[3:].strip())
     out = []
     if any(l.strip() for l in general):
-        out.append("## General: shown by every show of this docset")
+        out.append("## General: shown by every show of this docvol")
     for key, items in sections.items():
         for typ, _lines in items:
             refs = []
@@ -242,11 +242,11 @@ def notes_matches(text, entries, page_headings=()) -> List[str]:
 
 
 def cmd_notes(cfg: Config, args) -> int:
-    docsets = shelf_devdocs.installed_docsets(cfg)
-    low = args.docset.lower()
-    family = next((d.family for d in docsets if d.family.lower() == low), None)
+    docvols = shelf_devdocs.installed_docvols(cfg)
+    low = args.docvol.lower()
+    family = next((d.family for d in docvols if d.family.lower() == low), None)
     if family is None:
-        family = pick_docset(docsets, args.docset).family
+        family = pick_docvol(docvols, args.docvol).family
     path = notes_path(cfg, family)
     if args.path:
         try:
@@ -263,12 +263,12 @@ def cmd_notes(cfg: Config, args) -> int:
     if not args.check:
         sys.stdout.write(text)
         return 0
-    entries = [e for d in docsets if d.family == family for e in d.entries()]
+    entries = [e for d in docvols if d.family == family for e in d.entries()]
     names = {e.name.lower() for e in entries}
     page_headings = []
-    for d in docsets:
+    for d in docvols:
         if d.family == family:
-            for page, rows in docset_headings(d).items():
+            for page, rows in docvol_headings(d).items():
                 page_headings += [(h, d.make_ref(page, a)) for h, a in rows]
     warns = check_notes(text, names, {h for h, _r in page_headings})
     print("notes file present: %s" % path)

@@ -192,11 +192,11 @@ metadata:
   cached in `references/openapi.json`, searched with `scripts/api_lookup.py`
   (too large to read whole); calls via `opencode api` or Basic auth.
 - `docshelf` - DevDocs documentation offline: `search`, `show`, `fts`,
-  per-docset notes, and `sources` / `install` / `update` fetching from
+  per-docvol notes, and `sources` / `install` / `update` fetching from
   devdocs.io (the only network use; `remove` is local), plus a `--mcp` stdio server mode. Stdlib only
   (`scripts/docshelf.py` and `shelf_*.py`). Cache `DOCSHELF_CACHE_DIR`,
   notes `DOCSHELF_NOTES_DIR`, project file `.docshelf.json`
-  (`"docsets"` list). Its frontmatter has `metadata.credits`.
+  (`"docvols"` list). Its frontmatter has `metadata.credits`.
 
 ## Decisions (the user, 2026-11-08)
 

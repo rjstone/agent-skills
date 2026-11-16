@@ -20,7 +20,7 @@ PROTOCOLS = ("2025-06-18", "2025-03-26", "2024-11-05")
 # One-line fixes that replace a "references/X.md" (or assets/) pointer in an
 # error message: a client has no skill folder to open.
 HINTS = {
-    "references/getting-docsets.md":
+    "references/getting-docvols.md":
         "run the `sources` tool to find a name, then `install`",
     "references/notes.md":
         "notes files are plain Markdown, one section per entry; "
@@ -49,7 +49,7 @@ def _dest(p: shelf_cli.Param) -> str:
 
 def _prop_name(p: shelf_cli.Param) -> str:
     d = _dest(p)
-    return "docsets" if p.repeat and d == "docset" else d
+    return "docvols" if p.repeat and d == "docvol" else d
 
 
 def _positional(p: shelf_cli.Param) -> bool:
@@ -113,11 +113,11 @@ def _build_namespace(c: shelf_cli.Command, arguments: dict) -> argparse.Namespac
     for p in _tool_params(c):
         name, dest = _prop_name(p), _dest(p)
         known.add(name)
-        if name != dest and name != "docsets":
+        if name != dest and name != "docvols":
             known.add(dest)
         value = arguments.get(name)
         if value is None and name != dest:
-            value = arguments.get(dest)  # alias: "docset"
+            value = arguments.get(dest)  # alias: "docvol"
         if p.kind == "flag":
             if value is not None and not isinstance(value, bool):
                 raise ValueError("argument %s must be a boolean" % name)

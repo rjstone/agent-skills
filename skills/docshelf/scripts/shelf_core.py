@@ -31,7 +31,7 @@ class Config:
     cache_dir: str
     notes_dir: str
     project_file: Optional[str]
-    project_docsets: List[str]
+    project_docvols: List[str]
     cache_source: str  # "env" or "default"
     notes_source: str  # "env" or "default"
     project_note: Optional[str] = None  # set when a fallback found the file
@@ -168,22 +168,22 @@ def load_config(cwd: Optional[str] = None, env=None) -> Config:
     if not notes:
         notes, notes_src = _default_notes(env), "default"
     project, found_from = locate_project_file(cwd, env)
-    docsets: List[str] = []
+    docvols: List[str] = []
     note = None
     if project:
         data = _load_json(project)
-        value = data.get("docsets", [])
+        value = data.get("docvols", [])
         if not isinstance(value, list) or not all(isinstance(s, str) for s in value):
-            raise CLIError('%s: "docsets" must be a list of strings' % project, 2)
-        docsets = value
+            raise CLIError('%s: "docvols" must be a list of strings' % project, 2)
+        docvols = value
         if found_from:
             note = "using %s (found from %s; no %s in or above the " \
                 "current folder)" % (project, found_from, PROJECT_FILE)
     return Config(os.path.normpath(cache), os.path.normpath(notes), project,
-                  docsets, cache_src, notes_src, note)
+                  docvols, cache_src, notes_src, note)
 
 
-# --- docsets ---------------------------------------------------------------
+# --- docvols ---------------------------------------------------------------
 
 FULL_SIZE_MIN_ENTRIES = 500
 MAX_FULL_UNSCOPED = 4
@@ -193,12 +193,12 @@ MAX_FULL_UNSCOPED = 4
 class Entry:
     name: str
     type: str
-    ref: str  # "<docset name>:<backend part>"
+    ref: str  # "<docvol name>:<backend part>"
     page: str
     anchor: Optional[str]
 
 
-class Docset(ABC):
+class Docvol(ABC):
     """One installed documentation set. Backends subclass it."""
 
     name: str
@@ -234,7 +234,7 @@ class Docset(ABC):
 
     @abstractmethod
     def stamp(self) -> str:
-        """Changes whenever the docset's content changes."""
+        """Changes whenever the docvol's content changes."""
 
     @abstractmethod
     def data_dir(self) -> str:
@@ -258,12 +258,12 @@ def rank(query: str, name: str) -> Optional[int]:
     return 3
 
 
-def pick_docset(docsets, name, error=None) -> Docset:
-    """The docset called name: exact name; else, case-insensitively, name,
+def pick_docvol(docvols, name, error=None) -> Docvol:
+    """The docvol called name: exact name; else, case-insensitively, name,
     alias, family, then title. Several matches at one step are an error
     (code 2); no match is code 5 (or error(msg) when given)."""
     error = error or (lambda msg: CLIError(msg, 5))
-    exact = next((d for d in docsets if d.name == name), None)
+    exact = next((d for d in docvols if d.name == name), None)
     if exact:
         return exact
     low = name.lower()
@@ -274,32 +274,32 @@ def pick_docset(docsets, name, error=None) -> Docset:
         ("title", lambda d: d.title.lower() == low),
     )
     for _, test in steps:
-        found = [d for d in docsets if test(d)]
+        found = [d for d in docvols if test(d)]
         if len(found) == 1:
             return found[0]
         if found:
             raise CLIError("%s matches %s; give one"
                            % (name, ", ".join(sorted(d.name for d in found))), 2)
-    raise error("unknown docset %r (see: docshelf.py list)" % name)
+    raise error("unknown docvol %r (see: docshelf.py list)" % name)
 
 
-def select_docsets(cfg, all_docsets, names, use_all) -> List[Docset]:
+def select_docvols(cfg, all_docvols, names, use_all) -> List[Docvol]:
     """Scope: names > project list > all if <= 4 full-size or use_all."""
-    wanted = names or cfg.project_docsets
+    wanted = names or cfg.project_docvols
     if wanted:
         picked = []
         for n in wanted:
-            d = pick_docset(all_docsets, n, ScopeError)
+            d = pick_docvol(all_docvols, n, ScopeError)
             if d not in picked:
                 picked.append(d)
         return picked
-    full = [d for d in all_docsets if d.full_size]
+    full = [d for d in all_docvols if d.full_size]
     if use_all or len(full) <= MAX_FULL_UNSCOPED:
-        return list(all_docsets)
+        return list(all_docvols)
     raise ScopeError(
-        "%d full-size docsets and no scope; searching all of them is slow and "
-        "noisy.\nFull-size docsets: %s\nNarrow it with -d NAME (repeatable), "
-        "a \"docsets\" list in %s, or search everything with --all."
+        "%d full-size docvols and no scope; searching all of them is slow and "
+        "noisy.\nFull-size docvols: %s\nNarrow it with -d NAME (repeatable), "
+        "a \"docvols\" list in %s, or search everything with --all."
         % (len(full), ", ".join(d.name for d in full), PROJECT_FILE))
 
 

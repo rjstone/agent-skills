@@ -6,7 +6,7 @@ skill is installed, the folder that holds `SKILL.md`. Use a full path, and
 `python3` where `python` is not Python 3.
 
 Tools: `search`, `show`, `fts`, `list`, `sources`, `install`, `remove` and
-`notes`, with the same arguments as the commands (`docsets` is the repeatable
+`notes`, with the same arguments as the commands (`docvols` is the repeatable
 `-d`). `notes` only reads (add `check: true` for the check report); write
 notes files directly. `where`, `update` and `index-text` are command line
 only. A tool result is the command's output; `isError` is true when the exit

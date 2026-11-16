@@ -2,8 +2,8 @@
 # `sources`, `install` and `update` use the network; lookups (search, show,
 # fts, notes, list, where, remove) need none.
 
-# The list of docsets (docs.json; redirects to the CDN)
+# The list of documentations (docs.json; redirects to the CDN)
 devdocs.io
 
-# Each docset's index.json and db.json
+# Each documentation's index.json and db.json
 documents.devdocs.io
