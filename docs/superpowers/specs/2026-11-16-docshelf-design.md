@@ -122,12 +122,13 @@ added afterwards on the same command table.
   the MCP server name.
 - `SKILL.md` says the docs come from DevDocs (devdocs.io), that docshelf
   isn't affiliated with DevDocs, and that each docset keeps its own
-  licence (`list` doesn't print it; the manifest has it). A `## Credits`
-  section (allowed by `AGENTS.md`) credits, with links: DevDocs
+  licence (`list` doesn't print it; the manifest has it). Frontmatter
+  `metadata.credits: "DevDocs, devdocs-mcp, Zeal"` names them briefly; a
+  `## Credits` section (allowed by `AGENTS.md`) credits, with links: DevDocs
   (https://devdocs.io) as the data source, devdocs-mcp
   (https://github.com/maxwhipw/devdocs-mcp, the upstream of the user's
-  fork) as prior work, and, once the Dash/Zeal backend exists, Zeal
-  (https://github.com/zealdocs/zeal) for the docset format information.
+  fork) as prior work, and Zeal (https://github.com/zealdocs/zeal) for the
+  docset format information (the user, 2026-11-16, review on PR #7).
   dash-docset isn't named: it was never merged or released and will be
   archived (the user, 2026-11-16).
 
