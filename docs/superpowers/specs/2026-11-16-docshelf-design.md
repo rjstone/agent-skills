@@ -1,6 +1,8 @@
 # docshelf skill: design
 
-> Terminology: after this was written, docshelf's unit was renamed from "docset" to "docvol" (the user, 2026-11-16); "docset" now means only a Dash/Zeal docset.
+> Terminology: after this was written, docshelf's unit was renamed from "docset" to "docvol" (the user, 2026-11-16); "docset" now means only a Dash/Zeal docset. A docvol is docshelf's native
+> format: a third-party documentation bundle (today a DevDocs documentation;
+> later also a Dash docset) plus docshelf's own metadata, indexes and notes.
 
 Status: approved by the user (2026-11-16, review on PR #7).
 

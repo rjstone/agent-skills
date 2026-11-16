@@ -196,7 +196,10 @@ metadata:
   devdocs.io (the only network use; `remove` is local), plus a `--mcp` stdio server mode. Stdlib only
   (`scripts/docshelf.py` and `shelf_*.py`). Cache `DOCSHELF_CACHE_DIR`,
   notes `DOCSHELF_NOTES_DIR`, project file `.docshelf.json`
-  (`"docvols"` list). Its frontmatter has `metadata.credits`.
+  (`"docvols"` list). Its frontmatter has `metadata.credits`. A docvol is
+  docshelf's native format: a third-party documentation bundle (today a
+  DevDocs documentation; later also a Dash docset) plus docshelf's own
+  metadata, indexes and notes (the user, 2026-11-16).
 
 ## Decisions (the user, 2026-11-08)
 

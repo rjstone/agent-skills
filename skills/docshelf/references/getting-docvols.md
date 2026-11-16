@@ -15,8 +15,8 @@ downloaded. Lookups work offline; only the commands below use the network.
   the slug for another version. Prints `installed`, `updated` or
   `up to date`.
 - `update [NAME...]` fetches the DevDocs list fresh (not the 24-hour copy)
-  and re-downloads documentations whose DevDocs timestamp is newer; with no names,
-  every installed docvol. One that DevDocs no longer lists is
+  and re-downloads documentations whose DevDocs timestamp is newer; with
+  no names, every installed docvol. One that DevDocs no longer lists is
   skipped with a warning.
 - `remove NAME` deletes the downloaded docvol. Notes are kept.
 
@@ -50,7 +50,8 @@ download leaves nothing half-written.
 ## Licences
 
 `list` does not print licences. DevDocs' About page
-(https://devdocs.io/about) has a table of every documentation with links to its
-original sources and its copyright and licence. The same text is in the
-`attribution` field per documentation in DevDocs' list (`docs.json` in the cache).
+(https://devdocs.io/about) has a table of every documentation with links
+to its original sources and its copyright and licence. The same text is
+in the `attribution` field per documentation in DevDocs' list
+(`docs.json` in the cache).
 Read one of them when you need to cite or redistribute a docvol.

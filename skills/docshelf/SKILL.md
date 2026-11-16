@@ -18,11 +18,12 @@ project folder and give the script's full path; don't `cd` to the skill
 folder, because a project's `.docshelf.json` is found from the current
 folder. Run its `--help` first: that is the command reference, with the
 usual command lines. A subcommand's own `--help` only adds the rarer options
-that `--help` names at its end. This file covers what help can't. If `docshelf` MCP tools
-(`mcp__docshelf__search` and so on) are available, use them instead of the
-script.
+that `--help` names at its end. This file covers what help can't. If
+`docshelf` MCP tools (`mcp__docshelf__search` and so on) are available,
+use them instead of the script.
 
-A docvol is one installed documentation (from DevDocs).
+A docvol is a DevDocs documentation plus docshelf's own metadata, indexes
+and notes.
 
 Use for exact, version-pinned reference (signatures, options, return values)
 quoted from the docs. Prefer Context7 or web search when the library has no
@@ -30,8 +31,9 @@ docvol or you need the very latest release, and a per-library skill when one
 covers the task. Docvols can be stale: `list` shows versions.
 
 The documentation comes from DevDocs (https://devdocs.io); docshelf is not
-affiliated with DevDocs, and each documentation keeps its own licence: the table on
-https://devdocs.io/about lists each one's sources and licence.
+affiliated with DevDocs, and each documentation keeps its own licence:
+the table on https://devdocs.io/about lists each one's sources and
+licence.
 
 ## Read when needed
 

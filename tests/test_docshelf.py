@@ -1659,7 +1659,8 @@ docshelf 0.1.0: look up DevDocs documentation offline (stdlib only).
 This is the command reference; `<command> --help` adds only the options
 listed at the end. REF = <docvol>:<path>[#anchor], as search and fts print
 them; <docvol> is the name `list` prints.
-A docvol is one installed documentation (from DevDocs).
+A docvol is a DevDocs documentation plus docshelf's own metadata, indexes
+and notes.
 
 Look up (usual order):
   search QUERY... [-d NAME]      entries whose names contain all the words;
