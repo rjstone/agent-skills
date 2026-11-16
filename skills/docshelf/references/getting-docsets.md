@@ -49,6 +49,8 @@ download leaves nothing half-written.
 
 ## Licences
 
-`list` does not print licences. DevDocs' list (`docs.json` in the cache)
-has an `attribution` field per docset with the licence and credit text; read
-it there when you need to cite or redistribute a docset.
+`list` does not print licences. DevDocs' About page
+(https://devdocs.io/about) has a table of every docset with links to its
+original sources and its copyright and licence. The same text is in the
+`attribution` field per docset in DevDocs' list (`docs.json` in the cache).
+Read one of them when you need to cite or redistribute a docset.

@@ -49,8 +49,11 @@
     `http.server` test
   - 404 from documents.devdocs.io still shows the allowlist hint
   - same-mtime reinstall trusts `meta.json` without checking files exist;
-    page index built twice at install; a folder without `meta.json` can't be
-    removed via the CLI
+    page index built twice at install
+  - temp files from `mkstemp` are mode 0600, so cache files lose the umask
+    permissions (matters only for a cache shared between users); a process
+    killed mid-build leaves a random-named `*.tmp` behind, which nothing
+    cleans up
   - every command parses each installed docset's `index.json` for
     `entry_count`; store the count in `meta.json` at install
   - MCP: error text still says "(see: docshelf.py list)" and CLI flag

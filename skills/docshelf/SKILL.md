@@ -28,7 +28,8 @@ docset or you need the very latest release, and a per-library skill when one
 covers the task. Docsets can be stale: `list` shows versions.
 
 The documentation comes from DevDocs (https://devdocs.io); docshelf is not
-affiliated with DevDocs, and each docset keeps its own licence.
+affiliated with DevDocs, and each docset keeps its own licence: the table on
+https://devdocs.io/about lists each docset's sources and licence.
 
 ## Read when needed
 
@@ -60,6 +61,9 @@ affiliated with DevDocs, and each docset keeps its own licence.
 
 ## Credits
 
-- [DevDocs](https://devdocs.io): the documentation data.
+- [DevDocs](https://devdocs.io): the documentation data. DevDocs was
+  created by Thibaut Courouble and is operated by freeCodeCamp. See details
+  including other contributors and supporters on the
+  [About Page](https://devdocs.io/about).
 - [devdocs-mcp](https://github.com/maxwhipw/devdocs-mcp): prior work.
 - [Zeal](https://github.com/zealdocs/zeal): docset format information.
