@@ -98,9 +98,17 @@ def tool_schemas() -> List[dict]:
             for c in _mcp_commands()]
 
 
+def _parser_defaults(c: shelf_cli.Command) -> dict:
+    """Every dest the command's argparse parser defines, with its default, so
+    tools and the command line cannot drift apart."""
+    sub = shelf_cli.build_parser()._subparsers._group_actions[0].choices[c.name]
+    return {a.dest: a.default for a in sub._actions if a.dest != "help"}
+
+
 def _build_namespace(c: shelf_cli.Command, arguments: dict) -> argparse.Namespace:
     """Namespace as argparse would give it; raises ValueError on bad input."""
-    ns = {"command": c.name, "help": False, "_command": c}
+    ns = _parser_defaults(c)
+    ns.update({"command": c.name, "help": False, "_command": c})
     known = set()
     for p in _tool_params(c):
         name, dest = _prop_name(p), _dest(p)
@@ -113,14 +121,13 @@ def _build_namespace(c: shelf_cli.Command, arguments: dict) -> argparse.Namespac
         if p.kind == "flag":
             if value is not None and not isinstance(value, bool):
                 raise ValueError("argument %s must be a boolean" % name)
-            ns[dest] = bool(value)
+            if value is not None:
+                ns[dest] = value
             continue
         many = p.nargs in ("+", "*") or p.repeat
         if value is None:
             if _positional(p) and p.nargs != "*":
                 raise ValueError("missing required argument: %s" % name)
-            ns[dest] = [] if p.nargs == "*" else (
-                p.default if p.default is not None else None)
             continue
         items = value if isinstance(value, list) else [value]
         if not many and isinstance(value, list):

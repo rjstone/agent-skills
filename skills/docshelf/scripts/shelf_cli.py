@@ -238,7 +238,8 @@ def main(argv: Optional[List[str]] = None) -> int:
         import shelf_mcp
         for stream in (sys.stdin, sys.stdout):
             if hasattr(stream, "reconfigure"):
-                stream.reconfigure(encoding="utf-8", newline="\n")
+                stream.reconfigure(encoding="utf-8", errors="replace",
+                                   newline="\n")
         return shelf_mcp.serve(sys.stdin, sys.stdout)
     if args.help or not args.command:
         print(top_help(), end="")

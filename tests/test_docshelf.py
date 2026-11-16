@@ -1847,6 +1847,51 @@ class McpTests(unittest.TestCase):
                          "internal error: RuntimeError: kaput")
         self.assertFalse(replies[2]["result"]["isError"])
 
+    def test_notes_tool(self):
+        r = self.call("notes", {"docset": "alpha"})
+        self.assertFalse(r["isError"], r)
+        self.assertIn("notes file not present", r["content"][0]["text"])
+        os.makedirs(os.path.join(self.tmp, "notes"))
+        with open(os.path.join(self.tmp, "notes", "alpha.md"), "w",
+                  encoding="utf-8") as f:
+            f.write("## frobnicate\nUse it twice.\n")
+        r = self.call("notes", {"docset": "alpha"})
+        self.assertFalse(r["isError"], r)
+        self.assertEqual(r["content"][0]["text"], "## frobnicate\nUse it twice.\n")
+        r = self.call("notes", {"docset": "alpha", "check": True})
+        self.assertFalse(r["isError"], r)
+        self.assertIn("ok", r["content"][0]["text"])
+
+    def test_namespace_has_every_parser_dest(self):
+        import shelf_mcp
+        for c in shelf_cli.COMMANDS:
+            if not c.mcp:
+                continue
+            args = {}
+            for p in shelf_mcp._tool_params(c):
+                if shelf_mcp._positional(p) and p.nargs != "*":
+                    args[shelf_mcp._prop_name(p)] = (
+                        ["x"] if p.nargs == "+" else "x")
+            ns = shelf_mcp._build_namespace(c, args)
+            sub = shelf_cli.build_parser()._subparsers._group_actions[0] \
+                .choices[c.name]
+            for a in sub._actions:
+                if a.dest != "help":
+                    self.assertTrue(hasattr(ns, a.dest), (c.name, a.dest))
+
+    def test_invalid_utf8_line_does_not_kill_server(self):
+        ping = lambda i: json.dumps(
+            {"jsonrpc": "2.0", "id": i, "method": "ping"}).encode() + b"\n"
+        r = subprocess.run([sys.executable, SCRIPT, "--mcp"],
+                           input=ping(1) + b"\xff\xfe\n" + ping(2),
+                           capture_output=True, env=self.env, cwd=self.tmp)
+        replies = [json.loads(l) for l in r.stdout.decode().splitlines()]
+        self.assertEqual(len(replies), 3, r.stderr)
+        self.assertEqual(replies[0]["id"], 1)
+        self.assertEqual(replies[1]["error"]["code"], -32700)
+        self.assertIsNone(replies[1]["id"])
+        self.assertEqual(replies[2]["id"], 2)
+
     def test_mcp_doc_linked_and_clean(self):
         with open(os.path.join(SKILL, "SKILL.md"), encoding="utf-8") as f:
             self.assertIn("references/mcp.md", f.read())
