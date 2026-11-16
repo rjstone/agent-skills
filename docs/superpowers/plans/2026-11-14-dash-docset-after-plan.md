@@ -546,6 +546,36 @@ and a search of the contributed docsets.
 - Checked live in the sandbox: `sources` (Zeal fallback; the GitHub API is
   blocked there), the `install` message, a refused kapeli.com fetch.
 
+## Kapeli's terms: what they are for (researched 2026-11-16)
+
+- The terms (README of Kapeli/feeds): no use of the docsets "for anything
+  without my permission, except for personal reasons or while using Dash
+  or Zeal", which rules out "any third-party application, be it online or
+  offline, commercial or free"; permission on request.
+- Kapeli's blog, 2014-01-09 ("Dash for iOS, Android, Windows or Linux"):
+  he looked for developers of Dash-like apps on other platforms and
+  offered them free access to all docsets, updates included, with him
+  "covering the hosting costs", in return for a link to Dash; contact him
+  first, and he would give "exclusivity to Dash's docsets to whoever looks
+  most promising". That became Velocity (Windows), Zeal (Linux),
+  LovelyDocs (Android) and Dash for iOS.
+- zealdocs/zeal issue #24: he gave Zeal all of Dash's docsets because a
+  popular Zeal on Windows and Linux brings Dash users, asked for a
+  "Docsets contributed by Dash" credit, and said he would cover Zeal's
+  bandwidth, "as long as Zeal does not officially support OS X and compete
+  with Dash". Zeal still ships no official macOS build (Hacker News,
+  2024-01, "because of an agreement").
+- So the restriction protects Dash (a paid macOS app) from competitors
+  built on the docsets he curates and hosts, and keeps the hosting bill
+  to apps he chose. Server load is part of it; competition is the main
+  part. Our reading, not his words: most docsets are built from upstream
+  documentation under its own licence, so the terms mostly cover his
+  packaging (indexes, generation work) and his servers.
+- Kapeli/cheatsheets has no licence file, which means all rights reserved
+  (GitHub's terms only allow viewing and forking on GitHub); the cheatset
+  generator is MIT. Cheat sheets and docset generation are left to a
+  separate skill (the user, 2026-11-16).
+
 ## Open
 
 - **Kapeli's terms:** `SKILL.md` still points to the terms in the README of
