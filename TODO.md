@@ -31,6 +31,12 @@
       Haiku, the opencode model set, CLI vs `--mcp`): fine-tuning after v1
       (the user, 2026-11-16).
 - [ ] `docshelf`: writing notes over MCP (v1's `notes` tool is read-only).
+- [ ] `docshelf` (low priority, with the Dash/Zeal backend): some docsets'
+      `Info.plist` has a full-text-search flag (keys to verify; possibly
+      `DashDocSetDefaultFTSEnabled` / `DashDocSetFTSNotSupported`). Find out
+      whether such docsets ship their own text index that `fts` could use
+      instead of building one, and whether "not supported" should skip
+      indexing (the user, 2026-11-16).
 
 ## Automation
 
