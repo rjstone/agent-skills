@@ -7,6 +7,7 @@ from typing import Any, Callable, List, Optional, Tuple
 import shelf_core
 import shelf_devdocs
 import shelf_lookup
+import shelf_notes
 from shelf_core import CLIError, Config
 
 
@@ -80,6 +81,14 @@ COMMANDS: List[Command] = [
         Param(("--max-lines",), "Output line cap.", kind="posint", rare=True,
               default=150),
         Param(("--no-notes",), "Do not print notes.", kind="flag", rare=True),
+    ]),
+    Command("notes", "Find, print or check a docset's notes file.",
+            shelf_notes.cmd_notes, [
+        Param(("docset",), "Docset name or family (python for python~3.13)."),
+        Param(("--path",), "Print the notes file path (creates its folder).",
+              kind="flag"),
+        Param(("--check",), "List which REFs show each section; warn on "
+              "oversized notes and headings matching no entry.", kind="flag"),
     ]),
 ]
 

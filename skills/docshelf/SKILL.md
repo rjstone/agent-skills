@@ -15,3 +15,5 @@ metadata:
 Look up DevDocs documentation sets offline with `python scripts/docshelf.py`.
 Run `python scripts/docshelf.py --help` for the commands and `where` to see
 the cache, notes and project file in use.
+
+Before writing notes: [references/notes.md](references/notes.md).

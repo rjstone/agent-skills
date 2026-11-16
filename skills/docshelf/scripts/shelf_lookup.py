@@ -7,6 +7,7 @@ from urllib.parse import unquote
 from typing import Dict, List, Optional, Tuple
 
 import shelf_devdocs
+import shelf_notes
 from shelf_render import (_print_lines, _print_page_title, html_to_text,
                           section_lines)
 from shelf_core import (CLIError, Config, cap_lines, pick_docset, rank,
@@ -193,4 +194,14 @@ def cmd_show(cfg: Config, args: argparse.Namespace) -> int:
     lines, def_ends = section_lines(blocks, anchor)
     _print_page_title(blocks, lines)
     _print_lines(lines, args, def_ends)
+    if not args.no_notes:
+        if entry is not None:
+            out = shelf_notes.notes_for(cfg, ds, entry.name, entry.type)
+        else:
+            out = shelf_notes.general_notes(cfg, ds)
+        for line in out:
+            print(line)
+        _p, text = shelf_notes._read_notes(cfg, ds.family)
+        for w in shelf_notes.size_warnings(text or ""):
+            print("warning: notes: " + w, file=sys.stderr)
     return 0

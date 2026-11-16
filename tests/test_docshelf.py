@@ -24,6 +24,7 @@ SCRIPT = os.path.join(SKILL, "scripts", "docshelf.py")
 sys.path.insert(0, os.path.join(SKILL, "scripts"))
 import shelf_core  # noqa: E402
 import shelf_devdocs  # noqa: E402
+import shelf_notes  # noqa: E402
 import shelf_render  # noqa: E402
 
 LEAKY_ENV = ("DOCSHELF_CACHE_DIR", "DOCSHELF_NOTES_DIR", "APPDATA",
@@ -964,6 +965,242 @@ class AnchorlessShowTests(unittest.TestCase):
         self.assertIn("signed length", r.stdout)
         self.assertNotIn("intro", r.stdout)
         self.assertNotIn("nope", r.stdout)
+
+
+class NotesTests(unittest.TestCase):
+    PAGE = ("<h2 id='asyncio.gather'>asyncio.gather</h2>"
+            "<p>Run awaitables concurrently.</p>")
+
+    def setUp(self):
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        self.tmp = os.path.realpath(tmp.name)
+        self.cache = os.path.join(self.tmp, "cache")
+        self.notes = os.path.join(self.tmp, "notes")
+        self.env = {"HOME": self.tmp, "USERPROFILE": self.tmp,
+                    "DOCSHELF_CACHE_DIR": self.cache,
+                    "DOCSHELF_NOTES_DIR": self.notes}
+        self.cfg = shelf_core.Config(self.cache, self.notes, None, [],
+                                     "env", "env")
+
+    def cli(self, *args):
+        return run_cli(*args, env=self.env, cwd=self.tmp)
+
+    def add(self, slug, release="1", entries=None, pages=None, name="Python"):
+        make_devdocs(self.cache, slug, name=name, release=release,
+                     entries=entries or [
+                         ("asyncio.gather", "Function", "a#asyncio.gather"),
+                         ("Guide", "Guide", "guide")],
+                     pages=pages or {"a": self.PAGE,
+                                     "guide": "<h1>Guide</h1><p>Text.</p>"})
+
+    def ds(self, name):
+        return shelf_core.pick_docset(shelf_devdocs.installed_docsets(self.cfg),
+                                      name)
+
+    def write_notes(self, family, text):
+        path = shelf_notes.notes_path(self.cfg, family)
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        with open(path, "w", encoding="utf-8") as f:
+            f.write(text)
+        return path
+
+    def test_notes_path(self):
+        self.assertEqual(shelf_notes.notes_path(self.cfg, "python"),
+                         os.path.join(self.notes, "python.md"))
+        for bad in ("", "../x", "a/b", "a\\b", ".hidden", "-x"):
+            with self.assertRaises(shelf_core.CLIError) as cm:
+                shelf_notes.notes_path(self.cfg, bad)
+            self.assertEqual(cm.exception.code, 2)
+
+    def test_notes_path_creates_dir_and_check_ok(self):
+        self.add("python")
+        r = self.cli("notes", "python", "--path")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertEqual(r.stdout.strip(), os.path.join(self.notes, "python.md"))
+        self.assertTrue(os.path.isdir(self.notes))
+        self.write_notes("python", "## General\nok\n")
+        r = self.cli("notes", "python", "--check")
+        self.assertEqual(r.returncode, 0, r.stdout)
+        self.assertTrue(r.stdout.startswith("notes file present: "), r.stdout)
+        self.assertEqual(r.stdout.splitlines()[-1], "ok")
+
+    def test_notes_check_says_what_each_heading_matched(self):
+        self.add("python")
+        self.write_notes("python", "## General\ng\n## asyncio.gather\nfn\n"
+                         "## Guide (Guide)\nx\n")
+        r = self.cli("notes", "python", "--check")
+        self.assertEqual(r.returncode, 0, r.stdout)
+        lines = r.stdout.splitlines()
+        self.assertIn("## General: shown by every show of this docset", lines)
+        self.assertIn("## asyncio.gather: shown by show python:a#asyncio.gather",
+                      lines)
+        self.assertIn("## Guide (Guide): shown by show python:guide", lines)
+
+    def test_notes_file_not_present_messages_parallel(self):
+        self.add("python")
+        for args in (("notes", "python"), ("notes", "python", "--check")):
+            r = self.cli(*args)
+            self.assertEqual(r.returncode, 0, r.stderr)
+            self.assertTrue(r.stdout.startswith("notes file not present: "),
+                            r.stdout)
+
+    def test_notes_output_keeps_headings(self):
+        self.add("python")
+        self.write_notes("python", "gen\n## asyncio.gather (Function)\nfn\n")
+        ds = self.ds("python")
+        out = shelf_notes.notes_for(self.cfg, ds, "asyncio.gather", "Function")
+        self.assertEqual(out[1:], ["## General", "gen",
+                                   "## asyncio.gather (Function)", "fn"])
+        self.assertEqual(shelf_notes.general_notes(self.cfg, ds)[1:],
+                         ["## General", "gen"])
+
+    def test_parse_notes(self):
+        general, sections = shelf_notes.parse_notes(
+            "# Title\nintro\n## Asyncio.Gather (Function)\nA\n## other\nB\n"
+            "## General\nG2\n")
+        self.assertEqual(general, ["intro", "G2"])
+        self.assertEqual(sections["asyncio.gather"], [("Function", ["A"])])
+        self.assertEqual(sections["other"], [(None, ["B"])])
+        self.assertNotIn("general", sections)
+        general, _ = shelf_notes.parse_notes("\n\n# Title\nintro\n")
+        self.assertEqual(general, ["intro"])
+        self.assertEqual(
+            shelf_notes.parse_notes("## f (Type)\nx\n")[1]["f"][0][0], "Type")
+
+    def test_notes_heading_without_arguments(self):
+        self.add("python", entries=[("asyncio.gather()", "Function", "a")],
+                 pages={"a": "<p>x</p>"})
+        self.write_notes("python", "## asyncio.gather\nreturn_exceptions\n")
+        out = shelf_notes.notes_for(self.cfg, self.ds("python"),
+                                    "asyncio.gather()", "Function")
+        self.assertIn("return_exceptions", out)
+        names = {"asyncio.gather()", "asyncio.sleep()"}
+        self.assertEqual(
+            shelf_notes.check_notes("## asyncio.gather\nx\n", names), [])
+        warns = shelf_notes.check_notes("## asyncio.gathr\nx\n", names)
+        self.assertEqual(len(warns), 1)
+        self.assertIn("part before '('", warns[0])
+        self.assertIn("did you mean 'asyncio.gather", warns[0])
+
+    def test_notes_match_case_and_type(self):
+        self.add("python")
+        self.write_notes("python", "gen line\n## ASYNCIO.gather (function)\nfn note\n"
+                         "## asyncio.gather (Guide)\nguide note\n"
+                         "## asyncio.gather\nany note\n## unrelated\nnope\n")
+        out = "\n".join(shelf_notes.notes_for(
+            self.cfg, self.ds("python"), "Asyncio.Gather", "Function"))
+        self.assertIn("--- notes (", out)
+        self.assertIn("gen line", out)
+        self.assertIn("fn note", out)
+        self.assertIn("any note", out)
+        self.assertNotIn("guide note", out)
+        self.assertNotIn("nope", out)
+        self.add("other", name="Other")
+        self.assertEqual(shelf_notes.notes_for(
+            self.cfg, self.ds("other"), "x", "y"), [])
+
+    def test_notes_shown_with_show(self):
+        self.add("python")
+        self.write_notes("python", "general tip\n## asyncio.gather\nuse return_exceptions\n")
+        r = self.cli("show", "python:a#asyncio.gather")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertIn("Run awaitables concurrently.", r.stdout)
+        self.assertIn("use return_exceptions", r.stdout)
+        self.assertIn("general tip", r.stdout)
+        r = self.cli("show", "python:a#asyncio.gather", "--no-notes")
+        self.assertNotIn("use return_exceptions", r.stdout)
+        self.assertNotIn("general tip", r.stdout)
+        r = self.cli("show", "python:guide")  # not a named section: General only
+        self.assertIn("general tip", r.stdout)
+        self.assertNotIn("use return_exceptions", r.stdout)
+        r = self.cli("search", "gather", "-d", "python", "--json")
+        self.assertNotIn("general tip", r.stdout)  # notes only with show
+        json.loads(r.stdout)
+
+    def test_show_warns_on_size_only(self):
+        self.add("python")
+        self.write_notes("python", "## asyncio.gather\n" + "x\n" * 250
+                         + "## orphan heading\ny\n")
+        r = self.cli("show", "python:a#asyncio.gather")
+        self.assertEqual(r.returncode, 0)
+        self.assertIn("asyncio.gather", r.stderr)
+        self.assertNotIn("orphan heading", r.stderr)
+
+    def test_notes_shared_by_family(self):
+        self.add("python~3.13", release="3.13")
+        self.add("python~3.14", release="3.14")
+        path = self.write_notes("python", "## asyncio.gather\nshared note\n")
+        for slug in ("python~3.13", "python~3.14"):
+            r = self.cli("show", slug + ":a#asyncio.gather")
+            self.assertEqual(r.returncode, 0, r.stderr)
+            self.assertIn("shared note", r.stdout)
+            self.assertIn(path, r.stdout)
+
+    def test_notes_name_resolves_family_with_two_releases(self):
+        self.add("python~3.13", release="3.13")
+        self.add("python~3.14", release="3.14",
+                 entries=[("asyncio.gather", "Function", "a#asyncio.gather"),
+                          ("only314", "Function", "a#only314")],
+                 pages={"a": self.PAGE + "<h2 id='only314'>only314</h2>"})
+        r = self.cli("notes", "python", "--path")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertEqual(r.stdout.strip(), os.path.join(self.notes, "python.md"))
+        r = self.cli("notes", "PYTHON~3.13", "--path")  # a release name works
+        self.assertEqual(r.stdout.strip(), os.path.join(self.notes, "python.md"))
+        self.write_notes("python", "## only314\nx\n## asyncio.gather\ny\n")
+        r = self.cli("notes", "python", "--check")
+        self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+        line = next(l for l in r.stdout.splitlines()
+                    if l.startswith("## asyncio.gather"))
+        self.assertIn("python~3.13:a#asyncio.gather", line)
+        self.assertIn("python~3.14:a#asyncio.gather", line)
+        self.write_notes("python", "## ghost\nx\n")
+        r = self.cli("notes", "python", "--check")
+        self.assertEqual(r.returncode, 1)
+        self.assertIn("ghost", r.stdout)
+
+    def test_check_limits(self):
+        w = shelf_notes.check_notes("## a\n" + "x\n" * 250, {"a"})
+        self.assertTrue(any("'a'" in x and "100" in x for x in w), w)
+        text = "".join("## s%d\n%s" % (i, "x\n" * 9) for i in range(100))
+        names = {"s%d" % i for i in range(100)}
+        self.assertEqual(shelf_notes.check_notes(text, names), [])
+        self.assertTrue(shelf_notes.check_notes("x\n" * 51, set()))
+        big = "".join("## t%d\n%s" % (i, "x\n" * 99) for i in range(21))
+        w = shelf_notes.check_notes(big, {"t%d" % i for i in range(21)})
+        self.assertTrue(any("2,000" in x or "2000" in x for x in w), w)
+
+    def test_parenthesised_entry_names(self):
+        self.add("c", name="C", entries=[("strlen()", "Function", "s#strlen")],
+                 pages={"s": '<h2 id="strlen">strlen</h2><p>Length.</p>'})
+        self.write_notes("c", "## strlen()\nnul-terminated only\n")
+        r = self.cli("show", "c:s#strlen")
+        self.assertIn("nul-terminated only", r.stdout)
+        self.assertEqual(self.cli("notes", "c", "--check").returncode, 0)
+
+    def test_check_orphans(self):
+        w = shelf_notes.check_notes("## real\nx\n## ghost (Type)\ny\n", {"real"})
+        self.assertEqual(len(w), 1)
+        self.assertIn("ghost", w[0])
+
+    def test_notes_check_cli_and_unknown(self):
+        self.add("python")
+        self.write_notes("python", "## asyncio.gather\nok\n")
+        r = self.cli("notes", "python", "--check")
+        self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+        self.write_notes("python", "## ghost\nok\n")
+        r = self.cli("notes", "python", "--check")
+        self.assertEqual(r.returncode, 1)
+        self.assertIn("ghost", r.stdout)
+        r = self.cli("notes", "Missing", "--check")
+        self.assertEqual(r.returncode, 5)
+
+    def test_notes_name_cannot_escape(self):
+        self.add("python")
+        r = self.cli("notes", "../evil", "--path")
+        self.assertNotEqual(r.returncode, 0)
+        self.assertFalse(os.path.exists(os.path.join(self.tmp, "evil.md")))
 
 
 if __name__ == "__main__":
