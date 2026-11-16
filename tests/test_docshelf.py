@@ -485,5 +485,246 @@ class RenderGrepTests(unittest.TestCase):
         self.assertFalse(any("long line" in l for l in out))
 
 
+class RankTests(unittest.TestCase):
+    def test_rank_order(self):
+        r = shelf_core.rank
+        self.assertEqual(r("Gather", "gather"), 0)
+        self.assertEqual(r("gat", "Gather"), 1)
+        self.assertEqual(r("ath", "Gather"), 2)
+        self.assertEqual(r("gtr", "Gather"), 3)
+        self.assertIsNone(r("xyz", "Gather"))
+        self.assertIsNone(r("rg", "Gather"))  # order matters
+
+    def test_cap_lines(self):
+        lines = ["l%d" % i for i in range(10)]
+        self.assertEqual(shelf_core.cap_lines(lines, 10, "h"), lines)
+        out = shelf_core.cap_lines(lines, 4, "use --x")
+        self.assertEqual(out[:4], lines[:4])
+        self.assertEqual(out[4], "... 6 more lines cut; use --x")
+        self.assertEqual(len(out), 5)
+
+    def test_short_name(self):
+        self.assertEqual(shelf_core.short_name("Foo(a, [b])"), "foo")
+        self.assertEqual(shelf_core.short_name("(x)"), "(x)")
+
+
+class SearchTests(unittest.TestCase):
+    def setUp(self):
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        self.tmp = os.path.realpath(tmp.name)
+        self.cache = os.path.join(self.tmp, "cache")
+        self.env = {"HOME": self.tmp, "USERPROFILE": self.tmp,
+                    "DOCSHELF_CACHE_DIR": self.cache,
+                    "DOCSHELF_NOTES_DIR": os.path.join(self.tmp, "notes")}
+
+    def add(self, slug, entries=None, name=None):
+        entries = entries if entries is not None else [("x", "Function", "x")]
+        pages = {e[2].partition("#")[0]: "<p>t</p>" for e in entries}
+        make_devdocs(self.cache, slug, name=name or slug.capitalize(),
+                     release="1", entries=entries, pages=pages)
+
+    def cli(self, *args, project=None):
+        if project is not None:
+            with open(os.path.join(self.tmp, ".docshelf.json"), "w") as f:
+                json.dump(project, f)
+        return run_cli(*args, env=self.env, cwd=self.tmp)
+
+    def test_several_names_at_once_lists_the_best_entry_for_each_word(self):
+        self.add("alpha", [("date_diff(part, a, b)", "Function", "date#diff"),
+                           ("date_diff_old", "Function", "date#old"),
+                           ("date_sub(part, a, b)", "Function", "date#sub")])
+        r = self.cli("search", "date_diff", "date_sub", "zzz", "-d", "alpha")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        out = r.stdout.splitlines()
+        self.assertIn("one entry name", out[0])
+        self.assertIn("'date_diff date_sub zzz'", out[0])
+        self.assertIn("alpha:date#diff  Function  date_diff(part, a, b)", out)
+        self.assertIn("alpha:date#sub  Function  date_sub(part, a, b)", out)
+        self.assertNotIn("date_diff_old", r.stdout)
+        self.assertTrue(any("'zzz'" in l and "no entry name" in l for l in out), out)
+
+    def test_several_words_none_in_any_name_keeps_the_plain_message(self):
+        self.add("alpha", [("date_sub", "Function", "date#sub")])
+        r = self.cli("search", "enemy", "arrow", "-d", "alpha")
+        self.assertTrue(r.stdout.startswith(
+            "no matches for 'enemy arrow' (entry names only"), r.stdout)
+        self.assertEqual(len(r.stdout.splitlines()), 1)
+
+    def test_docset_name_is_case_insensitive(self):
+        self.add("alpha", [("date_sub", "Function", "date#sub")])
+        r = self.cli("search", "date_sub", "-d", "ALPHA")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertIn("alpha:date#sub", r.stdout)
+        r = self.cli("search", "date_sub", project={"docsets": ["Alpha"]})
+        self.assertIn("alpha:date#sub", r.stdout)
+
+    def test_anchored_signature_beats_bare_page_entry(self):
+        self.add("alpha", [("date_sub", "Function", "date"),
+                           ("date_sub(part, a, b)", "Function", "date#sub"),
+                           ("date_subx", "Function", "date#x")])
+        out = self.cli("search", "date_sub", "-d", "alpha").stdout.splitlines()
+        names = [l.split("  ")[2] for l in out]
+        self.assertEqual(names, ["date_sub(part, a, b)", "date_subx"])
+        self.assertNotIn("alpha:date  ", "\n".join(out))
+
+    def test_bare_entry_kept_when_no_anchored_twin_on_its_page(self):
+        self.add("alpha", [("date_sub", "Function", "other"),
+                           ("date_sub(part, a, b)", "Function", "date#sub")])
+        out = self.cli("search", "date_sub", "-d", "alpha").stdout.splitlines()
+        self.assertEqual([l.split("  ")[2] for l in out],
+                         ["date_sub(part, a, b)", "date_sub"])
+        r = self.cli("search", "date_sub", "-d", "alpha", "--json")
+        self.assertEqual(len(json.loads(r.stdout)), 2)
+
+    def test_folded_entries_in_json(self):
+        self.add("alpha", [("date_sub", "Function", "date"),
+                           ("date_sub(part, a, b)", "Function", "date#sub")])
+        items = json.loads(self.cli("search", "date_sub", "-d", "alpha",
+                                    "--json").stdout)
+        self.assertEqual(len(items), 1)
+        self.assertEqual(items[0]["same_section"], ["alpha:date"])
+
+    def test_multi_word_queries(self):
+        self.add("alpha", [("hero:get_walking_speed()", "Method", "a"),
+                           ("hero:set_walking_speed(speed)", "Method", "a"),
+                           ("walking", "Guide", "b")])
+        r = self.cli("search", "walking", "speed", "-d", "alpha")  # unquoted
+        self.assertEqual(r.returncode, 0, r.stderr)
+        out = r.stdout.splitlines()
+        self.assertEqual(len(out), 2, out)
+        self.assertTrue(all("walking_speed" in l for l in out))
+        r = self.cli("search", "speed walking", "-d", "alpha")  # any word order
+        self.assertEqual(len(r.stdout.splitlines()), 2)
+
+    def test_fuzzy_hits_capped_when_real_hits_exist(self):
+        entries = [("timer", "Function", "a")] + [
+            ("t_i_m_e_r_%d" % n, "Function", "a") for n in range(9)]
+        self.add("alpha", entries)
+        out = self.cli("search", "timer", "-d", "alpha").stdout.splitlines()
+        self.assertEqual(out, ["alpha:a  Function  timer"])
+        self.add("beta", [("timers", "Function", "a")] + entries[1:])
+        r = self.cli("search", "timer", "-d", "beta")  # no whole-word hit
+        self.assertEqual(r.stdout.splitlines()[-1], "... 9 fuzzy matches hidden "
+                         "(letters in order only, often unrelated)")
+        self.add("gamma", [("asyncio.gather", "Function", "a"),
+                           ("g_a_t_h_e_r", "Function", "a#x")])
+        r = self.cli("search", "gather", "-d", "gamma")
+        self.assertEqual(r.stdout.splitlines(),
+                         ["gamma:a  Function  asyncio.gather"])
+        r = self.cli("search", "tmr", "-d", "alpha")  # only fuzzy: none cut
+        self.assertEqual(sum(1 for l in r.stdout.splitlines()
+                             if "t_i_m_e_r" in l), 9)
+
+    def test_search_ranks_across_docsets(self):
+        self.add("alpha", [("sleep_long", "Function", "a"),
+                           ("sleep", "Function", "b")])
+        self.add("beta", [("Sleep", "Guide", "c"), ("xsleepx", "Guide", "d"),
+                          ("s_l_e_e_p", "Guide", "e")])
+        r = self.cli("search", "sleep")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        out = r.stdout.splitlines()
+        self.assertEqual(len(out), 4, out)
+        names = [l.split("  ")[2] for l in out]
+        self.assertEqual(names, ["Sleep", "sleep", "sleep_long", "xsleepx"])
+        r = self.cli("search", "slp", "-d", "alpha")
+        self.assertTrue(r.stdout.startswith("no exact, prefix or substring matches"))
+        r = self.cli("search", "qqq", "-d", "alpha")
+        self.assertTrue(r.stdout.startswith("no matches for 'qqq' (entry names only"))
+        self.assertEqual(out[0].split("  ")[:2], ["beta:c", "Guide"])
+        self.assertTrue(out[1].startswith("alpha:b  "))
+
+    def test_search_type_filter_case_insensitive(self):
+        self.add("alpha", [("sleep", "Function", "a"), ("sleep2", "Guide", "b")])
+        r = self.cli("search", "sleep", "--type", "guide")
+        self.assertEqual(len(r.stdout.splitlines()), 1)
+        self.assertIn("sleep2", r.stdout)
+
+    def test_search_special_characters_are_literal(self):
+        self.add("alpha", [("a_c", "Function", "a"), ("abc", "Function", "b"),
+                           ("100%", "Function", "c")])
+        r = self.cli("search", "a_c")
+        self.assertEqual([l.split("  ")[2] for l in r.stdout.splitlines()], ["a_c"])
+        r = self.cli("search", "%")
+        self.assertEqual([l.split("  ")[2] for l in r.stdout.splitlines()], ["100%"])
+
+    def test_unknown_docset_exits_4(self):
+        self.add("alpha")
+        r = self.cli("search", "x", "-d", "Nope")
+        self.assertEqual(r.returncode, 4)
+        self.assertIn("Nope", r.stderr)
+
+    def test_scope_names_beat_project(self):
+        self.add("alpha", [("thing", "Function", "a")])
+        self.add("beta", [("thing", "Function", "b")])
+        r = self.cli("search", "thing", "-d", "beta",
+                     project={"docsets": ["alpha"]})
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertIn("beta:", r.stdout)
+        self.assertNotIn("alpha:", r.stdout)
+
+    def test_scope_project_list(self):
+        for n in "abcdef":
+            self.add("doc" + n, [("thing", "Function", "a")])
+        r = self.cli("search", "thing", project={"docsets": ["docb", "docc"]})
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertEqual(sorted(l.split(":")[0] for l in r.stdout.splitlines()),
+                         ["docb", "docc"])
+
+    def test_scope_error_over_four_full(self):
+        big = [("thing", "Function", "a")] + [
+            ("f%d" % i, "Function", "p%d" % i) for i in range(500)]
+        for n in "abcde":
+            self.add("doc" + n, big)
+        r = self.cli("search", "thing")
+        self.assertEqual(r.returncode, 4)
+        for n in "abcde":
+            self.assertIn("doc" + n, r.stderr)
+        for hint in ("-d", "docsets", ".docshelf.json", "--all"):
+            self.assertIn(hint, r.stderr)
+        r = self.cli("search", "thing", "--all")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertEqual(len(r.stdout.splitlines()), 5)
+
+    def test_scope_small_docsets_dont_count(self):
+        big = [("thing", "Function", "a")] + [
+            ("f%d" % i, "Function", "p%d" % i) for i in range(500)]
+        for n in "abcd":
+            self.add("doc" + n, big)
+        for n in "xyz":
+            self.add("small" + n, [("thing", "Function", "a")])
+        r = self.cli("search", "thing")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertEqual(len(r.stdout.splitlines()), 7)
+
+    def test_search_max_lines_and_hint(self):
+        self.add("alpha", [("item%02d" % i, "Function", "p%d" % i)
+                           for i in range(50)])
+        lines = self.cli("search", "item").stdout.splitlines()
+        self.assertEqual(len(lines), 41)
+        self.assertTrue(lines[-1].startswith("... 10 more lines cut;"), lines[-1])
+        self.assertIn("--max-lines", lines[-1])
+        r = self.cli("search", "item", "--max-lines", "5")
+        self.assertEqual(len(r.stdout.splitlines()), 6)
+
+    def test_search_json(self):
+        self.add("alpha", [("sleep", "Function", "a"), ("sleeper", "Guide", "b")])
+        r = self.cli("search", "sleep", "--json")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        data = json.loads(r.stdout)
+        self.assertEqual([d["name"] for d in data], ["sleep", "sleeper"])
+        self.assertEqual(set(data[0]), {"ref", "docset", "type", "name", "rank"})
+        self.assertEqual((data[0]["docset"], data[0]["rank"], data[1]["rank"]),
+                         ("alpha", 0, 1))
+        self.assertEqual(data[0]["ref"], "alpha:a")
+        r = self.cli("search", "sleep", "--json", "--max-lines", "1")
+        self.assertEqual(len(json.loads(r.stdout)), 1)
+
+    def test_empty_query_exits_2(self):
+        self.add("alpha")
+        r = self.cli("search", " ")
+        self.assertEqual(r.returncode, 2)
+
+
 if __name__ == "__main__":
     unittest.main()

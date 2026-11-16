@@ -1,6 +1,7 @@
 """docshelf core: errors and configuration (cache, notes, project file)."""
 import json
 import os
+import re
 import sys
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
@@ -307,3 +308,9 @@ def cap_lines(lines, max_lines, hint) -> List[str]:
         return list(lines)
     cut = len(lines) - max_lines
     return list(lines[:max_lines]) + ["... %d more lines cut; %s" % (cut, hint)]
+
+
+def short_name(name: str) -> str:
+    """Entry name without an argument list: 'f(a, [b])' -> 'f' (lowercased)."""
+    short = re.sub(r"\s*\(.*$", "", name).strip().lower()
+    return short or name.lower()

@@ -6,6 +6,7 @@ from typing import Any, Callable, List, Optional, Tuple
 
 import shelf_core
 import shelf_devdocs
+import shelf_lookup
 from shelf_core import CLIError, Config
 
 
@@ -61,6 +62,16 @@ def cmd_list(cfg: Config, args: argparse.Namespace) -> int:
 COMMANDS: List[Command] = [
     Command("where", "Show the cache, notes and project file in use.", cmd_where, []),
     Command("list", "List installed docsets.", cmd_list, []),
+    Command("search", "Search entry names (exact, prefix, substring, fuzzy).",
+            shelf_lookup.cmd_search, [
+        Param(("query",), "Words to find in entry names.", nargs="+"),
+        Param(("-d", "--docset"), "Docset to search (repeatable).", repeat=True),
+        Param(("--type",), "Only entries of this type.", rare=True),
+        Param(("--all",), "Search every installed docset.", kind="flag", rare=True),
+        Param(("--max-lines",), "Output line cap.", kind="int", rare=True,
+              default=40),
+        Param(("--json",), "Print JSON.", kind="flag", rare=True),
+    ]),
 ]
 
 
