@@ -88,7 +88,10 @@ class DevDocsDocset(Docset):
         self.release = str(meta.get("release") or "")
         base = meta.get("name") or self.family
         self.display_name = base
-        self.title = ("%s %s" % (base, self.release)).strip()
+        version = str(meta.get("version") or "")
+        if not version and "~" in self.name:
+            version = self.name.split("~", 1)[1].replace("_", " ")
+        self.title = ("%s %s" % (base, version)).strip()
         alias = meta.get("alias")
         self.aliases = (alias,) if alias else ()
         self.mtime = int(meta.get("mtime") or 0)

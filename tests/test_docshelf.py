@@ -45,7 +45,8 @@ def run_cli(*args, env=None, cwd=None, script=SCRIPT):
 
 def make_devdocs(cache: str, slug: str, *, name: str, release: str,
                  entries: List[Tuple[str, str, str]], pages: Dict[str, str],
-                 alias: Optional[str] = None, mtime: int = 1700000000) -> str:
+                 alias: Optional[str] = None, mtime: int = 1700000000,
+                 version: Optional[str] = None) -> str:
     """Write <cache>/devdocs/<slug>/{index.json, db.json, meta.json} and append
     the manifest row to <cache>/devdocs/docs.json; return the docset folder.
 
@@ -66,7 +67,8 @@ def make_devdocs(cache: str, slug: str, *, name: str, release: str,
     dump(os.path.join(folder, "db.json"), pages)
     dump(os.path.join(folder, "meta.json"),
          {"slug": slug, "name": name, "release": release, "mtime": mtime,
-          "installedAt": "2026-11-16T00:00:00Z", "alias": alias})
+          "installedAt": "2026-11-16T00:00:00Z", "alias": alias,
+          **({"version": version} if version else {})})
     manifest_path = os.path.join(root, "docs.json")
     manifest = []
     if os.path.isfile(manifest_path):
@@ -343,9 +345,11 @@ class DevDocsDiskTests(unittest.TestCase):
             "vite  Vite  5  1 entries  small"])
 
     def test_pick_family_ambiguous(self):
-        self.make("python~3.13", name="Python", release="3.13", alias="py")
-        self.make("python~3.14", name="Python", release="3.14", alias="py")
+        self.make("python~3.13", name="Python", release="3.13.8", alias="py")
+        self.make("python~3.14", name="Python", release="3.14.8", alias="py")
         self.make("vite")
+        self.make("node~24_lts", name="Node.js", release="24.14.0")
+        self.make("ruby~3.4", name="Ruby", release="3.4.1", version="3.4 x")
         ds = shelf_devdocs.installed_docsets(self.cfg())
         for q in ("python", "py"):
             with self.assertRaises(shelf_core.CLIError) as cm:
@@ -355,12 +359,15 @@ class DevDocsDiskTests(unittest.TestCase):
             self.assertIn("python~3.14", str(cm.exception))
         self.assertEqual(shelf_core.pick_docset(ds, "Python 3.14").name, "python~3.14")
         self.assertEqual(shelf_core.pick_docset(ds, "VITE").name, "vite")
+        self.assertEqual(shelf_core.pick_docset(ds, "Vite").title, "Vite")
+        self.assertEqual(shelf_core.pick_docset(ds, "Node.js 24 LTS").name, "node~24_lts")
+        self.assertEqual(shelf_core.pick_docset(ds, "Ruby 3.4 x").name, "ruby~3.4")
         with self.assertRaises(shelf_core.CLIError) as cm:
             shelf_core.pick_docset(ds, "nope")
         self.assertEqual(cm.exception.code, 5)
         with self.assertRaises(shelf_core.ScopeError):
             shelf_core.select_docsets(self.cfg(), ds, ["nope"], False)
-        self.assertEqual(len(shelf_core.select_docsets(self.cfg(), ds, [], False)), 3)
+        self.assertEqual(len(shelf_core.select_docsets(self.cfg(), ds, [], False)), 5)
 
 
 if __name__ == "__main__":
