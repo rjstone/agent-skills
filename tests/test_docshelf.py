@@ -1668,7 +1668,7 @@ Look up (usual order):
   show REF --grep TEXT           only lines containing TEXT, with their
                                  heading, table header row, and a matching
                                  term's definition (repeatable; plain text,
-                                 not a pattern)
+                                 not a pattern, case-insensitive)
   fts QUERY... [-d NAME]         words inside pages, 5 best hits with REFs;
                                  include the function name: fts read_csv skip
 
