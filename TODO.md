@@ -22,6 +22,15 @@
       template instead of hand-editing each.
 - [ ] `opencode-build` `ERRATA.md`: record the doc mistakes already seen
       (verify each against the installed `@opencode/plugin` types).
+- [ ] `docshelf`: a read-only Dash/Zeal backend for docsets the user
+      already has (from `skill/dash-docset` before it is archived). It
+      downloads nothing and may be preferred over downloading a DevDocs
+      docset with the same documentation. Same CLI and MCP interface,
+      equivalent search and FTS (the user, 2026-11-16).
+- [ ] `docshelf`: agent trials as dash-docset ran them (no-skill baseline,
+      Haiku, the opencode model set, CLI vs `--mcp`): fine-tuning after v1
+      (the user, 2026-11-16).
+- [ ] `docshelf`: writing notes over MCP (v1's `notes` tool is read-only).
 
 ## Automation
 
