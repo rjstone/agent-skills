@@ -66,6 +66,16 @@
   - tests: expected "skipping" warning leaks to test stderr; no tests for
     `name=`-only anchors, CRLF notes, no-command help exit 2
   - `show` reads the notes file twice via private `_read_notes`
+- [ ] `docshelf`: from the Haiku trials with the earlier prompts (2026-11-16):
+  - notes headings only match index entries; DevDocs DuckDB indexes
+    sections, so `## count_if` matches nothing. Let headings match headings
+    inside pages, or have `notes --check` name the section REF to use.
+  - `--grep` values starting with `-` (`--grep --keep`) are read as flags;
+    rewrite `--grep X` to `--grep=X` before parsing.
+  - strip a footer repeated on every page (LÖVE's licence line), as the
+    earlier skill's footer detection did.
+  - `search` can't find function names in section-indexed docsets
+    (DuckDB); consider matching in-page headings.
 
 ## Automation
 
