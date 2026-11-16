@@ -24,6 +24,7 @@ SCRIPT = os.path.join(SKILL, "scripts", "docshelf.py")
 sys.path.insert(0, os.path.join(SKILL, "scripts"))
 import shelf_core  # noqa: E402
 import shelf_devdocs  # noqa: E402
+import shelf_render  # noqa: E402
 
 LEAKY_ENV = ("DOCSHELF_CACHE_DIR", "DOCSHELF_NOTES_DIR", "APPDATA",
              "LOCALAPPDATA", "OLDPWD")
@@ -372,3 +373,117 @@ class DevDocsDiskTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class RenderTests(unittest.TestCase):
+    def text(self, html, **kw):
+        return [b.text for b in shelf_render.html_to_text(html, **kw)]
+
+    def test_headings_lists_pre(self):
+        html = ("<h1 id='t'>Title</h1><p>Body  text\n here</p><ul><li>a</li><li>b</li></ul>"
+                "<pre>x = 1\n  y = 2\n</pre>")
+        self.assertEqual(self.text(html), ["# Title", "Body text here", "- a", "- b",
+                                           "```\nx = 1\n  y = 2\n```"])
+
+    def test_navigation_chrome_dropped(self):
+        html = ('<div class="related" role="navigation"><h3>Navigation</h3>'
+                '<ul><li>index</li><li><div>nested</div></li></ul></div>'
+                '<div class="mobile-nav"><form><input></form>'
+                '<select><option>Dark</option></select></div>'
+                '<div role="main"><h1 id="t">Title<a class="headerlink">¶</a></h1>'
+                '<p>Body</p></div><div role="search">Quick search</div>')
+        self.assertEqual(self.text(html), ["# Title", "Body"])
+
+    def test_colspan_cells_labelled(self):
+        html = ("<table><tr><td>31</td><td>30</td><td>29</td></tr>"
+                "<tr><td>1</td><td colspan='2'>Rm</td></tr>"
+                "<tr><td colspan='3'></td></tr></table>")
+        text = self.text(html)
+        self.assertIn("1 | Rm (2 cols)", text)
+        self.assertFalse(any("cols" in t and "Rm" not in t for t in text))
+
+    def test_hidden_div_dropped(self):
+        html = ('<div style="display:none;" hidden data-nosnippet>Are you an LLM? '
+                'Read the .md version.</div><h1>Vite</h1><p>Body</p><input hidden>'
+                '<p>After</p>')
+        self.assertEqual(self.text(html), ["# Vite", "Body", "After"])
+
+    def test_pre_language(self):
+        html = '<pre data-language="js">const a = 1\n</pre><pre>plain</pre>'
+        self.assertEqual(self.text(html), ["```js\nconst a = 1\n```", "```\nplain\n```"])
+
+    def test_link_to_ref(self):
+        seen = []
+
+        def link(href):
+            seen.append(href)
+            return "vite:api/foo#bar" if href == "../api/foo#bar" else None
+
+        html = ('<p>See <a href="../api/foo#bar">foo</a>, <a href="#top">top</a>, '
+                '<a href="https://x.org/">ext</a>, <a href="../other">other</a>.</p>')
+        self.assertEqual(self.text(html, link=link),
+                         ["See foo [vite:api/foo#bar], top, ext, other."])
+        self.assertEqual(seen, ["../api/foo#bar", "../other"])
+
+    def test_no_link_callback(self):
+        self.assertEqual(self.text('<p><a href="x">y</a></p>'), ["y"])
+
+    def test_page_title(self):
+        blocks = shelf_render.html_to_text("<h2>Sub</h2><h1>Top</h1><h1>Two</h1>")
+        self.assertEqual(shelf_render.page_title(blocks), "Top")
+        self.assertIsNone(shelf_render.page_title(shelf_render.html_to_text("<p>x</p>")))
+
+    def test_section_lines_by_anchor(self):
+        html = ("<h1>P</h1><h2 id='a'>A</h2><p>one</p><h3>A1</h3><p>two</p>"
+                "<h2 id='b'>B</h2><p>three</p>")
+        blocks = shelf_render.html_to_text(html)
+        lines, _ = shelf_render.section_lines(blocks, "a")
+        self.assertEqual(lines, ["## A", "one", "### A1", "two"])
+        lines, _ = shelf_render.section_lines(blocks, "zz")
+        self.assertTrue(lines[0].startswith("note: anchor not found (zz)"))
+        self.assertEqual(len(shelf_render.section_lines(blocks, None)[0]), 7)
+
+
+class RenderGrepTests(unittest.TestCase):
+    PAGE = ("<h2 id='params'>Parameters</h2><p>Options for read_csv.</p>"
+            "<table><tr><th>Name</th><th>Type</th><th>Default</th></tr>"
+            "<tr><td>header</td><td>BOOL</td><td>false</td></tr>"
+            "<tr><td>sep</td><td>VARCHAR</td><td>,</td></tr>"
+            "<tr><td>skip</td><td>BIGINT</td><td>0</td></tr>"
+            "<tr><td>quote</td><td>VARCHAR</td><td>\"</td></tr></table>"
+            "<p>Use SKIP to ignore leading lines.</p>")
+
+    def lines(self, html):
+        return shelf_render.section_lines(shelf_render.html_to_text(html), None)
+
+    def test_grep_keeps_heading_table_header_and_matches(self):
+        lines, ends = self.lines(self.PAGE)
+        out = shelf_render.grep_lines(lines, ["skip"], ends)
+        self.assertEqual(out[0], "## Parameters")
+        row = next(k for k, l in enumerate(out) if "BIGINT" in l)
+        self.assertIn("Name", out[row - 2])
+        self.assertEqual(out[row - 1], "...")
+        self.assertIn("Use SKIP to ignore leading lines.", out)
+        self.assertFalse(any("VARCHAR" in l or "Options" in l for l in out))
+
+    DL = ("<h2 id='f'>read_csv</h2><dl><dt id='sig'>read_csv(path, on_bad_lines='error')</dt>"
+          "<dd><p>Read a file.</p><dl>"
+          "<dt><strong>on_bad_lines</strong> str</dt>"
+          "<dd><p>What to do with a bad line.</p><ul><li>'error', raise.</li></ul></dd>"
+          "<dt><strong>low_memory</strong> bool</dt><dd><p>Chunks.</p></dd>"
+          "<dt><strong>long_one</strong> str</dt><dd>"
+          + "".join("<p>long line %d</p>" % i for i in range(60))
+          + "</dd></dl></dd></dl>")
+
+    def test_definition_term_shows_its_definition(self):
+        lines, ends = self.lines(self.DL)
+        out = shelf_render.grep_lines(lines, ["on_bad_lines"], ends)
+        self.assertIn("What to do with a bad line.", out)
+        self.assertIn("- 'error', raise.", out)
+        self.assertNotIn("Chunks.", out)
+        self.assertNotIn("Read a file.", out)
+
+    def test_long_definition_not_added(self):
+        lines, ends = self.lines(self.DL)
+        out = shelf_render.grep_lines(lines, ["long_one"], ends)
+        self.assertFalse(any("long line" in l for l in out))
