@@ -226,14 +226,11 @@ def definition_ends(blocks: List[Block], offset=0) -> dict:
     return ends
 
 
-def section_lines(blocks: List[Block], anchor: Optional[str]) -> Tuple[List[str], dict]:
-    """(lines of the section the anchor names, definition_ends for them);
-    the whole page if there is no anchor or it isn't found."""
-    def lines_of(bs):
-        return [ln for b in bs for ln in b.text.split("\n")]
-
+def _section_slice(blocks: List[Block], anchor: Optional[str]) -> Optional[Tuple[int, int]]:
+    """(start, end) block indexes of the section the anchor names; None if
+    there is no anchor or it isn't found."""
     if not anchor:
-        return lines_of(blocks), definition_ends(blocks)
+        return None
     want = {anchor, unquote(anchor)}
     start = None
     for i, b in enumerate(blocks):
@@ -241,8 +238,7 @@ def section_lines(blocks: List[Block], anchor: Optional[str]) -> Tuple[List[str]
             start = i
             break
     if start is None:
-        return (["note: anchor not found (%s); showing the whole page" % anchor]
-                + lines_of(blocks), definition_ends(blocks, 1))
+        return None
     first = blocks[start]
     end = len(blocks)
     for j in range(start + 1, len(blocks)):
@@ -255,7 +251,30 @@ def section_lines(blocks: List[Block], anchor: Optional[str]) -> Tuple[List[str]
         if stop:
             end = j
             break
+    return start, end
+
+
+def section_lines(blocks: List[Block], anchor: Optional[str]) -> Tuple[List[str], dict]:
+    """(lines of the section the anchor names, definition_ends for them);
+    the whole page if there is no anchor or it isn't found."""
+    def lines_of(bs):
+        return [ln for b in bs for ln in b.text.split("\n")]
+
+    span = _section_slice(blocks, anchor)
+    if span is None:
+        if not anchor:
+            return lines_of(blocks), definition_ends(blocks)
+        return (["note: anchor not found (%s); showing the whole page" % anchor]
+                + lines_of(blocks), definition_ends(blocks, 1))
+    start, end = span
     return lines_of(blocks[start:end]), definition_ends(blocks[start:end])
+
+
+def section_headings(blocks: List[Block], anchor: Optional[str]) -> List[str]:
+    """Texts (without the #s) of the headings in the section section_lines
+    shows for this anchor, the section's own heading included."""
+    span = _section_slice(blocks, anchor) or (0, len(blocks))
+    return [b.text.lstrip("#").strip() for b in blocks[span[0]:span[1]] if b.level]
 
 
 def _is_table_row(line) -> bool:

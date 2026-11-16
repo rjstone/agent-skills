@@ -233,8 +233,25 @@ def build_parser() -> argparse.ArgumentParser:
     return parser
 
 
+def _join_grep_values(argv: List[str]) -> List[str]:
+    """`--grep X` -> `--grep=X`, so a value starting with '-' (`--grep --keep`)
+    isn't read as an option. A trailing bare --grep stays for argparse."""
+    out, i = [], 0
+    while i < len(argv):
+        if argv[i] == "--grep" and i + 1 < len(argv):
+            out.append("--grep=" + argv[i + 1])
+            i += 2
+        else:
+            out.append(argv[i])
+            i += 1
+    return out
+
+
 def main(argv: Optional[List[str]] = None) -> int:
     parser = build_parser()
+    argv = list(sys.argv[1:] if argv is None else argv)
+    if "--mcp" not in argv:
+        argv = _join_grep_values(argv)
     args = parser.parse_args(argv)
     if args.mcp:
         import shelf_mcp

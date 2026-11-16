@@ -16,7 +16,7 @@ import shelf_devdocs
 import shelf_notes
 from shelf_devdocs import _warn
 from shelf_render import (_print_lines, _print_page_title, html_to_text,
-                          section_lines)
+                          section_headings, section_lines)
 from shelf_core import (CLIError, Config, cap_lines, pick_docset, rank,
                         select_docsets, short_name)
 
@@ -202,10 +202,11 @@ def cmd_show(cfg: Config, args: argparse.Namespace) -> int:
     _print_page_title(blocks, lines)
     _print_lines(lines, args, def_ends)
     if not args.no_notes:
+        heads = section_headings(blocks, anchor)
         if entry is not None:
-            out = shelf_notes.notes_for(cfg, ds, entry.name, entry.type)
+            out = shelf_notes.notes_for(cfg, ds, entry.name, entry.type, heads)
         else:
-            out = shelf_notes.general_notes(cfg, ds)
+            out = shelf_notes.general_notes(cfg, ds, heads)
         for line in out:
             print(line)
         _p, text = shelf_notes._read_notes(cfg, ds.family)

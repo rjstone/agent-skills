@@ -2153,5 +2153,148 @@ class FinalReviewTests(unittest.TestCase):
         self.assertIn("a \u2192 b".encode("utf-8"), r.stdout)
 
 
+class NotesPageHeadingTests(unittest.TestCase):
+    """Notes headings also match headings inside pages (DuckDB indexes whole
+    sections, not each function)."""
+    UTIL = ("<h2 id='scalar-utility-functions'>Scalar Utility Functions</h2>"
+            "<p>Overview.</p>"
+            "<h4 id='count_ifx'>count_if(x)</h4><p>Counts true values.</p>"
+            "<h4 id='typeofx'>typeof(x)</h4><p>Type name.</p>")
+    OTHER = "<h2 id='misc'>Misc</h2><p>Other stuff.</p>"
+
+    def setUp(self):
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        self.tmp = os.path.realpath(tmp.name)
+        self.cache = os.path.join(self.tmp, "cache")
+        self.notes = os.path.join(self.tmp, "notes")
+        self.env = {"HOME": self.tmp, "USERPROFILE": self.tmp,
+                    "DOCSHELF_CACHE_DIR": self.cache,
+                    "DOCSHELF_NOTES_DIR": self.notes}
+        self.folder = make_devdocs(
+            self.cache, "duckdb", name="DuckDB", release="1.1.3",
+            entries=[("Scalar Utility Functions", "Section",
+                      "sql/utility#scalar-utility-functions"),
+                     ("Misc", "Section", "sql/other#misc")],
+            pages={"sql/utility": self.UTIL, "sql/other": self.OTHER})
+
+    def cli(self, *args):
+        return run_cli(*args, env=self.env, cwd=self.tmp)
+
+    def write_notes(self, text):
+        os.makedirs(self.notes, exist_ok=True)
+        with open(os.path.join(self.notes, "duckdb.md"), "w", encoding="utf-8") as f:
+            f.write(text)
+
+    def test_check_accepts_page_heading_and_lists_its_ref(self):
+        self.write_notes("## count_if\nNon-zero counts as true.\n")
+        r = self.cli("notes", "duckdb", "--check")
+        self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+        self.assertIn("## count_if: shown by show duckdb:sql/utility#count_ifx",
+                      r.stdout.splitlines())
+        self.assertEqual(r.stdout.splitlines()[-1], "ok")
+
+    def test_show_section_prints_note_for_heading_inside(self):
+        self.write_notes("## General\ng\n## count_if\nNon-zero counts as true.\n")
+        ref = "duckdb:sql/utility#scalar-utility-functions"
+        for r in (self.cli("show", ref), self.cli("show", ref, "--grep", "typeof"),
+                  self.cli("show", "duckdb:sql/utility#count_ifx")):
+            self.assertEqual(r.returncode, 0, r.stderr)
+            self.assertIn("## count_if(x)\nNon-zero counts as true.", r.stdout)
+            self.assertEqual(r.stdout.count("Non-zero counts as true."), 1)
+            self.assertEqual(r.stdout.count("## General"), 1)
+
+    def test_show_unrelated_section_has_no_such_note(self):
+        self.write_notes("## General\ng\n## count_if\nNon-zero counts as true.\n")
+        r = self.cli("show", "duckdb:sql/other#misc")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertNotIn("Non-zero", r.stdout)
+        self.assertIn("## General", r.stdout)
+
+    def test_entry_and_heading_match_print_once(self):
+        self.write_notes("## Scalar Utility Functions\nentry note\n"
+                         "## scalar utility functions (Section)\ntyped\n"
+                         "## count_if\nheading note\n")
+        r = self.cli("show", "duckdb:sql/utility#scalar-utility-functions")
+        self.assertEqual(r.stdout.count("entry note"), 1, r.stdout)
+        self.assertEqual(r.stdout.count("typed"), 1, r.stdout)
+        self.assertEqual(r.stdout.count("heading note"), 1, r.stdout)
+        self.assertLess(r.stdout.index("entry note"), r.stdout.index("heading note"))
+
+    def test_check_warns_for_heading_matching_nothing(self):
+        self.write_notes("## nothing_here\nx\n")
+        r = self.cli("notes", "duckdb", "--check")
+        self.assertEqual(r.returncode, 1, r.stdout)
+        self.assertIn("matches no entry or page heading", r.stdout)
+        self.assertNotIn("matches no entry in the docset", r.stdout)
+
+    def test_headings_cache_rebuilt_when_db_changes(self):
+        self.write_notes("## count_if\nx\n## sum\ny\n")
+        r = self.cli("notes", "duckdb", "--check")
+        self.assertIn("warning: section 'sum' matches no entry or page heading",
+                      r.stdout)
+        cache = os.path.join(self.folder, shelf_devdocs.DERIVED, "headings.json")
+        self.assertTrue(os.path.isfile(cache))
+        with open(cache, encoding="utf-8") as f:
+            self.assertEqual(json.load(f)["stamp"],
+                             shelf_devdocs.DevDocsDocset(self.folder).stamp())
+        with open(os.path.join(self.folder, "db.json"), encoding="utf-8") as f:
+            pages = json.load(f)
+        pages["sql/other"] = self.OTHER + "<h3 id='sumx'>sum(x)</h3><p>Adds.</p>"
+        with open(os.path.join(self.folder, "db.json"), "w", encoding="utf-8") as f:
+            json.dump(pages, f, ensure_ascii=False)
+        r = self.cli("notes", "duckdb", "--check")
+        self.assertIn("## sum: shown by show duckdb:sql/other#sumx", r.stdout)
+        self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+
+    def test_heading_without_id_uses_enclosing_anchor(self):
+        shelf_ds = shelf_devdocs.DevDocsDocset(self.folder)
+        blocks = shelf_render.html_to_text(
+            "<h2 id='a'>A</h2><h4>no_id(x)</h4><h2>Bare</h2>")
+        self.assertEqual(shelf_notes.heading_refs(blocks),
+                         [("A", "a"), ("no_id(x)", "a"), ("Bare", None)])
+        self.assertTrue(shelf_ds.pages())
+
+
+class GrepDashValueTests(unittest.TestCase):
+    PAGE = ("<h2 id='opts'>Options</h2><p>Use --keep to keep changes.</p>"
+            "<p>Other text.</p><p>Also other thing.</p>")
+
+    def setUp(self):
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        self.tmp = os.path.realpath(tmp.name)
+        self.cache = os.path.join(self.tmp, "cache")
+        self.env = {"HOME": self.tmp, "USERPROFILE": self.tmp,
+                    "DOCSHELF_CACHE_DIR": self.cache,
+                    "DOCSHELF_NOTES_DIR": os.path.join(self.tmp, "notes")}
+        make_devdocs(self.cache, "git", name="Git", release="1",
+                     entries=[("git-reset", "Command", "git-reset")],
+                     pages={"git-reset": self.PAGE})
+
+    def cli(self, *args):
+        return run_cli(*args, env=self.env, cwd=self.tmp)
+
+    def test_grep_value_starting_with_dash(self):
+        r = self.cli("show", "git:git-reset", "--grep", "--keep")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertIn("Use --keep to keep changes.", r.stdout)
+        self.assertNotIn("Other text", r.stdout)
+
+    def test_repeated_dash_grep_and_equals_form(self):
+        r = self.cli("show", "git:git-reset", "--grep", "--keep", "--grep", "other")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertIn("Use --keep", r.stdout)
+        self.assertIn("Other text", r.stdout)
+        r = self.cli("show", "git:git-reset", "--grep=--keep")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertIn("Use --keep", r.stdout)
+
+    def test_trailing_bare_grep_is_a_usage_error(self):
+        r = self.cli("show", "git:git-reset", "--grep")
+        self.assertEqual(r.returncode, 2)
+        self.assertIn("expected one argument", r.stderr)
+
+
 if __name__ == "__main__":
     unittest.main()
