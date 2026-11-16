@@ -123,8 +123,13 @@ added afterwards on the same command table.
 - `SKILL.md` says the docs come from DevDocs (devdocs.io), that docshelf
   isn't affiliated with DevDocs, and that each docset keeps its own
   licence (`list` doesn't print it; the manifest has it). A `## Credits`
-  section (allowed by `AGENTS.md`) credits DevDocs as the data source and
-  devdocs-mcp and dash-docset as prior work.
+  section (allowed by `AGENTS.md`) credits, with links: DevDocs
+  (https://devdocs.io) as the data source, devdocs-mcp
+  (https://github.com/maxwhipw/devdocs-mcp, the upstream of the user's
+  fork) as prior work, and, once the Dash/Zeal backend exists, Zeal
+  (https://github.com/zealdocs/zeal) for the docset format information.
+  dash-docset isn't named: it was never merged or released and will be
+  archived (the user, 2026-11-16).
 
 ### Files
 
