@@ -5,6 +5,7 @@ from dataclasses import dataclass
 from typing import Any, Callable, List, Optional, Tuple
 
 import shelf_core
+import shelf_devdocs
 from shelf_core import CLIError, Config
 
 
@@ -45,8 +46,21 @@ def cmd_where(cfg: Config, args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_list(cfg: Config, args: argparse.Namespace) -> int:
+    docsets = shelf_devdocs.installed_docsets(cfg)
+    if not docsets:
+        print("no docsets installed (install NAME; sources QUERY finds names)")
+        return 0
+    for d in docsets:
+        print("%s  %s  %s  %d entries  %s" % (
+            d.name, d.display_name,
+            d.release, d.entry_count, "full" if d.full_size else "small"))
+    return 0
+
+
 COMMANDS: List[Command] = [
     Command("where", "Show the cache, notes and project file in use.", cmd_where, []),
+    Command("list", "List installed docsets.", cmd_list, []),
 ]
 
 

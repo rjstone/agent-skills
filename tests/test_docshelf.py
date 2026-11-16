@@ -23,6 +23,7 @@ SCRIPT = os.path.join(SKILL, "scripts", "docshelf.py")
 
 sys.path.insert(0, os.path.join(SKILL, "scripts"))
 import shelf_core  # noqa: E402
+import shelf_devdocs  # noqa: E402
 
 LEAKY_ENV = ("DOCSHELF_CACHE_DIR", "DOCSHELF_NOTES_DIR", "APPDATA",
              "LOCALAPPDATA", "OLDPWD")
@@ -54,27 +55,29 @@ def make_devdocs(cache: str, slug: str, *, name: str, release: str,
     os.makedirs(folder, exist_ok=True)
     types = sorted({t for _, t, _ in entries})
     index = {"entries": [{"name": n, "type": t, "path": p} for n, t, p in entries],
-             "types": [{"name": t, "count": sum(1 for e in entries if e[1] == t)}
-                       for t in types]}
-    with open(os.path.join(folder, "index.json"), "w", encoding="utf-8") as f:
-        json.dump(index, f)
-    with open(os.path.join(folder, "db.json"), "w", encoding="utf-8") as f:
-        json.dump(pages, f)
-    meta = {"slug": slug, "name": name, "release": release, "mtime": mtime}
-    with open(os.path.join(folder, "meta.json"), "w", encoding="utf-8") as f:
-        json.dump(meta, f)
+             "types": [{"name": t, "count": sum(1 for e in entries if e[1] == t),
+                        "slug": t.lower().replace(" ", "_")} for t in types]}
+
+    def dump(path, data):
+        with open(path, "w", encoding="utf-8") as f:
+            json.dump(data, f, ensure_ascii=False)  # real db.json is raw UTF-8
+
+    dump(os.path.join(folder, "index.json"), index)
+    dump(os.path.join(folder, "db.json"), pages)
+    dump(os.path.join(folder, "meta.json"),
+         {"slug": slug, "name": name, "release": release, "mtime": mtime,
+          "installedAt": "2026-11-16T00:00:00Z", "alias": alias})
     manifest_path = os.path.join(root, "docs.json")
     manifest = []
     if os.path.isfile(manifest_path):
         with open(manifest_path, encoding="utf-8") as f:
             manifest = json.load(f)
-    row = {"name": name, "slug": slug, "release": release, "mtime": mtime,
-           "type": slug.split("~")[0]}
-    if alias:
-        row["alias"] = alias
-    manifest.append(row)
-    with open(manifest_path, "w", encoding="utf-8") as f:
-        json.dump(manifest, f)
+    manifest.append({
+        "name": name, "slug": slug, "type": slug.split("~")[0],
+        "version": release, "release": release, "mtime": mtime,
+        "db_size": os.path.getsize(os.path.join(folder, "db.json")),
+        "attribution": "", "alias": alias, "links": {}})
+    dump(manifest_path, manifest)
     return folder
 
 
@@ -238,6 +241,126 @@ class ProjectFileFallbackTests(unittest.TestCase):
                           os.path.join(os.sep, "home", "you")])
         self.assertEqual(list(w(os.path.join(os.sep, "Users", "you"), env)),
                          [os.path.join(os.sep, "Users", "you")])
+
+
+class DevDocsDiskTests(unittest.TestCase):
+    def setUp(self):
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        self.tmp = os.path.realpath(tmp.name)
+        self.cache = os.path.join(self.tmp, "cache")
+        self.work = os.path.join(self.tmp, "work")
+        os.makedirs(self.work)
+        self.env = {"HOME": self.tmp, "USERPROFILE": self.tmp,
+                    "DOCSHELF_CACHE_DIR": self.cache,
+                    "DOCSHELF_NOTES_DIR": os.path.join(self.tmp, "notes")}
+
+    def cfg(self):
+        return shelf_core.load_config(self.work, self.env)
+
+    def make(self, slug="vite", **kw):
+        kw.setdefault("name", "Vite")
+        kw.setdefault("release", "5")
+        kw.setdefault("entries", [("Guide", "Guide", "guide")])
+        kw.setdefault("pages", {"guide": "<p>hi</p>"})
+        return make_devdocs(self.cache, slug, **kw)
+
+    def test_page_spans_exact(self):
+        pages = {"a/b": "\u00e9 \u2603 \" \\ </p>", "big": "x" * 2048,
+                 "tail\\": "\\", "q": "\"", "u": "\U0001F600 \n\t"}
+        folder = self.make(pages=pages,
+                           entries=[("A", "T", k) for k in pages])
+        db = os.path.join(folder, "db.json")
+        with open(db, "rb") as f:
+            self.assertIn("\u2603".encode("utf-8"), f.read())  # raw UTF-8
+        idx = shelf_devdocs.build_page_index(db)
+        with open(db, encoding="utf-8") as f:
+            expected = json.load(f)
+        self.assertEqual(set(idx), set(expected))
+        for key in expected:
+            self.assertEqual(shelf_devdocs.read_span(db, idx[key]), expected[key])
+
+    def test_index_rebuilt_when_db_changes(self):
+        folder = self.make()
+        d = shelf_devdocs.installed_docsets(self.cfg())[0]
+        self.assertEqual(d.page_html("guide"), "<p>hi</p>")
+        db = os.path.join(folder, "db.json")
+        with open(db, "w", encoding="utf-8") as f:
+            json.dump({"guide": "<p>new text</p>"}, f, ensure_ascii=False)
+        os.utime(db, (1800000000, 1800000000))
+        d2 = shelf_devdocs.installed_docsets(self.cfg())[0]
+        self.assertEqual(d2.page_html("guide"), "<p>new text</p>")
+        self.assertEqual(d.page_html("guide"), "<p>new text</p>")  # same object too
+
+    def test_works_without_derived_dir(self):
+        folder = self.make()
+        d = shelf_devdocs.installed_docsets(self.cfg())[0]
+        d.page_html("guide")
+        derived = os.path.join(folder, ".docshelf")
+        shutil.rmtree(derived)
+        d2 = shelf_devdocs.installed_docsets(self.cfg())[0]
+        self.assertEqual(d2.page_html("guide"), "<p>hi</p>")
+        self.assertTrue(os.path.isfile(os.path.join(derived, "pages.json")))
+
+    def test_entries_and_resolve(self):
+        self.make(entries=[("Guide", "Guide", "guide"),
+                           ("Sec", "Guide", "guide#sec")],
+                  pages={"guide": "<p>x</p>"})
+        d = shelf_devdocs.installed_docsets(self.cfg())[0]
+        e = d.entries()[1]
+        self.assertEqual((e.ref, e.page, e.anchor), ("vite:guide#sec", "guide", "sec"))
+        page, anchor, entry = d.resolve("guide#sec")
+        self.assertEqual((page, anchor, entry), ("guide", "sec", e))
+        self.assertIsNone(d.resolve("guide#nope")[2])
+        self.assertEqual(d.make_ref("guide", "sec"), "vite:guide#sec")
+        self.assertEqual(d.stamp(), "1700000000|%d" % os.path.getsize(
+            os.path.join(d.folder, "db.json")))
+        with self.assertRaises(shelf_core.CLIError) as cm:
+            d.page_html("missing")
+        self.assertEqual(cm.exception.code, 5)
+
+    def test_installed_sorted_and_skips_broken(self):
+        self.make("zed", name="Zed")
+        self.make("alpha", name="Alpha")
+        os.makedirs(os.path.join(self.cache, "devdocs", "broken"))
+        names = [d.name for d in shelf_devdocs.installed_docsets(self.cfg())]
+        self.assertEqual(names, ["alpha", "zed"])
+
+    def test_list(self):
+        r = run_cli("list", env=self.env, cwd=self.work)
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertEqual(r.stdout.strip(),
+                         "no docsets installed (install NAME; sources QUERY finds names)")
+        self.make("vite", name="Vite", release="5")
+        big = {"p%d" % i: "x" for i in range(500)}
+        self.make("big~2", name="Big", release="2",
+                  entries=[("E%d" % i, "T", k) for i, k in enumerate(big)],
+                  pages=big)
+        r = run_cli("list", env=self.env, cwd=self.work)
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertEqual(r.stdout.splitlines(), [
+            "big~2  Big  2  500 entries  full",
+            "vite  Vite  5  1 entries  small"])
+
+    def test_pick_family_ambiguous(self):
+        self.make("python~3.13", name="Python", release="3.13", alias="py")
+        self.make("python~3.14", name="Python", release="3.14", alias="py")
+        self.make("vite")
+        ds = shelf_devdocs.installed_docsets(self.cfg())
+        for q in ("python", "py"):
+            with self.assertRaises(shelf_core.CLIError) as cm:
+                shelf_core.pick_docset(ds, q)
+            self.assertEqual(cm.exception.code, 2)
+            self.assertIn("python~3.13", str(cm.exception))
+            self.assertIn("python~3.14", str(cm.exception))
+        self.assertEqual(shelf_core.pick_docset(ds, "Python 3.14").name, "python~3.14")
+        self.assertEqual(shelf_core.pick_docset(ds, "VITE").name, "vite")
+        with self.assertRaises(shelf_core.CLIError) as cm:
+            shelf_core.pick_docset(ds, "nope")
+        self.assertEqual(cm.exception.code, 5)
+        with self.assertRaises(shelf_core.ScopeError):
+            shelf_core.select_docsets(self.cfg(), ds, ["nope"], False)
+        self.assertEqual(len(shelf_core.select_docsets(self.cfg(), ds, [], False)), 3)
 
 
 if __name__ == "__main__":

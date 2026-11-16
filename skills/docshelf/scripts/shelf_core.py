@@ -2,6 +2,7 @@
 import json
 import os
 import sys
+from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from typing import Iterator, List, Optional, Tuple
 
@@ -179,3 +180,130 @@ def load_config(cwd: Optional[str] = None, env=None) -> Config:
                 "current folder)" % (project, found_from, PROJECT_FILE)
     return Config(os.path.normpath(cache), os.path.normpath(notes), project,
                   docsets, cache_src, notes_src, note)
+
+
+# --- docsets ---------------------------------------------------------------
+
+FULL_SIZE_MIN_ENTRIES = 500
+MAX_FULL_UNSCOPED = 4
+
+
+@dataclass(frozen=True)
+class Entry:
+    name: str
+    type: str
+    ref: str  # "<docset name>:<backend part>"
+    page: str
+    anchor: Optional[str]
+
+
+class Docset(ABC):
+    """One installed documentation set. Backends subclass it."""
+
+    name: str
+    family: str
+    title: str
+    release: str
+    aliases: Tuple[str, ...] = ()
+    entry_count: int = 0
+
+    @property
+    def full_size(self) -> bool:
+        return self.entry_count >= FULL_SIZE_MIN_ENTRIES
+
+    @abstractmethod
+    def entries(self) -> List[Entry]:
+        """Every entry, in index order."""
+
+    @abstractmethod
+    def pages(self) -> List[str]:
+        """Page names."""
+
+    @abstractmethod
+    def page_html(self, page: str) -> str:
+        """The page's HTML; CLIError(code 5) when there is no such page."""
+
+    @abstractmethod
+    def resolve(self, rest: str) -> Tuple[str, Optional[str], Optional[Entry]]:
+        """(page, anchor, the entry whose REF part is exactly rest or None)."""
+
+    @abstractmethod
+    def make_ref(self, page: str, anchor: Optional[str]) -> str:
+        """The REF for a page and optional anchor."""
+
+    @abstractmethod
+    def stamp(self) -> str:
+        """Changes whenever the docset's content changes."""
+
+    @abstractmethod
+    def data_dir(self) -> str:
+        """Folder for derived files."""
+
+
+def rank(query: str, name: str) -> Optional[int]:
+    """0 exact, 1 prefix, 2 substring, 3 fuzzy (in order), None no match."""
+    q, n = query.lower(), name.lower()
+    if n == q:
+        return 0
+    if n.startswith(q):
+        return 1
+    if q in n:
+        return 2
+    pos = 0
+    for c in q:
+        pos = n.find(c, pos) + 1
+        if pos == 0:
+            return None
+    return 3
+
+
+def pick_docset(docsets, name, error=None) -> Docset:
+    """The docset called name: exact name; else, case-insensitively, name,
+    alias, family, then title. Several matches at one step are an error
+    (code 2); no match is code 5 (or error(msg) when given)."""
+    error = error or (lambda msg: CLIError(msg, 5))
+    exact = next((d for d in docsets if d.name == name), None)
+    if exact:
+        return exact
+    low = name.lower()
+    steps = (
+        ("name", lambda d: d.name.lower() == low),
+        ("alias", lambda d: low in [a.lower() for a in d.aliases]),
+        ("family", lambda d: d.family.lower() == low),
+        ("title", lambda d: d.title.lower() == low),
+    )
+    for _, test in steps:
+        found = [d for d in docsets if test(d)]
+        if len(found) == 1:
+            return found[0]
+        if found:
+            raise CLIError("%s matches %s; give one"
+                           % (name, ", ".join(sorted(d.name for d in found))), 2)
+    raise error("unknown docset %r (see: docshelf.py list)" % name)
+
+
+def select_docsets(cfg, all_docsets, names, use_all) -> List[Docset]:
+    """Scope: names > project list > all if <= 4 full-size or use_all."""
+    wanted = names or cfg.project_docsets
+    if wanted:
+        picked = []
+        for n in wanted:
+            d = pick_docset(all_docsets, n, ScopeError)
+            if d not in picked:
+                picked.append(d)
+        return picked
+    full = [d for d in all_docsets if d.full_size]
+    if use_all or len(full) <= MAX_FULL_UNSCOPED:
+        return list(all_docsets)
+    raise ScopeError(
+        "%d full-size docsets and no scope; searching all of them is slow and "
+        "noisy.\nFull-size docsets: %s\nNarrow it with -d NAME (repeatable), "
+        "a \"docsets\" list in %s, or search everything with --all."
+        % (len(full), ", ".join(d.name for d in full), PROJECT_FILE))
+
+
+def cap_lines(lines, max_lines, hint) -> List[str]:
+    if len(lines) <= max_lines:
+        return list(lines)
+    cut = len(lines) - max_lines
+    return list(lines[:max_lines]) + ["... %d more lines cut; %s" % (cut, hint)]
