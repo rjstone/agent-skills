@@ -1,6 +1,6 @@
 # docshelf skill: design
 
-Status: for the user's review (2026-11-16).
+Status: approved by the user (2026-11-16, review on PR #7).
 
 ## Intent
 
