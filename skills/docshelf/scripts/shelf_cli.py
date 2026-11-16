@@ -95,6 +95,25 @@ COMMANDS: List[Command] = [
             shelf_lookup.cmd_index_text, [
         Param(("docset",), "Docset name (several allowed).", nargs="+"),
     ]),
+    Command("sources", "Search the DevDocs list of docsets to install.",
+            shelf_devdocs.cmd_sources, [
+        Param(("query",), "Words in the slug or name.", nargs="+"),
+        Param(("--refresh",), "Fetch the list again now.", kind="flag", rare=True),
+    ]),
+    Command("install", "Download docsets from DevDocs.",
+            shelf_devdocs.cmd_install, [
+        Param(("names",), "Slug, alias or family (python, python~3.14).",
+              nargs="+"),
+    ]),
+    Command("update", "Re-download docsets that DevDocs has updated.",
+            shelf_devdocs.cmd_update, [
+        Param(("names",), "Docsets to update (default: all installed).",
+              nargs="*"),
+    ]),
+    Command("remove", "Delete an installed docset (notes are kept).",
+            shelf_devdocs.cmd_remove, [
+        Param(("name",), "Docset name."),
+    ]),
     Command("notes", "Find, print or check a docset's notes file.",
             shelf_notes.cmd_notes, [
         Param(("docset",), "Docset name or family (python for python~3.13)."),

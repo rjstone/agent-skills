@@ -1,12 +1,28 @@
 """docshelf DevDocs backend: docsets on disk, byte-span page index."""
+import http.client
 import json
 import os
+import re
+import shutil
 import sys
+import time
+import urllib.error
+import urllib.request
+from datetime import datetime, timezone
 from typing import Dict, List, Optional, Tuple
+from urllib.parse import urlsplit
 
-from shelf_core import CLIError, Config, Docset, Entry
+from shelf_core import VERSION, CLIError, Config, Docset, Entry, pick_docset
 
 DERIVED = ".docshelf"
+MANIFEST_URL = "https://devdocs.io/docs.json"
+DOCUMENTS_BASE = "https://documents.devdocs.io"
+# Unambiguous on purpose: a server can filter or rate-limit by it.
+USER_AGENT = "docshelf/" + VERSION
+MANIFEST_MAX_AGE = 86400
+NET_TIMEOUT = 60
+SLUG_RE = re.compile(r"^[a-z0-9][a-z0-9._~+-]*$", re.IGNORECASE)
+CHUNK = 1 << 20
 
 
 def devdocs_dir(cfg: Config) -> str:
@@ -190,3 +206,240 @@ def installed_docsets(cfg: Config) -> List[DevDocsDocset]:
         except (OSError, ValueError, KeyError, TypeError) as e:
             _warn("skipping %s: %s" % (folder, e))
     return out
+
+
+# --- network ---------------------------------------------------------------
+class NetError(CLIError):
+    """A download failed (exit code 7); names the host to allow."""
+
+    def __init__(self, url: str, reason: str):
+        host = urlsplit(url).hostname or url
+        super().__init__(
+            "cannot reach %s (%s). Hosts to allow are listed in "
+            "assets/allowlist.txt in the skill folder (devdocs.io, "
+            "documents.devdocs.io)." % (host, reason), 7)
+
+
+def fetch(url: str, dest: Optional[str] = None) -> bytes:
+    """GET url, redirects followed. With dest, stream the body to that file
+    in chunks and return b""; else return the body."""
+    req = urllib.request.Request(url, headers={"User-Agent": USER_AGENT})
+    try:
+        with urllib.request.urlopen(req, timeout=NET_TIMEOUT) as r:
+            if dest is None:
+                return r.read()
+            with open(dest, "wb") as f:
+                while True:
+                    chunk = r.read(CHUNK)
+                    if not chunk:
+                        return b""
+                    f.write(chunk)
+    except urllib.error.HTTPError as e:
+        raise NetError(url, "HTTP %d" % e.code)
+    except (urllib.error.URLError, OSError, ValueError,
+            http.client.HTTPException) as e:
+        raise NetError(url, str(getattr(e, "reason", e)))
+
+
+def get_manifest(cfg: Config, refresh: bool = False) -> List[dict]:
+    """The DevDocs docset list, cached in <cache>/devdocs/docs.json for 24 h.
+    If it cannot be fetched, a cached copy (any age) is used with a note."""
+    path = os.path.join(devdocs_dir(cfg), "docs.json")
+    try:
+        age = time.time() - os.path.getmtime(path)
+    except OSError:
+        age = None
+    if age is not None and not refresh and 0 <= age < MANIFEST_MAX_AGE:
+        try:
+            return _manifest_rows(_load(path))
+        except (OSError, ValueError):
+            pass
+    try:
+        try:
+            rows = _manifest_rows(json.loads(fetch(MANIFEST_URL).decode("utf-8")))
+        except ValueError as e:  # includes UnicodeDecodeError
+            raise NetError(MANIFEST_URL, "not a DevDocs list: %s" % e)
+    except NetError:
+        if age is None:
+            raise
+        try:
+            rows = _manifest_rows(_load(path))
+        except (OSError, ValueError):
+            raise
+        date = datetime.fromtimestamp(os.path.getmtime(path)).strftime("%Y-%m-%d")
+        print("note: using the cached DevDocs list from %s "
+              "(could not reach devdocs.io)" % date, file=sys.stderr)
+        return rows
+    os.makedirs(devdocs_dir(cfg), exist_ok=True)
+    tmp = path + ".tmp"
+    with open(tmp, "w", encoding="utf-8") as f:
+        json.dump(rows, f, ensure_ascii=False)
+    os.replace(tmp, path)
+    return rows
+
+
+def _manifest_rows(data) -> List[dict]:
+    if not isinstance(data, list) or not all(
+            isinstance(r, dict) and isinstance(r.get("slug"), str) for r in data):
+        raise ValueError("expected a list of docset rows")
+    return data
+
+
+def resolve_install(manifest: List[dict], name: str) -> dict:
+    """The manifest row for name: exact slug, slug ignoring case, then alias,
+    family or title (the first row: DevDocs lists newest first)."""
+    low = name.lower()
+
+    def first(test):
+        return next((r for r in manifest if test(r)), None)
+
+    found = (first(lambda r: r["slug"] == name)
+             or first(lambda r: r["slug"].lower() == low)
+             or first(lambda r: (r.get("alias") or "").lower() == low)
+             or first(lambda r: r["slug"].split("~")[0].lower() == low)
+             or first(lambda r: _titles(r) & {low}))
+    if found:
+        return found
+    close = [r["slug"] for r in manifest
+             if low in r["slug"].lower() or low in str(r.get("name", "")).lower()]
+    msg = "no DevDocs docset matches %r" % name
+    if close:
+        msg += "; close: " + ", ".join(close[:5])
+    raise CLIError(msg + " (see: docshelf.py sources QUERY)", 5)
+
+
+def _titles(row: dict) -> set:
+    name = str(row.get("name") or "")
+    version = str(row.get("version") or "")
+    return {name.lower(), ("%s %s" % (name, version)).strip().lower()}
+
+
+def _utc_now() -> str:
+    return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
+def _discard(path: str):
+    try:
+        os.remove(path)
+    except OSError:
+        pass
+
+
+def install(cfg: Config, row: dict) -> str:
+    """Download row's docset: 'installed', 'updated' or 'up to date'."""
+    slug = row["slug"]
+    if not SLUG_RE.match(slug):
+        raise CLIError("refusing docset slug %r: not a plain name" % slug, 2)
+    folder = os.path.join(devdocs_dir(cfg), slug)
+    meta_path = os.path.join(folder, "meta.json")
+    status = "installed"
+    try:
+        old = _load(meta_path)
+        status = "updated"
+        if int(old.get("mtime") or 0) >= int(row.get("mtime") or 0):
+            return "up to date"
+    except (OSError, ValueError, AttributeError, TypeError):
+        pass
+    created = not os.path.isdir(folder)
+    os.makedirs(folder, exist_ok=True)
+    names = ("index.json", "db.json", "meta.json")
+    tmps = {n: os.path.join(folder, n + ".tmp") for n in names}
+    try:
+        for n in names[:2]:
+            fetch("%s/%s/%s" % (DOCUMENTS_BASE, slug, n), tmps[n])
+        try:
+            idx = _load(tmps["index.json"])
+            if not isinstance(idx.get("entries"), list):
+                raise ValueError("no entries list")
+            build_page_index(tmps["db.json"])
+        except (ValueError, AttributeError, UnicodeDecodeError) as e:
+            raise NetError("%s/%s/" % (DOCUMENTS_BASE, slug),
+                           "unexpected content: %s" % e)
+        meta = {"slug": slug, "name": row.get("name") or slug,
+                "release": str(row.get("release") or ""),
+                "mtime": int(row.get("mtime") or 0),
+                "installedAt": _utc_now(), "alias": row.get("alias") or None,
+                "version": str(row.get("version") or "")}
+        with open(tmps["meta.json"], "w", encoding="utf-8") as f:
+            json.dump(meta, f, ensure_ascii=False)
+        os.replace(tmps["index.json"], os.path.join(folder, "index.json"))
+        os.replace(tmps["db.json"], os.path.join(folder, "db.json"))
+        os.replace(tmps["meta.json"], meta_path)
+    except BaseException:
+        for t in tmps.values():
+            _discard(t)
+        if created:
+            try:
+                os.rmdir(folder)
+            except OSError:
+                pass
+        raise
+    DevDocsDocset(folder).page_index()
+    return status
+
+
+def remove(cfg: Config, slug: str) -> None:
+    if not SLUG_RE.match(slug):
+        raise CLIError("refusing docset slug %r: not a plain name" % slug, 2)
+    shutil.rmtree(os.path.join(devdocs_dir(cfg), slug))
+
+
+# --- commands --------------------------------------------------------------
+def _describe(cfg: Config, status: str, slug: str) -> str:
+    d = DevDocsDocset(os.path.join(devdocs_dir(cfg), slug))
+    return "%s %s (%s %s, %d entries)" % (status, slug, d.display_name,
+                                          d.release, d.entry_count)
+
+
+def cmd_sources(cfg, args) -> int:
+    rows = get_manifest(cfg, args.refresh)
+    words = [w.lower() for w in args.query]
+    have = {d.name for d in installed_docsets(cfg)}
+    hits = [r for r in rows
+            if all(w in r["slug"].lower() or w in str(r.get("name", "")).lower()
+                   for w in words)]
+    hits.sort(key=lambda r: (len(r["slug"]), r["slug"]))
+    for r in hits[:30]:
+        print("%s  %s  %s  %.1f MB%s" % (
+            r["slug"], r.get("name", ""), r.get("release", ""),
+            (r.get("db_size") or 0) / 1_000_000,
+            "  (installed)" if r["slug"] in have else ""))
+    if not hits:
+        print("no DevDocs docset matches %s" % " ".join(args.query))
+    return 0
+
+
+def cmd_install(cfg, args) -> int:
+    rows = get_manifest(cfg)
+    for name in args.names:
+        row = resolve_install(rows, name)
+        status = install(cfg, row)
+        print(_describe(cfg, status, row["slug"]))
+    return 0
+
+
+def cmd_update(cfg, args) -> int:
+    have = installed_docsets(cfg)
+    if args.names:
+        targets = [pick_docset(have, n) for n in args.names]
+    else:
+        targets = have
+    if not targets:
+        print("no docsets installed (install NAME; sources QUERY finds names)")
+        return 0
+    rows = get_manifest(cfg)
+    by_slug = {r["slug"]: r for r in rows}
+    for d in targets:
+        row = by_slug.get(d.name)
+        if row is None:
+            _warn("%s is no longer in the DevDocs list; skipped" % d.name)
+            continue
+        print(_describe(cfg, install(cfg, row), d.name))
+    return 0
+
+
+def cmd_remove(cfg, args) -> int:
+    d = pick_docset(installed_docsets(cfg), args.name)
+    remove(cfg, d.name)
+    print("removed %s (notes untouched)" % d.name)
+    return 0

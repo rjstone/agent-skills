@@ -2,6 +2,8 @@
 make_devdocs() in temp dirs. Run from the repo root:
 python3 -m unittest discover -s tests -v
 """
+import contextlib
+import io
 import json
 import os
 import shutil
@@ -10,6 +12,7 @@ import subprocess
 import sys
 import tempfile
 import unittest
+from unittest import mock
 from typing import Dict, List, Optional, Tuple
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
@@ -81,7 +84,9 @@ def make_devdocs(cache: str, slug: str, *, name: str, release: str,
             manifest = json.load(f)
     manifest.append({
         "name": name, "slug": slug, "type": slug.split("~")[0],
-        "version": release, "release": release, "mtime": mtime,
+        "version": version if version is not None else
+        (slug.split("~", 1)[1].replace("_", " ") if "~" in slug else ""),
+        "release": release, "mtime": mtime,
         "db_size": os.path.getsize(os.path.join(folder, "db.json")),
         "attribution": "", "alias": alias, "links": {}})
     dump(manifest_path, manifest)
@@ -1413,6 +1418,235 @@ class FtsTests(unittest.TestCase):
                     contextlib.redirect_stderr(io.StringIO()):
                 shelf_cli.main(["fts", "word", "-d", "py"] + argv)
             self.assertEqual(seen[-1], want)
+
+
+class FakeNet:
+    """Replaces shelf_devdocs.fetch(url, dest=None); records the calls."""
+
+    def __init__(self, test, pages=None):
+        self.pages = dict(pages or {})
+        self.fetched = []
+        p = mock.patch.object(shelf_devdocs, "fetch", self.fetch)
+        p.start()
+        test.addCleanup(p.stop)
+
+    def fetch(self, url, dest=None):
+        self.fetched.append(url)
+        v = self.pages.get(url)
+        if isinstance(v, Exception):
+            raise v
+        if v is None:
+            raise shelf_devdocs.NetError(url, "HTTP 404")
+        data = v if isinstance(v, bytes) else v.encode("utf-8")
+        if dest is None:
+            return data
+        with open(dest, "wb") as f:
+            f.write(data)
+        return b""
+
+
+def remote_docset(slug, entries, pages):
+    """The two documents documents.devdocs.io serves for a slug."""
+    base = "%s/%s/" % (shelf_devdocs.DOCUMENTS_BASE, slug)
+    index = {"entries": [{"name": n, "type": t, "path": p} for n, t, p in entries],
+             "types": []}
+    return {base + "index.json": json.dumps(index),
+            base + "db.json": json.dumps(pages, ensure_ascii=False)}
+
+
+def row(name, slug, release, mtime=1700000000, version="", alias=None,
+        db_size=2_500_000):
+    return {"name": name, "slug": slug, "type": slug.split("~")[0],
+            "version": version, "release": release, "mtime": mtime,
+            "db_size": db_size, "attribution": "", "alias": alias, "links": {}}
+
+
+class NetworkTests(unittest.TestCase):
+    def setUp(self):
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        self.tmp = os.path.realpath(tmp.name)
+        self.cache = os.path.join(self.tmp, "cache")
+        self.notes = os.path.join(self.tmp, "notes")
+        self.root = os.path.join(self.cache, "devdocs")
+        os.makedirs(self.root)
+        env = mock.patch.dict(os.environ, {"DOCSHELF_CACHE_DIR": self.cache,
+                                           "DOCSHELF_NOTES_DIR": self.notes})
+        env.start()
+        self.addCleanup(env.stop)
+        self.pages = {"intro": "<h1>Intro</h1>", "api": "<h1>API</h1>"}
+        self.entries = [("Intro", "Guide", "intro"), ("api()", "API", "api#x")]
+        self.rows = [row("Python", "python~3.15", "3.15.0", version="3.15", alias="py"),
+                     row("Python", "python~3.14", "3.14.8", version="3.14"),
+                     row("Node.js", "node", "26.3.1"),
+                     row("Node.js", "node~24_lts", "24.1.0", version="24 LTS")]
+        self.net = FakeNet(self, self.docs_pages(self.rows))
+
+    def docs_pages(self, rows):
+        pages = {shelf_devdocs.MANIFEST_URL: json.dumps(rows)}
+        for r in rows:
+            pages.update(remote_docset(r["slug"], self.entries, self.pages))
+        return pages
+
+    def write_manifest(self, rows, age=0):
+        path = os.path.join(self.root, "docs.json")
+        with open(path, "w", encoding="utf-8") as f:
+            json.dump(rows, f)
+        if age:
+            t = os.path.getmtime(path) - age
+            os.utime(path, (t, t))
+
+    def main(self, *argv):
+        out, err = io.StringIO(), io.StringIO()
+        with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
+            code = shelf_cli.main(list(argv))
+        return code, out.getvalue(), err.getvalue()
+
+    def meta(self, slug):
+        with open(os.path.join(self.root, slug, "meta.json"), encoding="utf-8") as f:
+            return json.load(f)
+
+    def test_install_family_newest(self):
+        code, out, err = self.main("install", "python")
+        self.assertEqual((code, err), (0, ""))
+        self.assertEqual(out, "installed python~3.15 (Python 3.15.0, 2 entries)\n")
+        m = self.meta("python~3.15")
+        self.assertEqual((m["version"], m["release"], m["alias"], m["mtime"]),
+                         ("3.15", "3.15.0", "py", 1700000000))
+        self.assertTrue(m["installedAt"].endswith("Z"))
+        self.assertTrue(os.path.isfile(
+            os.path.join(self.root, "python~3.15", ".docshelf", "pages.json")))
+        self.assertEqual(self.main("install", "node")[1].split()[1], "node")
+
+    def test_install_alias(self):
+        code, out, _ = self.main("install", "py")
+        self.assertEqual(out.split()[:2], ["installed", "python~3.15"])
+        self.assertEqual(self.main("install", "PYTHON~3.14")[1].split()[1],
+                         "python~3.14")
+        self.assertEqual(self.main("install", "node~24_lts")[1].split()[1],
+                         "node~24_lts")
+        self.assertIn(" node~24_lts (", self.main("install", "Node.js 24 LTS")[1])
+
+    def test_unknown_name_lists_close_slugs(self):
+        code, out, err = self.main("install", "pyth")
+        self.assertEqual(code, 5)
+        self.assertIn("python~3.15", err)
+        self.assertEqual(self.main("install", "zzz")[0], 5)
+
+    def test_install_up_to_date(self):
+        self.main("install", "python")
+        before = len(self.net.fetched)
+        code, out, _ = self.main("install", "python")
+        self.assertEqual(out, "up to date python~3.15 (Python 3.15.0, 2 entries)\n")
+        self.assertEqual(len(self.net.fetched), before)  # manifest cached too
+
+    def test_update_newer_mtime(self):
+        self.main("install", "python~3.14")
+        newer = [dict(r, mtime=1800000000, release="3.14.9")
+                 if r["slug"] == "python~3.14" else r for r in self.rows]
+        self.net.pages.update(self.docs_pages(newer))
+        self.write_manifest(newer)
+        code, out, err = self.main("update")
+        self.assertEqual((code, err), (0, ""))
+        self.assertEqual(out, "updated python~3.14 (Python 3.14.9, 2 entries)\n")
+        self.assertEqual(self.meta("python~3.14")["mtime"], 1800000000)
+        self.assertEqual(self.main("update", "python")[1].split()[0], "up")
+
+    def test_update_gone_from_manifest_warns(self):
+        self.main("install", "python~3.14", "node")
+        self.write_manifest([r for r in self.rows if r["slug"] != "python~3.14"])
+        code, out, err = self.main("update")
+        self.assertEqual(code, 0)
+        self.assertIn("python~3.14", err)
+        self.assertTrue(out.startswith("up to date node ("), out)
+
+    def test_install_failure_leaves_nothing(self):
+        url = "%s/python~3.15/db.json" % shelf_devdocs.DOCUMENTS_BASE
+        self.net.pages[url] = shelf_devdocs.NetError(url, "connection reset")
+        code, _, err = self.main("install", "python")
+        self.assertEqual(code, 7)
+        self.assertIn("documents.devdocs.io", err)
+        folder = os.path.join(self.root, "python~3.15")
+        self.assertFalse(os.path.exists(os.path.join(folder, "meta.json")))
+        leftovers = [f for _, _, fs in os.walk(folder) for f in fs]
+        self.assertEqual(leftovers, [])
+
+    def test_failed_update_keeps_old_docset(self):
+        self.main("install", "python~3.14")
+        newer = [dict(r, mtime=1800000000) for r in self.rows]
+        self.write_manifest(newer)
+        url = "%s/python~3.14/db.json" % shelf_devdocs.DOCUMENTS_BASE
+        self.net.pages[url] = shelf_devdocs.NetError(url, "boom")
+        self.assertEqual(self.main("update")[0], 7)
+        self.assertEqual(self.meta("python~3.14")["mtime"], 1700000000)
+        self.assertEqual(
+            [f for f in os.listdir(os.path.join(self.root, "python~3.14"))
+             if f.endswith(".tmp")], [])
+
+    def test_bad_manifest_body_is_network_error(self):
+        self.net.pages[shelf_devdocs.MANIFEST_URL] = "<html>captive portal"
+        code, _, err = self.main("sources", "python")
+        self.assertEqual(code, 7)
+
+    def test_manifest_stale_fallback_note(self):
+        self.write_manifest(self.rows, age=3 * 86400)
+        self.net.pages[shelf_devdocs.MANIFEST_URL] = shelf_devdocs.NetError(
+            shelf_devdocs.MANIFEST_URL, "timed out")
+        code, out, err = self.main("sources", "python")
+        self.assertEqual(code, 0)
+        self.assertIn("python~3.15", out)
+        self.assertRegex(err, r"note: using the cached DevDocs list from "
+                              r"\d{4}-\d\d-\d\d \(could not reach devdocs\.io\)")
+
+    def test_stale_manifest_refetched(self):
+        self.write_manifest([], age=3 * 86400)
+        code, out, _ = self.main("sources", "node")
+        self.assertIn("node~24_lts", out)
+        self.assertEqual(self.net.fetched, [shelf_devdocs.MANIFEST_URL])
+
+    def test_no_manifest_exit_7(self):
+        self.net.pages[shelf_devdocs.MANIFEST_URL] = shelf_devdocs.NetError(
+            shelf_devdocs.MANIFEST_URL, "blocked")
+        code, out, err = self.main("sources", "python")
+        self.assertEqual(code, 7)
+        self.assertIn("devdocs.io", err)
+        self.assertIn("documents.devdocs.io", err)
+        self.assertIn("assets/allowlist.txt", err)
+
+    def test_bad_slug_exit_2(self):
+        self.write_manifest([row("Evil", "../x", "1")])
+        code, _, err = self.main("install", "../x")
+        self.assertEqual(code, 2)
+        self.assertIn("../x", err)
+        self.assertFalse(os.path.exists(os.path.join(self.cache, "x")))
+
+    def test_sources_marks_installed(self):
+        self.main("install", "python~3.14")
+        code, out, _ = self.main("sources", "python")
+        lines = out.splitlines()
+        self.assertEqual(lines, [
+            "python~3.14  Python  3.14.8  2.5 MB  (installed)",
+            "python~3.15  Python  3.15.0  2.5 MB"])
+        out = self.main("sources", "node", "lts")[1]
+        self.assertEqual(out.splitlines(),
+                         ["node~24_lts  Node.js  24.1.0  2.5 MB"])
+
+    def test_sources_caps_rows(self):
+        self.write_manifest([row("X%d" % i, "x%d" % i, "1") for i in range(40)])
+        self.assertEqual(len(self.main("sources", "x")[1].splitlines()), 30)
+
+    def test_remove_keeps_notes(self):
+        self.main("install", "python~3.14")
+        os.makedirs(self.notes)
+        note = os.path.join(self.notes, "python.md")
+        with open(note, "w", encoding="utf-8") as f:
+            f.write("# keep me\n")
+        code, out, _ = self.main("remove", "python")
+        self.assertEqual(code, 0)
+        self.assertIn("python~3.14", out)
+        self.assertFalse(os.path.exists(os.path.join(self.root, "python~3.14")))
+        self.assertTrue(os.path.isfile(note))
+        self.assertEqual(self.main("remove", "python")[0], 5)
 
 
 if __name__ == "__main__":
