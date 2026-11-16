@@ -82,6 +82,19 @@ COMMANDS: List[Command] = [
               default=150),
         Param(("--no-notes",), "Do not print notes.", kind="flag", rare=True),
     ]),
+    Command("fts", "Full-text search inside pages (SQLite FTS5).",
+            shelf_lookup.cmd_fts, [
+        Param(("query",), "Words that must all appear in a page.", nargs="+"),
+        Param(("-d", "--docset"), "Docset to search (repeatable).", repeat=True),
+        Param(("--all",), "Search every installed docset.", kind="flag", rare=True),
+        Param(("--max-lines",), "Output line cap.", kind="posint", rare=True,
+              default=shelf_lookup.FTS_MAX_LINES),
+        Param(("--json",), "Print JSON.", kind="flag", rare=True),
+    ]),
+    Command("index-text", "Build the full-text index of docsets ahead of fts.",
+            shelf_lookup.cmd_index_text, [
+        Param(("docset",), "Docset name (several allowed).", nargs="+"),
+    ]),
     Command("notes", "Find, print or check a docset's notes file.",
             shelf_notes.cmd_notes, [
         Param(("docset",), "Docset name or family (python for python~3.13)."),

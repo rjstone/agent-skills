@@ -5,6 +5,7 @@ python3 -m unittest discover -s tests -v
 import json
 import os
 import shutil
+import sqlite3
 import subprocess
 import sys
 import tempfile
@@ -22,8 +23,10 @@ SKILL = os.path.join(REPO_ROOT, "skills", "docshelf")
 SCRIPT = os.path.join(SKILL, "scripts", "docshelf.py")
 
 sys.path.insert(0, os.path.join(SKILL, "scripts"))
+import shelf_cli  # noqa: E402
 import shelf_core  # noqa: E402
 import shelf_devdocs  # noqa: E402
+import shelf_lookup  # noqa: E402
 import shelf_notes  # noqa: E402
 import shelf_render  # noqa: E402
 
@@ -1212,6 +1215,204 @@ class NotesTests(unittest.TestCase):
         r = self.cli("notes", "../evil", "--path")
         self.assertNotEqual(r.returncode, 0)
         self.assertFalse(os.path.exists(os.path.join(self.tmp, "evil.md")))
+
+
+class FtsTests(unittest.TestCase):
+    PY_PAGE = ("<h1>Asyncio</h1><h2 id='asyncio.gather'>asyncio.gather</h2>"
+               "<p>Run awaitables concurrently.</p><pre>await asyncio.gather(a(), b())</pre>"
+               "<h2 id='asyncio.sleep'>asyncio.sleep</h2><p>Block for a while.</p>")
+    GUIDE = "<h1>Guide</h1><p>Gather things together, gather gather gather.</p>"
+
+    def setUp(self):
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        self.tmp = os.path.realpath(tmp.name)
+        self.cache = os.path.join(self.tmp, "cache")
+        self.env = {"HOME": self.tmp, "USERPROFILE": self.tmp,
+                    "DOCSHELF_CACHE_DIR": self.cache,
+                    "DOCSHELF_NOTES_DIR": os.path.join(self.tmp, "notes")}
+        self.add_py()
+
+    def add(self, slug, entries, pages, name=None, **kw):
+        return make_devdocs(self.cache, slug, name=name or slug.capitalize(),
+                            release="1", entries=entries, pages=pages, **kw)
+
+    def add_py(self, **kw):
+        return self.add("py", [("asyncio.gather", "Function", "a#asyncio.gather"),
+                               ("asyncio.sleep", "Function", "a#asyncio.sleep"),
+                               ("Guide", "Guide", "guide")],
+                        {"a": self.PY_PAGE, "guide": self.GUIDE}, **kw)
+
+    def cli(self, *args):
+        return run_cli(*args, env=self.env, cwd=self.tmp)
+
+    def db(self):
+        return os.path.join(self.cache, "devdocs", "py", ".docshelf", "fts.sqlite")
+
+    def test_fts_finds_text_in_page(self):
+        r = self.cli("fts", "b()", "-d", "py")  # only in <pre>, with FTS syntax
+        self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+        self.assertEqual(r.stdout.splitlines()[0], "py:a#asyncio.gather")
+        self.assertIn("gather", r.stdout)
+        r = self.cli("fts", "Gather things", "-d", "py", "--json")
+        items = json.loads(r.stdout)
+        self.assertEqual(items[0]["ref"], "py:guide")
+        self.assertEqual(sorted(items[0]), ["docset", "page", "ref", "snippet"])
+        self.assertEqual(items[0]["page"], "guide")
+        r = self.cli("fts", "zzzznothing", "-d", "py")
+        self.assertEqual(r.returncode, 0)
+        self.assertEqual(r.stdout.strip(), "no matches for 'zzzznothing'")
+
+    def test_hit_ref_is_page_anchor_when_no_entry(self):
+        self.add("duck", [("Other", "Guide", "p")],
+                 {"p": "<h2 id='intro'>Intro</h2><p>quack quack</p>"})
+        r = self.cli("fts", "quack", "-d", "duck")
+        self.assertEqual(r.stdout.splitlines()[0], "duck:p#intro")
+        r = self.cli("show", "duck:p#intro", "--no-notes")
+        self.assertIn("quack", r.stdout)
+
+    def test_ranking_prefers_denser_page(self):
+        r = self.cli("fts", "gather", "-d", "py", "--json")
+        self.assertEqual([h["page"] for h in r.stdout and json.loads(r.stdout)],
+                         ["guide", "a"])
+
+    def test_snippet_brackets_match(self):
+        r = self.cli("fts", "awaitables", "-d", "py", "--json")
+        self.assertIn("[awaitables]", json.loads(r.stdout)[0]["snippet"])
+
+    def test_fts_entry_ref_via_second_id(self):
+        page = ("<h2 id='params'>Params</h2><p>skip lines at the start</p>")
+        self.add("duck", [("Params", "Guide", "p#params")], {"p": page})
+        r = self.cli("fts", "skip", "lines", "-d", "duck")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertEqual(r.stdout.splitlines()[0], "duck:p#params")
+
+    def test_entry_anchor_percent_encoded(self):
+        self.add("duck", [("Out of Memory", "Guide", "p#Out%20of%20Memory")],
+                 {"p": "<h2 id='Out of Memory'>Out of Memory</h2><p>heap exhausted</p>"})
+        r = self.cli("fts", "exhausted", "-d", "duck")
+        self.assertEqual(r.stdout.splitlines()[0], "duck:p#Out%20of%20Memory")
+
+    def test_unquote_all(self):
+        self.assertEqual(shelf_lookup._unquote_all("Guide/Out%2520of%2520Memory"),
+                         "Guide/Out of Memory")
+        self.assertEqual(shelf_lookup._unquote_all("plain"), "plain")
+
+    def test_snippet_phrases(self):
+        self.assertEqual(shelf_lookup._snippet_phrases(
+            "...Also see \x02context\x03 \x02variable\x03. - A contextvars.\x02Context\x03 object..."),
+            ["also see context variable", "context variable"])
+        self.assertEqual(shelf_lookup._snippet_phrases(
+            "get([default]) Return a value for the \x02context\x03 \x02variable\x03 for"),
+            ["for the context variable for", "context variable for"])
+        self.assertEqual(shelf_lookup._snippet_phrases("no match marks"), [])
+
+    def test_fts_cap_keeps_ref_with_snippet(self):
+        r = self.cli("fts", "gather", "-d", "py", "--max-lines", "2")
+        lines = r.stdout.splitlines()
+        self.assertTrue(lines[0].startswith("py:"))
+        self.assertTrue(lines[1].startswith("    "))
+        self.assertIn("more hits cut", lines[2])
+
+    def test_max_lines_must_be_positive(self):
+        r = self.cli("fts", "gather", "-d", "py", "--max-lines", "0")
+        self.assertEqual(r.returncode, 2)
+
+    def test_fts_default_is_five_hits_with_hint(self):
+        pages = {"p%02d" % i: "<p>needle %s</p>" % ("x " * i) for i in range(8)}
+        self.add("many", [("x%d" % i, "Guide", p) for i, p in enumerate(pages)], pages)
+        r = self.cli("fts", "needle", "-d", "many")
+        lines = r.stdout.splitlines()
+        self.assertEqual(sum(1 for l in lines if l.startswith("many:")), 5, lines)
+        self.assertIn("more hits cut", lines[-1])
+        self.assertIn("add words", lines[-1])
+
+    def test_fts_first_build_says_so(self):
+        r = self.cli("fts", "gather", "-d", "py")
+        self.assertEqual(r.stderr.count("building the full-text index for py"), 1)
+        self.assertTrue(os.path.isfile(self.db()))
+        r = self.cli("fts", "gather", "-d", "py")
+        self.assertEqual(r.stderr, "")
+
+    def test_index_text_builds_and_layout(self):
+        r = self.cli("index-text", "py")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertEqual(r.stdout.strip(), "indexed 2 pages of py")
+        self.assertEqual(r.stderr, "")
+        con = sqlite3.connect(self.db())
+        self.assertEqual(con.execute("SELECT COUNT(*) FROM pages").fetchone()[0], 2)
+        self.assertEqual(con.execute("SELECT COUNT(*) FROM page_entries").fetchone()[0], 3)
+        refs = {x for (x,) in con.execute("SELECT ref FROM page_entries")}
+        self.assertIn("py:a#asyncio.sleep", refs)
+        keys = {k for k, _ in con.execute("SELECT key, value FROM meta")}
+        self.assertEqual(keys, {"docset_version", "built_at"})
+        con.close()
+        r = self.cli("fts", "gather", "-d", "py")  # already built: silent
+        self.assertEqual(r.stderr, "")
+        r = self.cli("index-text", "nope")
+        self.assertEqual(r.returncode, 5)
+
+    def test_fts_rebuilds_when_docset_rewritten(self):
+        self.cli("fts", "gather", "-d", "py")
+        self.add("py", [("asyncio.gather", "Function", "a#asyncio.gather"),
+                        ("Guide", "Guide", "guide")],
+                 {"a": self.PY_PAGE, "guide": self.GUIDE + "<p>newword</p>"},
+                 mtime=1800000000)  # new content, size and mtime
+        r = self.cli("fts", "newword", "-d", "py")
+        self.assertIn("rebuilt index for py", r.stderr)
+        self.assertEqual(r.stdout.splitlines()[0], "py:guide")
+
+    def test_stale_index_rebuilt_in_place(self):
+        self.cli("fts", "gather", "-d", "py")
+        folder = os.path.join(self.cache, "devdocs", "py")
+        with open(os.path.join(folder, "db.json"), encoding="utf-8") as f:
+            pages = json.load(f)
+        pages["guide"] += "<p>newword</p>"
+        with open(os.path.join(folder, "db.json"), "w", encoding="utf-8") as f:
+            json.dump(pages, f, ensure_ascii=False)
+        r = self.cli("fts", "newword", "-d", "py")
+        self.assertIn("rebuilt index for py", r.stderr)
+        self.assertEqual(r.stdout.splitlines()[0], "py:guide")
+        r = self.cli("fts", "newword", "-d", "py")
+        self.assertEqual(r.stderr, "")
+
+    def test_fts_unavailable(self):
+        import contextlib
+        import io
+        from unittest import mock
+        for argv in (["fts", "x", "-d", "py"], ["index-text", "py"]):
+            err = io.StringIO()
+            with mock.patch.object(shelf_lookup, "fts_available", return_value=False), \
+                    mock.patch.dict(os.environ, self.env), \
+                    contextlib.redirect_stderr(err):
+                code = shelf_cli.main(argv)
+            self.assertEqual(code, 2)
+            self.assertIn("FTS5", err.getvalue())
+
+    def test_fts_scope_error(self):
+        big = [("e%d" % i, "Function", "p") for i in range(500)]
+        for i in range(5):
+            self.add("b%d" % i, big, {"p": "<p>x</p>"})
+        r = self.cli("fts", "x")
+        self.assertEqual(r.returncode, 4)
+
+    def test_fts_fetches_enough_hits_for_line_cap(self):
+        import contextlib
+        import io
+        from unittest import mock
+        seen = []
+
+        def fake(cfg, docs, query, limit):
+            seen.append(limit)
+            return []
+        for argv, want in ((["--max-lines", "10"], 6),
+                           (["--max-lines", "10", "--json"], 10)):
+            with mock.patch.object(shelf_lookup, "fts_search", fake), \
+                    mock.patch.dict(os.environ, self.env), \
+                    contextlib.redirect_stdout(io.StringIO()), \
+                    contextlib.redirect_stderr(io.StringIO()):
+                shelf_cli.main(["fts", "word", "-d", "py"] + argv)
+            self.assertEqual(seen[-1], want)
 
 
 if __name__ == "__main__":
