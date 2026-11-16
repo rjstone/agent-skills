@@ -371,10 +371,6 @@ class DevDocsDiskTests(unittest.TestCase):
         self.assertEqual(len(shelf_core.select_docsets(self.cfg(), ds, [], False)), 5)
 
 
-if __name__ == "__main__":
-    unittest.main()
-
-
 class RenderTests(unittest.TestCase):
     def text(self, html, **kw):
         return [b.text for b in shelf_render.html_to_text(html, **kw)]
@@ -487,3 +483,7 @@ class RenderGrepTests(unittest.TestCase):
         lines, ends = self.lines(self.DL)
         out = shelf_render.grep_lines(lines, ["long_one"], ends)
         self.assertFalse(any("long line" in l for l in out))
+
+
+if __name__ == "__main__":
+    unittest.main()
