@@ -97,7 +97,11 @@ vendors' plugin formats):
   regenerates and commits it when `skills/` changed, it is missing, or it is
   stale (the user, 2026-11-08). opencode re-downloads a skill only when its
   version changes, which "Updating a skill" already requires.
-- `docs/plans/` - finished plans (`YYYY-MM-<topic>.md`).
+- `docs/plans/` - finished plans (`YYYY-MM-<topic>.md`) for work done
+  without the superpowers skills.
+- `docs/superpowers/` - specs, plans and other files of work done with the
+  superpowers skills (`specs/YYYY-MM-DD-<topic>-design.md`,
+  `plans/YYYY-MM-DD-<topic>.md`, ...), at the paths those skills expect.
 - `TODO.md` - open work. `BUGS.md` - upstream bugs (create when needed).
 
 Run the tests from the repo root: `python3 -m unittest discover -s tests -v`.
@@ -269,4 +273,8 @@ metadata:
   user's decisions with who and when, e.g. "(the user, 2026-11-08)".
 - **Plans:** finished plans go in `docs/plans/YYYY-MM-<topic>.md`.
   "Archiving the plan" means: once the work is done, copy the working plan
-  there, remove the original, commit and push.
+  there, remove the original, commit and push. Work done with the
+  superpowers skills keeps its specs and plans under `docs/superpowers/`
+  (`specs/`, `plans/` and the other subfolders those skills use) and is not
+  moved to `docs/plans/`: either location is correct, depending on whether
+  the superpowers skills were used (the user, 2026-11-16).
