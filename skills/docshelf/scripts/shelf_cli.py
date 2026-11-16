@@ -1,6 +1,7 @@
 """docshelf command line: the command table, parser and main()."""
 import argparse
 import sys
+import textwrap
 from dataclasses import dataclass
 from typing import Any, Callable, List, Optional, Tuple
 
@@ -125,6 +126,64 @@ COMMANDS: List[Command] = [
 ]
 
 
+EXIT_CODES = ("0 ok; 1 notes --check found problems; 2 usage, unknown name or "
+              "no FTS5; 4 search scope too wide (use -d, a project list or "
+              "--all); 5 not found; 7 network (DevDocs could not be reached)")
+
+# Top-level --help: the command lines agents normally need. Options that
+# have rare=True in COMMANDS are only named (not described) under "only if
+# you need these", generated from the table, so a new option can't be left
+# out; `<command> --help` (argparse) describes them.
+TOP_HELP = """\
+docshelf {version}: look up DevDocs documentation offline (stdlib only).
+This is the command reference; `<command> --help` adds only the options
+listed at the end. REF = <docset>:<path>[#anchor], as search and fts print
+them; <docset> is the name `list` prints.
+
+Look up (usual order):
+  search QUERY... [-d NAME]      entries whose names contain all the words;
+                                 prints one REF per entry, best first
+  show REF                       that entry's section (max 150 lines) plus
+                                 your notes for it
+  show REF --grep TEXT           only lines containing TEXT, with their
+                                 heading, table header row, and a matching
+                                 term's definition (repeatable; plain text,
+                                 not a pattern)
+  fts QUERY... [-d NAME]         words inside pages, 5 best hits with REFs;
+                                 include the function name: fts read_csv skip
+
+Notes (format: references/notes.md in the skill folder):
+  notes DOCSET --path            the notes file to edit
+  notes DOCSET --check           after editing: which REFs show each section,
+                                 then "ok"
+
+Get and manage docsets (references/getting-docsets.md):
+  list                           installed docsets and their versions
+  sources QUERY...               docsets DevDocs offers, with sizes
+  install NAME...                download one (NAME without a version = the
+                                 newest); update [NAME...]; remove NAME
+  where                          cache, notes folder and project file
+  index-text DOCSET              build the fts index now
+
+Only if you need these, see `<command> --help`:
+{rare}
+Global: --version.
+{exit_codes}
+"""
+
+
+def top_help() -> str:
+    rare = []
+    for c in COMMANDS:
+        flags = [p.flags[0] for p in c.params if p.rare]
+        if flags:
+            rare.append("  %-10s %s" % (c.name, " ".join(flags)))
+    codes = textwrap.fill("Exit codes: " + EXIT_CODES, width=76,
+                          subsequent_indent="  ")
+    return TOP_HELP.format(version=shelf_core.VERSION, rare="\n".join(rare),
+                           exit_codes=codes)
+
+
 def positive_int(text):
     try:
         n = int(text)
@@ -154,8 +213,12 @@ def _add_param(parser, p: Param):
 
 
 def build_parser() -> argparse.ArgumentParser:
-    parser = _Parser(prog="docshelf",
+    parser = _Parser(prog="docshelf", add_help=False,
                      description="Offline, version-pinned DevDocs documentation.")
+    parser.add_argument("-h", "--help", action="store_true",
+                        help="show the command reference")
+    parser.add_argument("--version", action="version",
+                        version="docshelf %s" % shelf_core.VERSION)
     sub = parser.add_subparsers(dest="command", metavar="<command>")
     for c in COMMANDS:
         sp = sub.add_parser(c.name, help=c.summary, description=c.summary)
@@ -168,9 +231,9 @@ def build_parser() -> argparse.ArgumentParser:
 def main(argv: Optional[List[str]] = None) -> int:
     parser = build_parser()
     args = parser.parse_args(argv)
-    if not args.command:
-        parser.print_help()
-        return 2
+    if args.help or not args.command:
+        print(top_help(), end="")
+        return 0 if args.help else 2
     try:
         return args._command.func(shelf_core.load_config(), args)
     except CLIError as e:

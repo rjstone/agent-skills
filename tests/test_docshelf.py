@@ -1649,5 +1649,73 @@ class NetworkTests(unittest.TestCase):
         self.assertEqual(self.main("remove", "python")[0], 5)
 
 
+TOP_HELP_EXPECTED = """\
+docshelf 0.1.0: look up DevDocs documentation offline (stdlib only).
+This is the command reference; `<command> --help` adds only the options
+listed at the end. REF = <docset>:<path>[#anchor], as search and fts print
+them; <docset> is the name `list` prints.
+
+Look up (usual order):
+  search QUERY... [-d NAME]      entries whose names contain all the words;
+                                 prints one REF per entry, best first
+  show REF                       that entry's section (max 150 lines) plus
+                                 your notes for it
+  show REF --grep TEXT           only lines containing TEXT, with their
+                                 heading, table header row, and a matching
+                                 term's definition (repeatable; plain text,
+                                 not a pattern)
+  fts QUERY... [-d NAME]         words inside pages, 5 best hits with REFs;
+                                 include the function name: fts read_csv skip
+
+Notes (format: references/notes.md in the skill folder):
+  notes DOCSET --path            the notes file to edit
+  notes DOCSET --check           after editing: which REFs show each section,
+                                 then "ok"
+
+Get and manage docsets (references/getting-docsets.md):
+  list                           installed docsets and their versions
+  sources QUERY...               docsets DevDocs offers, with sizes
+  install NAME...                download one (NAME without a version = the
+                                 newest); update [NAME...]; remove NAME
+  where                          cache, notes folder and project file
+  index-text DOCSET              build the fts index now
+
+Only if you need these, see `<command> --help`:
+  search     --type --all --max-lines --json
+  show       --full --max-lines --no-notes
+  fts        --all --max-lines --json
+  sources    --refresh
+Global: --version.
+Exit codes: 0 ok; 1 notes --check found problems; 2 usage, unknown name or
+  no FTS5; 4 search scope too wide (use -d, a project list or --all); 5 not
+  found; 7 network (DevDocs could not be reached)
+"""
+
+
+class HelpTests(unittest.TestCase):
+    def test_top_help_text(self):
+        r = run_cli("--help")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertEqual(r.stdout, TOP_HELP_EXPECTED)
+
+    def test_every_command_in_help(self):
+        text = shelf_cli.top_help()
+        for c in shelf_cli.COMMANDS:
+            self.assertIn(c.name, text)
+
+    def test_subcommand_help_is_argparse(self):
+        r = run_cli("search", "--help")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertIn("--max-lines", r.stdout)
+
+    def test_skill_md_mentions_no_dash_docset(self):
+        with open(os.path.join(SKILL, "SKILL.md"), encoding="utf-8") as f:
+            text = f.read()
+        for bad in ("dash-docset", "docset.py", ".dash-docset"):
+            self.assertNotIn(bad, text)
+        self.assertIn("## Credits", text)
+        self.assertIn("https://devdocs.io", text)
+
+
 if __name__ == "__main__":
     unittest.main()

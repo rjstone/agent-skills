@@ -119,6 +119,7 @@ metadata:
   author: Robert Stone
   source: https://github.com/rjstone/agent-skills
   version: "0.1.0"
+  credits: "Project A, Project B"   # optional
 ---
 ```
 
@@ -131,6 +132,9 @@ metadata:
   packages or tools that usually aren't installed (Xvfb, ImageMagick,
   tkinter), network access a script needs, or one intended product. Leave
   it out for things nearly everyone has (Python, git, a shell).
+- Optional `metadata.credits`: a short comma-separated list of credited
+  projects, names only. Links and roles go in the body's `## Credits`
+  (the user, 2026-11-16).
 - License and attribution live only in the frontmatter: no license or
   "maintained by" prose in the body. One exception: an optional `## Credits`
   section, last in the file, of one or two plain sentences crediting an
@@ -181,6 +185,12 @@ metadata:
 - `opencode-api` - opencode v2 server HTTP API: the published OpenAPI spec
   cached in `references/openapi.json`, searched with `scripts/api_lookup.py`
   (too large to read whole); calls via `opencode api` or Basic auth.
+- `docshelf` - DevDocs documentation offline: `search`, `show`, `fts`,
+  per-docset notes, and `install` / `update` / `remove` from devdocs.io (the
+  only network use), plus a `--mcp` stdio server mode. Stdlib only
+  (`scripts/docshelf.py` and `shelf_*.py`). Cache `DOCSHELF_CACHE_DIR`,
+  notes `DOCSHELF_NOTES_DIR`, project file `.docshelf.json`
+  (`"docsets"` list). Its frontmatter has `metadata.credits`.
 
 ## Decisions (the user, 2026-11-08)
 
