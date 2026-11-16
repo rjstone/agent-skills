@@ -18,7 +18,9 @@ project folder and give the script's full path; don't `cd` to the skill
 folder, because a project's `.docshelf.json` is found from the current
 folder. Run its `--help` first: that is the command reference, with the
 usual command lines. A subcommand's own `--help` only adds the rarer options
-that `--help` names at its end. This file covers what help can't.
+that `--help` names at its end. This file covers what help can't. If `docshelf` MCP tools
+(`mcp__docshelf__search` and so on) are available, use them instead of the
+script.
 
 Use for exact, version-pinned reference (signatures, options, return values)
 quoted from the docs. Prefer Context7 or web search when the library has no
@@ -35,6 +37,7 @@ affiliated with DevDocs, and each docset keeps its own licence.
   [references/getting-docsets.md](references/getting-docsets.md). `sources`,
   `install` and `update` use the network; lookups do not.
 - Before writing notes: [references/notes.md](references/notes.md).
+- Registering docshelf as an MCP server: [references/mcp.md](references/mcp.md).
 
 ## Looking things up
 

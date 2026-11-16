@@ -1685,7 +1685,7 @@ Only if you need these, see `<command> --help`:
   show       --full --max-lines --no-notes
   fts        --all --max-lines --json
   sources    --refresh
-Global: --version.
+Global: --version, --mcp (run as a stdio MCP server; references/mcp.md).
 Exit codes: 0 ok; 1 notes --check found problems; 2 usage, unknown name or
   no FTS5; 4 search scope too wide (use -d, a project list or --all); 5 not
   found; 7 network (DevDocs could not be reached)
@@ -1715,6 +1715,147 @@ class HelpTests(unittest.TestCase):
             self.assertNotIn(bad, text)
         self.assertIn("## Credits", text)
         self.assertIn("https://devdocs.io", text)
+
+
+class McpTests(unittest.TestCase):
+    def setUp(self):
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        self.tmp = os.path.realpath(tmp.name)
+        self.cache = os.path.join(self.tmp, "cache")
+        self.env = clean_env()
+        self.env.update({"HOME": self.tmp, "USERPROFILE": self.tmp,
+                         "DOCSHELF_CACHE_DIR": self.cache,
+                         "DOCSHELF_NOTES_DIR": os.path.join(self.tmp, "notes")})
+        make_devdocs(self.cache, "alpha", name="Alpha", release="1",
+                     entries=[("frobnicate(x)", "Function", "api#frob")],
+                     pages={"api": "<h2 id=\"frob\">frobnicate</h2><p>Frobs x.</p>"})
+        self.proc = subprocess.Popen(
+            [sys.executable, SCRIPT, "--mcp"], stdin=subprocess.PIPE,
+            stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
+            encoding="utf-8", env=self.env, cwd=self.tmp)
+        self.addCleanup(self.stop)
+        self.next_id = 0
+
+    def stop(self):
+        self.proc.stdin.close()
+        self.proc.wait(timeout=10)
+        self.proc.stdout.close()
+        self.proc.stderr.close()
+
+    def send_raw(self, line):
+        self.proc.stdin.write(line + "\n")
+        self.proc.stdin.flush()
+        return json.loads(self.proc.stdout.readline())
+
+    def rpc(self, method, params=None):
+        self.next_id += 1
+        msg = {"jsonrpc": "2.0", "id": self.next_id, "method": method}
+        if params is not None:
+            msg["params"] = params
+        reply = self.send_raw(json.dumps(msg))
+        self.assertEqual(reply["id"], self.next_id)
+        return reply
+
+    def call(self, name, arguments):
+        return self.rpc("tools/call", {"name": name, "arguments": arguments})["result"]
+
+    def test_initialize_and_list(self):
+        r = self.rpc("initialize", {"protocolVersion": "2024-11-05",
+                                    "capabilities": {}})["result"]
+        self.assertEqual(r["protocolVersion"], "2024-11-05")
+        self.assertEqual(r["serverInfo"],
+                         {"name": "docshelf", "version": shelf_core.VERSION})
+        self.assertEqual(r["capabilities"], {"tools": {}})
+        r = self.rpc("initialize", {"protocolVersion": "1999-01-01"})["result"]
+        self.assertEqual(r["protocolVersion"], "2025-06-18")
+        self.proc.stdin.write(json.dumps(
+            {"jsonrpc": "2.0", "method": "notifications/initialized"}) + "\n")
+        tools = self.rpc("tools/list")["result"]["tools"]
+        by_name = {t["name"]: t for t in tools}
+        self.assertEqual(sorted(by_name), ["fts", "install", "list", "notes",
+                                           "remove", "search", "show", "sources"])
+        q = by_name["search"]["inputSchema"]
+        self.assertEqual(q["properties"]["query"]["type"], "array")
+        self.assertEqual(q["properties"]["query"]["items"], {"type": "string"})
+        self.assertIn("query", q["required"])
+        self.assertEqual(q["properties"]["max_lines"]["type"], "integer")
+        self.assertEqual(q["properties"]["all"]["type"], "boolean")
+        self.assertEqual(q["properties"]["docsets"]["type"], "array")
+        self.assertEqual(sorted(by_name["notes"]["inputSchema"]["properties"]),
+                         ["check", "docset"])
+
+    def test_search_matches_cli(self):
+        r = self.call("search", {"query": ["frobnicate"], "docsets": ["alpha"]})
+        self.assertFalse(r["isError"], r)
+        cli = run_cli("search", "frobnicate", "-d", "alpha", env=self.env,
+                      cwd=self.tmp)
+        self.assertEqual(cli.returncode, 0, cli.stderr)
+        self.assertEqual(r["content"][0]["text"], cli.stdout)
+        shown = self.call("show", {"ref": "alpha:api#frob"})
+        self.assertFalse(shown["isError"])
+        self.assertIn("Frobs x.", shown["content"][0]["text"])
+
+    def test_error_is_result(self):
+        r = self.call("show", {"ref": "nosuch:page"})
+        self.assertTrue(r["isError"])
+        self.assertTrue(r["content"][0]["text"])
+        self.assertEqual(self.rpc("ping")["result"], {})
+
+    def test_install_error_hint_replaces_file_pointer(self):
+        r = self.call("show", {"ref": "nosuch:page"})
+        self.assertNotIn("references/", r["content"][0]["text"])
+
+    def test_garbage_line(self):
+        reply = self.send_raw("this is not json")
+        self.assertEqual(reply["error"]["code"], -32700)
+        self.assertIsNone(reply["id"])
+        self.assertEqual(self.rpc("ping")["result"], {})
+        self.assertEqual(self.rpc("no/such")["error"]["code"], -32601)
+
+    def test_unknown_tool(self):
+        self.assertTrue(self.call("where", {})["isError"])
+        self.assertTrue(self.call("nope", {})["isError"])
+
+    def test_missing_required_arg(self):
+        r = self.call("search", {})
+        self.assertTrue(r["isError"])
+        self.assertIn("query", r["content"][0]["text"])
+
+    def test_stderr_appended_and_internal_error(self):
+        import shelf_mcp
+        def noisy(cfg, args):
+            print("out line")
+            print("warning: careful", file=sys.stderr)
+            return 0
+        def boom(cfg, args):
+            raise RuntimeError("kaput")
+        cmds = [shelf_cli.Command("noisy", "x", noisy, []),
+                shelf_cli.Command("boom", "x", boom, [])]
+        inp = io.StringIO("".join(json.dumps(
+            {"jsonrpc": "2.0", "id": i, "method": "tools/call",
+             "params": {"name": n, "arguments": {}}}) + "\n"
+            for i, n in ((1, "noisy"), (2, "boom"), (3, "noisy"))))
+        out = io.StringIO()
+        with mock.patch.object(shelf_cli, "COMMANDS", cmds):
+            self.assertEqual(shelf_mcp.serve(inp, out), 0)
+        replies = [json.loads(l) for l in out.getvalue().splitlines()]
+        self.assertEqual(replies[0]["result"]["content"][0]["text"],
+                         "out line\nwarning: careful\n")
+        self.assertTrue(replies[1]["result"]["isError"])
+        self.assertEqual(replies[1]["result"]["content"][0]["text"],
+                         "internal error: RuntimeError: kaput")
+        self.assertFalse(replies[2]["result"]["isError"])
+
+    def test_mcp_doc_linked_and_clean(self):
+        with open(os.path.join(SKILL, "SKILL.md"), encoding="utf-8") as f:
+            self.assertIn("references/mcp.md", f.read())
+        with open(os.path.join(SKILL, "references", "mcp.md"),
+                  encoding="utf-8") as f:
+            text = f.read()
+        for needle in ("claude mcp add docshelf", "mcpServers",
+                       "[mcp_servers.docshelf]", '"type": "local"'):
+            self.assertIn(needle, text)
 
 
 if __name__ == "__main__":

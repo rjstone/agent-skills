@@ -62,7 +62,8 @@ def cmd_list(cfg: Config, args: argparse.Namespace) -> int:
 
 
 COMMANDS: List[Command] = [
-    Command("where", "Show the cache, notes and project file in use.", cmd_where, []),
+    Command("where", "Show the cache, notes and project file in use.",
+            cmd_where, [], mcp=False),
     Command("list", "List installed docsets.", cmd_list, []),
     Command("search", "Search entry names (exact, prefix, substring, fuzzy).",
             shelf_lookup.cmd_search, [
@@ -95,7 +96,7 @@ COMMANDS: List[Command] = [
     Command("index-text", "Build the full-text index of docsets ahead of fts.",
             shelf_lookup.cmd_index_text, [
         Param(("docset",), "Docset name (several allowed).", nargs="+"),
-    ]),
+    ], mcp=False),
     Command("sources", "Search the DevDocs list of docsets to install.",
             shelf_devdocs.cmd_sources, [
         Param(("query",), "Words in the slug or name.", nargs="+"),
@@ -110,7 +111,7 @@ COMMANDS: List[Command] = [
             shelf_devdocs.cmd_update, [
         Param(("names",), "Docsets to update (default: all installed).",
               nargs="*"),
-    ]),
+    ], mcp=False),
     Command("remove", "Delete an installed docset (notes are kept).",
             shelf_devdocs.cmd_remove, [
         Param(("name",), "Docset name."),
@@ -167,7 +168,7 @@ Get and manage docsets (references/getting-docsets.md):
 
 Only if you need these, see `<command> --help`:
 {rare}
-Global: --version.
+Global: --version, --mcp (run as a stdio MCP server; references/mcp.md).
 {exit_codes}
 """
 
@@ -219,6 +220,8 @@ def build_parser() -> argparse.ArgumentParser:
                         help="show the command reference")
     parser.add_argument("--version", action="version",
                         version="docshelf %s" % shelf_core.VERSION)
+    parser.add_argument("--mcp", action="store_true",
+                        help="run as a stdio MCP server")
     sub = parser.add_subparsers(dest="command", metavar="<command>")
     for c in COMMANDS:
         sp = sub.add_parser(c.name, help=c.summary, description=c.summary)
@@ -231,6 +234,12 @@ def build_parser() -> argparse.ArgumentParser:
 def main(argv: Optional[List[str]] = None) -> int:
     parser = build_parser()
     args = parser.parse_args(argv)
+    if args.mcp:
+        import shelf_mcp
+        for stream in (sys.stdin, sys.stdout):
+            if hasattr(stream, "reconfigure"):
+                stream.reconfigure(encoding="utf-8", newline="\n")
+        return shelf_mcp.serve(sys.stdin, sys.stdout)
     if args.help or not args.command:
         print(top_help(), end="")
         return 0 if args.help else 2
