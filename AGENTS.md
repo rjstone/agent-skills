@@ -138,7 +138,9 @@ metadata:
 - License and attribution live only in the frontmatter: no license or
   "maintained by" prose in the body. One exception: an optional `## Credits`
   section, last in the file, of one or two plain sentences crediting an
-  inspiration or prior idea (not authorship or license; the user, 2026-11-08).
+  inspiration or prior idea, or one short line per credited project with its
+  link (the user, 2026-11-16); credits, not authorship or license (the user,
+  2026-11-08).
 
 ## Skills
 
@@ -186,8 +188,8 @@ metadata:
   cached in `references/openapi.json`, searched with `scripts/api_lookup.py`
   (too large to read whole); calls via `opencode api` or Basic auth.
 - `docshelf` - DevDocs documentation offline: `search`, `show`, `fts`,
-  per-docset notes, and `install` / `update` / `remove` from devdocs.io (the
-  only network use), plus a `--mcp` stdio server mode. Stdlib only
+  per-docset notes, and `sources` / `install` / `update` fetching from
+  devdocs.io (the only network use; `remove` is local), plus a `--mcp` stdio server mode. Stdlib only
   (`scripts/docshelf.py` and `shelf_*.py`). Cache `DOCSHELF_CACHE_DIR`,
   notes `DOCSHELF_NOTES_DIR`, project file `.docshelf.json`
   (`"docsets"` list). Its frontmatter has `metadata.credits`.

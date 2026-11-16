@@ -1,7 +1,7 @@
 ---
 name: docshelf
 description: Use when you need exact, version-pinned API, library or tool reference offline from DevDocs documentation sets, or must search, install or annotate such docsets instead of guessing from memory.
-compatibility: Network access only to install docsets; Python sqlite3 built with FTS5 for full-text search.
+compatibility: Network access only for sources, install and update; Python sqlite3 built with FTS5 for full-text search.
 license: MIT
 metadata:
   author: Robert Stone
@@ -32,8 +32,8 @@ affiliated with DevDocs, and each docset keeps its own licence.
 
 - A needed docset is missing, or before `sources`, `install`, `update` or
   `remove`, or on exit 7 (network):
-  [references/getting-docsets.md](references/getting-docsets.md). `install`
-  is the only command that uses the network.
+  [references/getting-docsets.md](references/getting-docsets.md). `sources`,
+  `install` and `update` use the network; lookups do not.
 - Before writing notes: [references/notes.md](references/notes.md).
 
 ## Looking things up
