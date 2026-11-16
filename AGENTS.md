@@ -97,7 +97,11 @@ vendors' plugin formats):
   regenerates and commits it when `skills/` changed, it is missing, or it is
   stale (the user, 2026-11-08). opencode re-downloads a skill only when its
   version changes, which "Updating a skill" already requires.
-- `docs/plans/` - finished plans (`YYYY-MM-<topic>.md`).
+- `docs/plans/` - finished plans (`YYYY-MM-<topic>.md`) for work done
+  without the superpowers skills.
+- `docs/superpowers/` - specs, plans and other files of work done with the
+  superpowers skills (`specs/YYYY-MM-DD-<topic>-design.md`,
+  `plans/YYYY-MM-DD-<topic>.md`, ...), at the paths those skills expect.
 - `TODO.md` - open work. `BUGS.md` - upstream bugs (create when needed).
 
 Run the tests from the repo root: `python3 -m unittest discover -s tests -v`.
@@ -119,6 +123,7 @@ metadata:
   author: Robert Stone
   source: https://github.com/rjstone/agent-skills
   version: "0.1.0"
+  credits: "Project A, Project B"   # optional
 ---
 ```
 
@@ -131,10 +136,15 @@ metadata:
   packages or tools that usually aren't installed (Xvfb, ImageMagick,
   tkinter), network access a script needs, or one intended product. Leave
   it out for things nearly everyone has (Python, git, a shell).
+- Optional `metadata.credits`: a short comma-separated list of credited
+  projects, names only. Links and roles go in the body's `## Credits`
+  (the user, 2026-11-16).
 - License and attribution live only in the frontmatter: no license or
   "maintained by" prose in the body. One exception: an optional `## Credits`
   section, last in the file, of one or two plain sentences crediting an
-  inspiration or prior idea (not authorship or license; the user, 2026-11-08).
+  inspiration or prior idea, or one short line per credited project with its
+  link (the user, 2026-11-16); credits, not authorship or license (the user,
+  2026-11-08).
 
 ## Skills
 
@@ -181,6 +191,15 @@ metadata:
 - `opencode-api` - opencode v2 server HTTP API: the published OpenAPI spec
   cached in `references/openapi.json`, searched with `scripts/api_lookup.py`
   (too large to read whole); calls via `opencode api` or Basic auth.
+- `docshelf` - DevDocs documentation offline: `search`, `show`, `fts`,
+  per-docvol notes, and `sources` / `install` / `update` fetching from
+  devdocs.io (the only network use; `remove` is local), plus a `--mcp` stdio server mode. Stdlib only
+  (`scripts/docshelf.py` and `shelf_*.py`). Cache `DOCSHELF_CACHE_DIR`,
+  notes `DOCSHELF_NOTES_DIR`, project file `.docshelf.json`
+  (`"docvols"` list). Its frontmatter has `metadata.credits`. A docvol is
+  docshelf's native format: a third-party documentation bundle (today a
+  DevDocs documentation; later also a Dash docset) plus docshelf's own
+  metadata, indexes and notes (the user, 2026-11-16).
 
 ## Decisions (the user, 2026-11-08)
 
@@ -257,4 +276,8 @@ metadata:
   user's decisions with who and when, e.g. "(the user, 2026-11-08)".
 - **Plans:** finished plans go in `docs/plans/YYYY-MM-<topic>.md`.
   "Archiving the plan" means: once the work is done, copy the working plan
-  there, remove the original, commit and push.
+  there, remove the original, commit and push. Work done with the
+  superpowers skills keeps its specs and plans under `docs/superpowers/`
+  (`specs/`, `plans/` and the other subfolders those skills use) and is not
+  moved to `docs/plans/`: either location is correct, depending on whether
+  the superpowers skills were used (the user, 2026-11-16).
