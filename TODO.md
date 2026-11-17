@@ -95,6 +95,11 @@ items are done.
         second-list failure path are untested.
   - [ ] 6.13.30 The MCP tool schema reads `p.default` directly, a second
         place that knows the default rule.
+- [ ] 6.14 Better recovery for broken docvols (the user, 2026-11-17). 0.7.3
+      only skips them with a warning and repair advice (DevDocs: `remove`
+      then `install`; docsets: reinstall in Dash/Zeal). Examine: `install`
+      re-downloading when index.json/db.json is damaged (today it says "up
+      to date"), a `check`/`repair` command, verifying files after download.
 
 #### Reference: other docset and DevDocs readers (skimmed 2026-11-17)
 
