@@ -176,10 +176,11 @@ class DashDocvol(Docvol):
                 plist = plistlib.load(f)
             if isinstance(plist, dict) and plist.get("CFBundleName"):
                 self.title = str(plist["CFBundleName"])
-        except (OSError, ValueError, ExpatError, AttributeError):
+        except (OSError, ValueError, ExpatError, AttributeError, LookupError):
             # missing/unreadable file, binary plist error (InvalidFileException
-            # is a ValueError), malformed XML (ExpatError) or a bad <date>
-            # (AttributeError): keep the name
+            # is a ValueError), malformed XML (ExpatError), a bad <date>
+            # (AttributeError) or an unknown encoding= in the XML declaration
+            # (LookupError): keep the name
             pass
         self.display_name = self.title
         meta = _load_json(os.path.join(self.path, "meta.json"))
@@ -222,8 +223,8 @@ class DashDocvol(Docvol):
         dest = os.path.join(dest_dir, os.path.basename(path))
         stamp_file = os.path.join(dest_dir, "stamp")
         stamp = self.stamp()
-        if sub in self._copied or (os.path.isfile(dest)
-                                   and _load_json(stamp_file).get("stamp") == stamp):
+        if os.path.isfile(dest) and (sub in self._copied
+                                     or _load_json(stamp_file).get("stamp") == stamp):
             return dest
         os.makedirs(dest_dir, exist_ok=True)
         moves = []
@@ -407,7 +408,7 @@ class DashDocvol(Docvol):
         try:
             with open(os.path.join(self.path, "Contents", "Info.plist"), "rb") as f:
                 value = plistlib.load(f).get("dashIndexFilePath")
-        except (OSError, ValueError, ExpatError, AttributeError):
+        except (OSError, ValueError, ExpatError, AttributeError, LookupError):
             # unreadable or malformed plist, or a plist that is no dict: no index page
             return None
         return entry_location(value)[0] if isinstance(value, str) and value else None

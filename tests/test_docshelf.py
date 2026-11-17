@@ -5927,5 +5927,132 @@ class SuggestTests(unittest.TestCase):
         self.assertIn('"docvols": ["flask"]', result["content"][0]["text"])
 
 
+class FinalReviewFixTests(unittest.TestCase):
+    """0.7.1 final review: regressions against 0.7.0 and cheap fixes."""
+
+    def setUp(self):
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        self.tmp = os.path.realpath(tmp.name)
+        self.cache = os.path.join(self.tmp, "cache")
+        self.docs = os.path.join(self.tmp, "docs")
+        self.env = {"HOME": self.tmp, "USERPROFILE": self.tmp,
+                    "DOCSHELF_CACHE_DIR": self.cache,
+                    "DOCSHELF_DOCSET_DIRS": self.docs,
+                    "DOCSHELF_NOTES_DIR": os.path.join(self.tmp, "notes")}
+
+    def cli(self, *args):
+        return run_cli(*args, env=self.env, cwd=self.tmp)
+
+    # 1. plistlib raises LookupError for a bogus encoding declaration
+    def test_bogus_plist_encoding_does_not_break_search(self):
+        bad = make_docset(self.docs, "Bad", [("zzz", "Module", "a.html")],
+                          {"a.html": "<h1>zzz</h1>"})
+        with open(os.path.join(bad, "Contents", "Info.plist"), "wb") as f:
+            f.write(b'<?xml version="1.0" encoding="UTF-o"?>\n<plist><dict>'
+                    b'<key>CFBundleName</key><string>X</string></dict></plist>')
+        make_docset(self.docs, "Good", [("zzz", "Module", "a.html")],
+                    {"a.html": "<h1>zzz</h1>"}, plist_name="Good")
+        r = self.cli("search", "zzz")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertNotIn("Traceback", r.stderr)
+        self.assertIn("zzz", r.stdout)
+        dv = shelf_dash.DashDocvol(bad, "dash", self.cache)
+        self.assertEqual(dv.title, "Bad")
+        self.assertIsNone(dv._index_page())
+
+    # 2. entry_count must not hide a missing or damaged index.json
+    def _with_count(self, slug, name):
+        folder = make_devdocs(self.cache, slug, name=name, release="5",
+                              entries=[("Guide", "Guide", "guide")],
+                              pages={"guide": "<p>hi</p>"})
+        mp = os.path.join(folder, "meta.json")
+        with open(mp, encoding="utf-8") as f:
+            meta = json.load(f)
+        meta["entry_count"] = 1
+        with open(mp, "w", encoding="utf-8") as f:
+            json.dump(meta, f)
+        return folder
+
+    def test_missing_index_json_is_skipped_with_warning(self):
+        folder = self._with_count("vite", "Vite")
+        self._with_count("vue", "Vue")
+        os.remove(os.path.join(folder, "index.json"))
+        r = self.cli("search", "Guide")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertIn("skipping", r.stderr)
+        self.assertNotIn("Traceback", r.stderr)
+        self.assertIn("vue", r.stdout)
+
+    def test_corrupt_index_json_is_a_clean_error(self):
+        folder = self._with_count("vite", "Vite")
+        for body in ('{"entries": [{"name": "x"}]}', "{not json"):
+            with open(os.path.join(folder, "index.json"), "w") as f:
+                f.write(body)
+            r = self.cli("search", "Guide", "-d", "vite")
+            self.assertEqual(r.returncode, 5, r.stderr)
+            self.assertNotIn("Traceback", r.stderr)
+            self.assertIn("vite", r.stderr)
+            self.assertIn("reinstall", r.stderr)
+
+    # 3. the WAL copy can vanish between opens of one DashDocvol
+    def test_deleted_wal_copy_is_recopied(self):
+        path = make_docset(self.docs, "Lib", [("os", "Module", "os.html")],
+                           {"os.html": "<h1>os</h1>"}, wal=True)
+        dv = shelf_dash.DashDocvol(path, "dash", self.cache)
+        self.assertEqual(len(dv.entries()), 1)
+        shutil.rmtree(os.path.join(dv.data_dir(), "index"))
+        dv._entries = None
+        self.assertEqual(len(dv.entries()), 1)
+        self.assertTrue(os.path.isfile(
+            os.path.join(dv.data_dir(), "index", "docSet.dsidx")))
+
+    # 5. SQLite leftovers of a killed fts build
+    def test_sweep_removes_old_sqlite_leftovers(self):
+        folder = os.path.join(self.tmp, "sw")
+        os.makedirs(folder)
+        names = ("a.tmp", "a.tmp-journal", "a.tmp-wal", "keep.sqlite")
+        for n in names:
+            with open(os.path.join(folder, n), "w") as f:
+                f.write("x")
+        fresh = os.path.join(folder, "new.tmp-wal")
+        with open(fresh, "w") as f:
+            f.write("x")
+        t = time.time() - 2 * 3600
+        for n in names:
+            os.utime(os.path.join(folder, n), (t, t))
+        shelf_core.sweep_stale_tmp(folder)
+        self.assertEqual(sorted(os.listdir(folder)), ["keep.sqlite", "new.tmp-wal"])
+
+    # 6. bad entry_count values fall back to counting
+    def test_bad_entry_count_types_fall_back_to_counting(self):
+        folder = make_devdocs(self.cache, "vite", name="Vite", release="5",
+                              entries=[("A", "T", "a"), ("B", "T", "b")],
+                              pages={"a": "x", "b": "y"})
+        mp = os.path.join(folder, "meta.json")
+        with open(mp, encoding="utf-8") as f:
+            meta = json.load(f)
+        for bad in ("2", True, -1, 2.0, None):
+            meta["entry_count"] = bad
+            with open(mp, "w", encoding="utf-8") as f:
+                json.dump(meta, f)
+            self.assertEqual(shelf_devdocs.DevDocsDocvol(folder).entry_count, 2, bad)
+
+    # 9. a link that climbs above the docset root gets no REF
+    def test_dash_link_above_root_gets_no_ref(self):
+        path = make_docset(self.docs, "Lib", [("os", "Module", "sub/os.html")],
+                           {"sub/os.html": "<h1>os</h1>", "x.html": "<h1>x</h1>"})
+        dv = shelf_dash.DashDocvol(path, "dash", self.cache)
+        self.assertIsNone(dv.resolve_href("sub/os.html", "../../x.html"))
+        self.assertIsNotNone(dv.resolve_href("sub/os.html", "../x.html"))
+
+    # 4. one umask helper
+    def test_notes_and_temp_share_the_umask_helper(self):
+        old = os.umask(0o027)
+        self.addCleanup(os.umask, old)
+        self.assertEqual(shelf_core.umask_mode(), 0o640)
+        self.assertEqual(shelf_notes._new_file_mode(), 0o640)
+
+
 if __name__ == "__main__":
     unittest.main()

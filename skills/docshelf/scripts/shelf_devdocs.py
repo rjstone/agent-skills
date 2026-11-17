@@ -124,29 +124,41 @@ class DevDocsDocvol(Docvol):
         self.db_path = os.path.join(folder, "db.json")
         self._entries: Optional[List[Entry]] = None
         self._index: Optional[Dict[str, Tuple[int, int]]] = None
+        if not os.path.isfile(os.path.join(folder, "index.json")):
+            # a cheap check that reads nothing: installed_docvols() skips a
+            # docvol without its index, entry_count or not
+            raise OSError("index.json is missing")
         count = meta.get("entry_count")
         if isinstance(count, int) and not isinstance(count, bool) and count >= 0:
             self.entry_count = count  # stored at install: index.json stays unread
         else:  # an install from before entry_count: count the index
-            self.entry_count = len(self.entries())
+            try:
+                self.entry_count = len(self.entries())
+            except CLIError as e:  # discovery skips a damaged docvol
+                raise ValueError(str(e))
 
     def data_dir(self) -> str:
         return os.path.join(self.folder, DERIVED)
 
     def entries(self) -> List[Entry]:
         if self._entries is None:
-            idx = _load(os.path.join(self.folder, "index.json"))
-            if not isinstance(idx, dict) or not isinstance(
-                    idx.get("entries", []), list):
-                raise ValueError("index.json: expected an object with an "
-                                 "entries list")
-            out = []
-            for e in idx.get("entries", []):
-                path = e["path"]
-                page, _, anchor = path.partition("#")
-                out.append(Entry(e["name"], e.get("type", ""),
-                                 "%s:%s" % (self.name, path), page,
-                                 anchor or None))
+            try:
+                idx = _load(os.path.join(self.folder, "index.json"))
+                if not isinstance(idx, dict) or not isinstance(
+                        idx.get("entries", []), list):
+                    raise ValueError("expected an object with an entries list")
+                out = []
+                for e in idx.get("entries", []):
+                    path = e["path"]
+                    page, _, anchor = path.partition("#")
+                    out.append(Entry(e["name"], e.get("type", ""),
+                                     "%s:%s" % (self.name, path), page,
+                                     anchor or None))
+            except (ValueError, KeyError, TypeError, AttributeError) as e:
+                # with entry_count the constructor no longer reads the index
+                raise CLIError("docvol %s: damaged index.json (%s); reinstall "
+                               "with: docshelf.py install %s"
+                               % (self.name, e, self.name), 5)
             self._entries = out
         return self._entries
 
