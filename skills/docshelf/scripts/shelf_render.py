@@ -45,7 +45,7 @@ def _skippable(tag, a) -> bool:
             or bool(SKIP_CLASSES.intersection((a.get("class") or "").split())))
 
 
-CONTAINER_TAGS = {"dl", "table", "ul", "ol"}
+CONTAINER_TAGS = {"dl", "table", "ul", "ol", "details"}
 BLOCK_TAGS = {"p", "div", "li", "dt", "dd", "tr", "pre", "ul", "ol", "dl", "table",
               "section", "article", "blockquote", "caption", "details", "summary",
               "figure", "figcaption", "body", "main", "aside", "address", "form",
@@ -151,7 +151,7 @@ class _TextParser(HTMLParser):
             self.ids.append(a["id"])
             if tag in BLOCK_TAGS and not self.id_tag:
                 self.id_tag = tag
-        if tag == "a" and a.get("name"):
+        if a.get("name") and tag not in ("link", "meta"):
             self.ids.append(a["name"])
         if not self.buf:
             self.start_depth = self.depth
@@ -234,15 +234,25 @@ def definition_ends(blocks: List[Block], offset=0) -> dict:
     return ends
 
 
+def unquote_all(s: str) -> str:
+    """URL-decode until stable (anchors are sometimes encoded twice)."""
+    for _ in range(3):
+        decoded = unquote(s)
+        if decoded == s:
+            break
+        s = decoded
+    return s
+
+
 def _section_slice(blocks: List[Block], anchor: Optional[str]) -> Optional[Tuple[int, int]]:
     """(start, end) block indexes of the section the anchor names; None if
     there is no anchor or it isn't found."""
     if not anchor:
         return None
-    want = {anchor, unquote(anchor)}
+    want = unquote_all(anchor)
     start = None
     for i, b in enumerate(blocks):
-        if any(x in want or unquote(x) in want for x in b.ids):
+        if any(unquote_all(x) == want for x in b.ids):
             start = i
             break
     if start is None:

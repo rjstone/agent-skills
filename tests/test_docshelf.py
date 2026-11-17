@@ -646,6 +646,101 @@ class RenderGrepTests(unittest.TestCase):
         self.assertFalse(any("long line" in l for l in out))
 
 
+def sec(html, anchor):
+    return shelf_render.section_lines(shelf_render.html_to_text(html), anchor)[0]
+
+
+class AnchorTests(unittest.TestCase):
+    def test_dash_anchor_before_heading(self):
+        html = ('<a name="//apple_ref/cpp/Function/foo" class="dashAnchor"></a>'
+                '<h3>foo()</h3><p>does foo</p><h3>bar()</h3><p>bar</p>')
+        self.assertEqual(sec(html, "//apple_ref/cpp/Function/foo"),
+                         ["### foo()", "does foo"])
+
+    def test_doc2dash_anchor_before_dt(self):
+        html = ('<dl><a name="//apple_ref/cpp/Function/os.path.join" class="dashAnchor"></a>'
+                '<dt id="os.path.join">os.path.join(a, *p)</dt><dd>Join paths.</dd>'
+                '<dt id="os.path.split">os.path.split(p)</dt><dd>Split.</dd></dl>')
+        self.assertEqual(sec(html, "//apple_ref/cpp/Function/os.path.join"),
+                         ["os.path.join(a, *p)", "Join paths."])
+
+    def test_stacked_anchors_all_attach(self):
+        html = ('<a name="//dash_ref_1/Section/Intro/0" class="dashAnchor"></a>'
+                '<a name="intro"></a><h2 id="top">Intro</h2><p>x</p><h2>Next</h2>')
+        for a in ("//dash_ref_1/Section/Intro/0", "intro", "top"):
+            self.assertEqual(sec(html, a), ["## Intro", "x"])
+
+    def test_encoded_once_and_twice(self):
+        html = ('<a name="//dash_ref_1/Section/Intro/0" class="dashAnchor"></a>'
+                '<h2>Intro</h2><p>x</p><h2>Next</h2>')
+        for a in ("%2F%2Fdash_ref_1%2FSection%2FIntro%2F0",
+                  "%252F%252Fdash_ref_1%252FSection%252FIntro%252F0"):
+            self.assertEqual(sec(html, a), ["## Intro", "x"])
+
+    def test_space_in_anchor(self):
+        html = '<h2 id="read csv">read csv</h2><p>x</p><h2>Next</h2>'
+        self.assertEqual(sec(html, "read%20csv"), ["## read csv", "x"])
+
+    def test_name_on_any_tag(self):
+        html = '<h2 name="setup">Setup</h2><p>x</p><h2>Other</h2>'
+        self.assertEqual(sec(html, "setup"), ["## Setup", "x"])
+
+    def test_details_is_one_section(self):
+        html = ('<p>Before.</p><details id="opt-a"><summary>Option a</summary>'
+                '<p>About a.</p><ul><li>one</li></ul></details>'
+                '<p>After.</p><h2>Next</h2>')
+        self.assertEqual(sec(html, "opt-a"), ["Option a", "About a.", "- one"])
+
+    def test_first_block_in_page_order_wins(self):
+        html = ('<a name="dup" class="dashAnchor"></a><h3>First</h3><p>1</p>'
+                '<h3 id="dup">Second</h3><p>2</p>')
+        self.assertEqual(sec(html, "dup"), ["### First", "1"])
+
+    def test_unknown_anchor_whole_page_with_note(self):
+        lines = sec('<h2>A</h2><p>x</p>', "//apple_ref/cpp/Function/nope")
+        self.assertTrue(lines[0].startswith("note: anchor not found"))
+        self.assertIn("## A", lines)
+
+    def test_summary_id_promotes_to_details(self):
+        # rustdoc: the id sits on <summary>; the section is the whole <details>
+        html = ('<p>B</p><details><summary id="m"><code>set_len</code></summary>'
+                '<p>About.</p></details><h2>N</h2>')
+        self.assertEqual(sec(html, "m"), ["set_len", "About."])
+
+    def test_empty_marker_inside_dt_and_li(self):
+        # texinfo + Dash markers: an empty <a name> inside the <dt> / <li>
+        dl = ('<dl><dt><a name="//apple_ref/Builtin/mapfile" class="dashAnchor"></a>'
+              'mapfile</dt><dd>Read.</dd><dt><a name="//apple_ref/Builtin/n" '
+              'class="dashAnchor"></a>next</dt><dd>n</dd></dl>')
+        self.assertEqual(sec(dl, "//apple_ref/Builtin/mapfile"), ["mapfile", "Read."])
+        ul = '<ul><li><a name="x"></a>item x</li><li><a name="y"></a>item y</li></ul>'
+        self.assertEqual(sec(ul, "x"), ["- item x"])
+
+    def test_doxygen_anchor_inside_heading(self):
+        html = '<h2><a class="anchor" id="grp"></a> Title</h2><p>body</p><h2>Other</h2>'
+        self.assertEqual(sec(html, "grp"), ["## Title", "body"])
+
+    def test_show_docset_apple_ref_anchor(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp = os.path.realpath(tmp)
+            html = ('<a name="//apple_ref/cpp/Function/foo" class="dashAnchor"></a>'
+                    '<h3>foo()</h3><p>does foo</p><h3>bar()</h3><p>bar</p>')
+            make_docset(tmp, "Foo", [("foo", "Function",
+                                      "api.html#//apple_ref/cpp/Function/foo")],
+                        {"api.html": html})
+            env = {"HOME": tmp, "USERPROFILE": tmp, "DOCSHELF_DOCSET_DIRS": tmp,
+                   "DOCSHELF_CACHE_DIR": os.path.join(tmp, "cache"),
+                   "DOCSHELF_NOTES_DIR": os.path.join(tmp, "notes")}
+            s = run_cli("search", "foo", "--json", env=env, cwd=tmp)
+            self.assertEqual(s.returncode, 0, s.stderr)
+            ref = json.loads(s.stdout)[0]["ref"]
+            r = run_cli("show", ref, env=env, cwd=tmp)
+            self.assertEqual(r.returncode, 0, r.stderr)
+            self.assertIn("### foo()", r.stdout)
+            self.assertIn("does foo", r.stdout)
+            self.assertNotIn("bar", r.stdout)
+
+
 class RankTests(unittest.TestCase):
     def test_rank_order(self):
         r = shelf_core.rank
@@ -1543,9 +1638,9 @@ class FtsTests(unittest.TestCase):
         self.assertEqual(r.stdout.splitlines()[0], "duck:p#Out%20of%20Memory")
 
     def test_unquote_all(self):
-        self.assertEqual(shelf_lookup._unquote_all("Guide/Out%2520of%2520Memory"),
+        self.assertEqual(shelf_render.unquote_all("Guide/Out%2520of%2520Memory"),
                          "Guide/Out of Memory")
-        self.assertEqual(shelf_lookup._unquote_all("plain"), "plain")
+        self.assertEqual(shelf_render.unquote_all("plain"), "plain")
 
     def test_snippet_phrases(self):
         self.assertEqual(shelf_lookup._snippet_phrases(

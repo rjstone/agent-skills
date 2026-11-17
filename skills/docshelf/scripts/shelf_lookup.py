@@ -10,13 +10,12 @@ import sqlite3
 import sys
 import tempfile
 import time
-from urllib.parse import unquote
 from typing import Dict, List, Optional, Tuple
 
 import shelf_backends
 import shelf_notes
 from shelf_render import (_print_lines, _page_title_line, page_title,
-                          section_headings, section_lines)
+                          section_headings, section_lines, unquote_all)
 from shelf_core import (CLIError, Config, cap_lines, pick_docvol, rank,
                         same_family_note, select_docvols, short_name, warn)
 
@@ -211,8 +210,8 @@ def cmd_show(cfg: Config, args: argparse.Namespace) -> int:
     page, anchor, entry = ds.resolve(rest)
     blocks = ds.page_blocks(page, link=lambda href: ds.resolve_href(page, href))
     if anchor:
-        want = {anchor, unquote(anchor)}
-        if not any(x in want or unquote(x) in want for b in blocks for x in b.ids):
+        want = unquote_all(anchor)
+        if not any(unquote_all(x) == want for b in blocks for x in b.ids):
             print("warning: no #%s on %s" % (anchor, page), file=sys.stderr)
             anchor = None
     elif entry is not None:  # no anchor: start at a heading named like the entry
@@ -468,22 +467,12 @@ def match_anchor(ds, page, query, snippet="") -> Optional[List[str]]:
     return None
 
 
-def _unquote_all(text) -> str:
-    """URL-decode until stable (anchors are sometimes encoded twice)."""
-    for _ in range(3):
-        decoded = unquote(text)
-        if decoded == text:
-            break
-        text = decoded
-    return text
-
-
 def _anchor_entries(ds) -> dict:
     """{(page, decoded anchor): REF of the first entry there}."""
     found: dict = {}
     for e in ds.entries():
         if e.anchor:
-            found.setdefault((e.page, _unquote_all(e.anchor)), e.ref)
+            found.setdefault((e.page, unquote_all(e.anchor)), e.ref)
     return found
 
 
@@ -508,8 +497,8 @@ def fts_search(cfg, docvols, query, limit, mode="all") -> List[dict]:
                     if ids:
                         if entry_at is None:
                             entry_at = _anchor_entries(ds)
-                        ref = next((entry_at[(page, _unquote_all(a))] for a in ids
-                                    if (page, _unquote_all(a)) in entry_at),
+                        ref = next((entry_at[(page, unquote_all(a))] for a in ids
+                                    if (page, unquote_all(a)) in entry_at),
                                    ds.make_ref(page, ids[0]))
                     scored.append((score, ds.name, page, {
                         "ref": ref, "docvol": ds.name, "page": page,
