@@ -2590,6 +2590,44 @@ class McpTests(unittest.TestCase):
         self.assertEqual(sorted(by_name["notes"]["inputSchema"]["properties"]),
                          ["check", "delete", "docvol", "set", "text"])
 
+    def test_initialize_instructions(self):
+        r = self.rpc("initialize", {"protocolVersion": "2025-06-18"})["result"]
+        text = r["instructions"]
+        self.assertTrue(text.strip())
+        self.assertLess(len(text), 700)
+        for word in ("search", "show", "fts", "toc", "docvols"):
+            self.assertIn(word, text)
+        self.assertNotIn("docshelf.py", text)
+
+    def test_null_id_is_invalid_request(self):
+        r = self.send_raw('{"jsonrpc": "2.0", "id": null, "method": "ping"}')
+        self.assertIsNone(r["id"])
+        self.assertEqual(r["error"]["code"], -32600)
+        self.assertNotIn("result", r)
+
+    def test_batch(self):
+        r = self.send_raw(json.dumps([
+            {"jsonrpc": "2.0", "id": 7, "method": "ping"},
+            {"jsonrpc": "2.0", "method": "notifications/initialized"},
+            42]))
+        self.assertIsInstance(r, list)
+        self.assertEqual(len(r), 2)
+        self.assertEqual(r[0], {"jsonrpc": "2.0", "id": 7, "result": {}})
+        self.assertEqual(r[1]["error"]["code"], -32600)
+        self.assertIsNone(r[1]["id"])
+
+    def test_batch_only_notifications_gives_no_output(self):
+        self.proc.stdin.write(json.dumps(
+            [{"jsonrpc": "2.0", "method": "notifications/initialized"}]) + "\n")
+        self.proc.stdin.flush()
+        self.assertEqual(self.rpc("ping")["result"], {})  # next line is ping's
+
+    def test_empty_batch_is_one_error(self):
+        r = self.send_raw("[]")
+        self.assertIsInstance(r, dict)
+        self.assertEqual(r["error"]["code"], -32600)
+        self.assertIsNone(r["id"])
+
     def test_set_over_mcp(self):
         r = self.call("notes", {"docvol": "alpha", "set": "frobnicate",
                                 "text": "Prefer frob2."})

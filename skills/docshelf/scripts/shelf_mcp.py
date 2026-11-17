@@ -18,6 +18,17 @@ from shelf_core import CLIError
 
 PROTOCOLS = ("2025-06-18", "2025-03-26", "2024-11-05")
 
+# Sent in the initialize result: how a client's model should use the tools.
+INSTRUCTIONS = (
+    "Offline DevDocs and Dash/Zeal reference. Call `search` with a name; it "
+    "prints REFs (docvol:path#anchor); pass one to `show` to read it. When "
+    "names don't match, `fts` searches the words in page text (include the "
+    "function name). `toc` lists a long page's headings; `show` a REF from "
+    "it, or use `grep` to see only matching lines. Narrow searches with "
+    "`docvols`; `suggest` proposes a project's docvols. Run `list` to see "
+    "what is installed. Record lessons with `notes`."
+)
+
 # One-line fixes that replace a "references/X.md" (or assets/) pointer in an
 # error message: a client has no skill folder to open.
 HINTS = {
@@ -275,8 +286,11 @@ def _error(id_: Any, code: int, message: str) -> dict:
 def handle(msg: Any) -> Optional[dict]:
     """Reply to one decoded message, or None (a notification)."""
     if not isinstance(msg, dict) or not isinstance(msg.get("method"), str):
-        return _error(msg.get("id") if isinstance(msg, dict) else None,
+        id_ = msg.get("id") if isinstance(msg, dict) else None
+        return _error(id_ if isinstance(id_, (str, int)) else None,
                       -32600, "invalid request")
+    if "id" in msg and msg["id"] is None:  # MCP forbids a null request id
+        return _error(None, -32600, "invalid request")
     if "id" not in msg:
         return None
     id_, method = msg["id"], msg["method"]
@@ -288,7 +302,8 @@ def handle(msg: Any) -> Optional[dict]:
         return {"jsonrpc": "2.0", "id": id_, "result": {
             "protocolVersion": want if want in PROTOCOLS else PROTOCOLS[0],
             "capabilities": {"tools": {}},
-            "serverInfo": {"name": "docshelf", "version": shelf_core.VERSION}}}
+            "serverInfo": {"name": "docshelf", "version": shelf_core.VERSION},
+            "instructions": INSTRUCTIONS}}
     if method == "ping":
         return {"jsonrpc": "2.0", "id": id_, "result": {}}
     if method == "tools/list":
@@ -302,6 +317,15 @@ def handle(msg: Any) -> Optional[dict]:
     return _error(id_, -32601, "method not found: %s" % method)
 
 
+def handle_batch(msgs: list) -> Any:
+    """Reply to a JSON-RPC batch: the non-null replies in order as an array,
+    None when every message was a notification, one error for `[]`."""
+    if not msgs:
+        return _error(None, -32600, "invalid request")
+    replies = [r for r in map(handle, msgs) if r is not None]
+    return replies or None
+
+
 def serve(inp: TextIO, out: TextIO) -> int:
     for line in inp:
         line = line.strip()
@@ -312,7 +336,7 @@ def serve(inp: TextIO, out: TextIO) -> int:
         except ValueError:
             reply = _error(None, -32700, "parse error")
         else:
-            reply = handle(msg)
+            reply = handle_batch(msg) if isinstance(msg, list) else handle(msg)
         if reply is not None:
             out.write(json.dumps(reply, ensure_ascii=False) + "\n")
             out.flush()
