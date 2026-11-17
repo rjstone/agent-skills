@@ -11,6 +11,7 @@ import shutil
 import sqlite3
 import sys
 import tarfile
+import tempfile
 import zlib
 from typing import List, Optional, Tuple
 from urllib.parse import unquote
@@ -28,6 +29,16 @@ DOCS_REL = ("Contents", "Resources", "Documents")
 # are read one at a time without unpacking. (Kapeli serves the index as
 # <archive>.tgz.tarix: a .tgz holding that SQLite file.)
 TARIX_MAX_RECORD = 64 * 1024 * 1024
+# A repeated footer is a run of trailing blocks that most pages end with
+# exactly (copyright, links to the same few pages, a generator line). Only an
+# exact repeat counts, so real docs are never guessed away. It is kept on one
+# page (the docset's index page, else the first entry's page) and left out of
+# every other page, for show, the full-text index and the headings index.
+FOOTER_SAMPLE = 40      # pages sampled, evenly spaced
+FOOTER_MIN_PAGES = 5    # fewer pages: no footer detection
+FOOTER_SHARE = 0.6      # share of sampled pages that must end with it
+FOOTER_MAX_BLOCKS = 30
+FOOTER_FORMAT = 1       # bump when footer.json's contents change
 _FAMILY_VERSION = re.compile(r"[_-]\d+(\.\d+)*$")
 
 
@@ -107,6 +118,7 @@ class DashDocvol(Docvol):
         self._entries: Optional[List[Entry]] = None
         self._pages: Optional[List[str]] = None
         self._known: Optional[set] = None
+        self._footer: Optional[Tuple[List[str], Optional[str]]] = None
         self._use_copy = False
         with self._connect() as con:
             self.entry_count = con.execute(
@@ -245,6 +257,81 @@ class DashDocvol(Docvol):
             return self._read_tarix(rel, hash_).decode("utf-8", errors="replace")
         with open(path, "rb") as f:
             return f.read().decode("utf-8", errors="replace")
+
+    def _index_page(self) -> Optional[str]:
+        try:
+            with open(os.path.join(self.path, "Contents", "Info.plist"), "rb") as f:
+                value = plistlib.load(f).get("dashIndexFilePath")
+        except Exception:  # unreadable or malformed plist: no index page
+            return None
+        return entry_location(value)[0] if isinstance(value, str) and value else None
+
+    def detect_footer(self) -> Tuple[List[str], Optional[str]]:
+        """(footer block texts, the page that keeps it); ([], None) if none."""
+        pages = self.pages()
+        if len(pages) < FOOTER_MIN_PAGES:
+            return [], None
+        step = max(1, len(pages) // FOOTER_SAMPLE)
+        counts: dict = {}
+        sampled = 0
+        for page in pages[::step][:FOOTER_SAMPLE]:
+            try:
+                texts = [b.text for b in super().page_blocks(page)]
+            except (CLIError, OSError, ValueError):
+                continue
+            sampled += 1
+            for k in range(1, min(FOOTER_MAX_BLOCKS, len(texts) - 1) + 1):
+                key = tuple(texts[-k:])
+                counts[key] = counts.get(key, 0) + 1
+        if sampled < FOOTER_MIN_PAGES:
+            return [], None
+        need = max(FOOTER_MIN_PAGES, FOOTER_SHARE * sampled)
+        best = max((k for k, c in counts.items() if c >= need), key=len, default=())
+        if not best:
+            return [], None
+        index = self._index_page()
+        return list(best), (index if index in pages else pages[0])
+
+    def footer_info(self) -> Tuple[List[str], Optional[str]]:
+        """detect_footer, cached in <data_dir>/footer.json."""
+        if self._footer is not None:
+            return self._footer
+        stamp = "%s|footer%d" % (self.stamp(), FOOTER_FORMAT)
+        cache = os.path.join(self.data_dir(), "footer.json")
+        data = _load_json(cache)
+        if data.get("stamp") == stamp and isinstance(data.get("footer"), list):
+            self._footer = (data["footer"], data.get("keep"))
+            return self._footer
+        footer, keep = self.detect_footer()
+        try:
+            os.makedirs(self.data_dir(), exist_ok=True)
+            fd, tmp = tempfile.mkstemp(dir=self.data_dir(), suffix=".tmp")
+            try:
+                with os.fdopen(fd, "w", encoding="utf-8") as f:
+                    json.dump({"stamp": stamp, "footer": footer, "keep": keep},
+                              f, ensure_ascii=False)
+                os.replace(tmp, cache)
+            except BaseException:
+                try:
+                    os.remove(tmp)
+                except OSError:
+                    pass
+                raise
+        except OSError as e:
+            warn("cannot write %s: %s" % (cache, e))
+        self._footer = (footer, keep)
+        return self._footer
+
+    def page_blocks(self, page: str, link=None):
+        """The page's blocks without the docset's repeated footer (kept on
+        one page)."""
+        blocks = super().page_blocks(page, link)
+        footer, keep = self.footer_info()
+        n = len(footer)
+        if n and page != keep and len(blocks) > n \
+                and [b.text for b in blocks[-n:]] == footer:
+            return blocks[:-n]
+        return blocks
 
     def resolve_href(self, page: str, href: str) -> Optional[str]:
         target, frag = resolve_doc_path(page, href)

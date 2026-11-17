@@ -3096,5 +3096,62 @@ class DashDiscoveryTests(unittest.TestCase):
         self.assertIn("Frobs it.", shown["content"][0]["text"])
 
 
+class DashFooterTests(unittest.TestCase):
+    FOOT = "<p>&copy; Example</p><p>Licensed under the Example License.</p>"
+
+    def setUp(self):
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        self.tmp = os.path.realpath(tmp.name)
+        self.docs = os.path.join(self.tmp, "docs")
+        os.makedirs(self.docs)
+        self.env = {"HOME": self.tmp, "USERPROFILE": self.tmp,
+                    "XDG_DATA_HOME": os.path.join(self.tmp, "data"),
+                    "XDG_CONFIG_HOME": os.path.join(self.tmp, "config"),
+                    "LOCALAPPDATA": os.path.join(self.tmp, "local"),
+                    "PATH": os.path.join(self.tmp, "path"),
+                    "DOCSHELF_DOCSET_DIRS": self.docs,
+                    "DOCSHELF_CACHE_DIR": os.path.join(self.tmp, "cache"),
+                    "DOCSHELF_NOTES_DIR": os.path.join(self.tmp, "notes")}
+
+    def build(self, count, footers=None):
+        """count pages p1..pN, each with unique body text then a footer."""
+        pages, entries = {}, []
+        for i in range(1, count + 1):
+            foot = footers(i) if footers else self.FOOT
+            pages["p%d.html" % i] = "<h1>Page%d</h1><p>Body%d text.</p>%s" % (i, i, foot)
+            entries.append(("item%d" % i, "Function", "p%d.html" % i))
+        make_docset(self.docs, "Lib", entries, pages)
+
+    def cli(self, *args):
+        return run_cli(*args, env=self.env, cwd=self.tmp)
+
+    def show(self, page):
+        r = self.cli("show", "Lib:page:" + page, "--full")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        return r.stdout
+
+    def test_repeated_footer_left_out_but_kept_once(self):
+        self.build(6)
+        self.assertNotIn("Licensed under", self.show("p2.html"))
+        self.assertNotIn("\u00a9 Example", self.show("p2.html"))
+        self.assertIn("Body2 text.", self.show("p2.html"))
+        keeper = self.show("p1.html")
+        self.assertIn("Licensed under the Example License.", keeper)
+        self.assertIn("\u00a9 Example", keeper)
+        r = self.cli("fts", "Licensed", "-d", "Lib")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertEqual(r.stdout.count("Lib:"), 1, r.stdout)
+
+    def test_no_footer_when_pages_differ(self):
+        self.build(6, lambda i: "<p>Ends differently %d.</p>" % i)
+        for i in (1, 2, 5):
+            self.assertIn("Ends differently %d." % i, self.show("p%d.html" % i))
+
+    def test_too_few_pages_no_detection(self):
+        self.build(4)
+        self.assertIn("Licensed under", self.show("p2.html"))
+
+
 if __name__ == "__main__":
     unittest.main()

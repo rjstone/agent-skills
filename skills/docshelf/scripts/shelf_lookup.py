@@ -240,7 +240,7 @@ def cmd_show(cfg: Config, args: argparse.Namespace) -> int:
 
 FTS_SNIPPET_TOKENS = 14
 # Bump when what the index stores changes, so existing indexes are rebuilt.
-FTS_FORMAT = 2  # 2: without DevDocs attribution
+FTS_FORMAT = 3  # 3: docset footers left out
 FTS_MAX_LINES = 11  # 5 hits (two lines each) plus the "more hits cut" line
 
 
