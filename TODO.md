@@ -58,7 +58,6 @@ items are done.
 
 - [ ] 4.2 Cap index builds on huge docvols and mark the index partial
       (bbsvip/docset-mcp).
-- [ ] 4.3 Query tokens that are only punctuation return no results.
 
 #### 5. Agents and docs
 
@@ -88,6 +87,8 @@ items are done.
         killed mid-build leaves a stray `*.tmp`.
   - [ ] 6.2.6 Every command parses each DevDocs docvol's `index.json` for
         `entry_count`; store the count in `meta.json` at install.
+  - [ ] 6.2.7 `install` from the project list: a download failure aborts
+        the loop; a redundancy refusal counts as a failure (exit 5).
 - [ ] 6.3 MCP
   - [ ] 6.3.1 Error text still says "(see: docshelf.py list)" and uses CLI
         flag names.
@@ -137,6 +138,26 @@ items are done.
   - [ ] 6.8.3 `show` reads the notes file twice, through the private
         `_read_notes`.
   - [ ] 6.8.4 The first line of SKILL.md's body is very long.
+  - [ ] 6.8.5 `toc` with a nonexistent `#anchor` gives no warning (`show`
+        warns); a page with no headings prints only the title;
+        `test_toc_over_mcp` builds `McpTests` by hand.
+  - [ ] 6.8.6 Tests: no lock on the SKIP_TAGS-before-STRUCTURE_TAGS order;
+        `<html>` cases untested; `FtsMaxLinesTests` checks counts only; no
+        `show --offset` boundary tests (total == max_lines, offset =
+        total-1) or MCP nonneg test; no exit-4 scope test for `types`;
+        `TypesTests.setUp` builds its own env; no MCP no-argument install
+        test; the docset-skip install test doesn't prove no download; no
+        temp-cleanup or traversal tests for notes writes.
+  - [ ] 6.8.7 Cosmetics: an extra blank line in `shelf_render`'s imports;
+        the `types` help line is ~81 columns.
+- [ ] 6.9 Notes
+  - [ ] 6.9.1 Deleting an unheaded General leaves the title against the
+        next heading; heading match is case-sensitive while display isn't
+        (`--set Foo` next to `## foo` appends a duplicate); a write
+        converts CRLF files to LF; no lock against concurrent writers.
+- [ ] 6.10 Full-text search
+  - [ ] 6.10.1 The match expression is built more than once; the `ids`
+        query keeps punctuation for plain tokens.
 
 #### Reference: other docset and DevDocs readers (skimmed 2026-11-17)
 
