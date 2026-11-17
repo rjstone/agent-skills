@@ -2604,7 +2604,8 @@ class NotesWriteTests(unittest.TestCase):
         src = "intro\n\n## a\nold\nmore\n\n## b\nkeep\n\n## c\nkeep2\n"
         self.put(src)
         r = self.cli("notes", "python", "--set", "b", "--text", "new")
-        self.assertEqual(r.returncode, 1, r.stderr)  # --check: 'b' matches no entry
+        self.assertEqual(r.returncode, 0, r.stderr)  # a --check warning does not fail the write
+        self.assertIn("warning:", r.stdout)
         self.assertEqual(self.read(),
                          "intro\n\n## a\nold\nmore\n\n## b\nnew\n\n## c\nkeep2\n")
         self.cli("notes", "python", "--set", "General", "--text", "hi")
@@ -2628,7 +2629,8 @@ class NotesWriteTests(unittest.TestCase):
     def test_delete_section(self):
         self.put("## a\n1\n\n## b\n2\n\n## c\n3\n")
         r = self.cli("notes", "python", "--delete", "b")
-        self.assertEqual(r.returncode, 1, r.stderr)  # --check: 'a', 'c' match no entry
+        self.assertEqual(r.returncode, 0, r.stderr)  # a --check warning does not fail the write
+        self.assertIn("warning:", r.stdout)
         self.assertEqual(self.read(), "## a\n1\n\n## c\n3\n")
         self.cli("notes", "python", "--delete", "c")
         self.assertEqual(self.read(), "## a\n1\n")

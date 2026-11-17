@@ -437,4 +437,4 @@ def cmd_notes(cfg: Config, args) -> int:
         print("warning: " + w)
     if not warns:
         print("ok")
-    return 1 if warns else 0
+    return 1 if warns and not writing else 0

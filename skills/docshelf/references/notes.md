@@ -32,5 +32,5 @@ and any ` (Type)` included; `General` is the general notes. TEXT is the
 body and must not contain a line starting `## `. Agents may write notes
 without asking. A write that would break a size limit is refused and
 leaves the file unchanged; otherwise it prints `wrote <path>` and the
-`--check` report (exit 1 if that report has warnings, 5 when `--delete`
+`--check` report, warnings included, and exits 0 (5 when `--delete`
 finds no such section).
