@@ -4603,12 +4603,15 @@ class SuggestScanTests(unittest.TestCase):
     def test_package_json(self):
         self.write("package.json", json.dumps({
             "dependencies": {"react": "^18", "@types/node": "*",
-                             "@angular/core": "17"},
+                             "@angular/core": "17", "@sentry/node": "8",
+                             "@testing-library/react": "16",
+                             "@TanStack/React-Query": "5"},
             "engines": {"node": ">=20.11"}}))
         findings, notes = self.scan()
         self.assertEqual(notes, [])
         self.assertEqual(self.libs(findings),
-                         [("react",), ("node",), ("angular", "core")])
+                         [("react",), ("node",), ("angular",), ("sentry",),
+                          ("testing-library",), ("tanstack/react-query",)])
         self.assertEqual(len(self.of(findings, "lang", ("javascript",))), 1)
         node = self.of(findings, "lang", ("node",))
         self.assertEqual([f.version for f in node], ["20.11"])
@@ -4776,6 +4779,79 @@ class SuggestScanTests(unittest.TestCase):
         self.assertEqual(shelf_suggest.normalize("Foo__Bar.baz-Q"),
                          "foo-bar-baz-q")
 
+    def versions(self, findings):
+        return {f.names[0]: f.version for f in findings if f.kind == "lib"}
+
+    def test_npm_and_composer_versions(self):
+        self.write("package.json", json.dumps({"dependencies": {
+            "vue": "^2.7.0", "node-x": "~18", "lodash": ">=4 <5",
+            "react": "*", "a": "latest", "b": "workspace:^1.2",
+            "c": "file:../c", "d": "git+https://x.org/d.git#v1.2",
+            "e": "github:user/e#1.0", "f": "user/f", "g": "npm:h@1.0",
+            "i": "1.x"}}))
+        self.write("composer.json", json.dumps({"require": {
+            "laravel/framework": "^11.2", "x/y": "dev-main"}}))
+        findings, _ = self.scan()
+        self.assertEqual(self.versions(findings), {
+            "vue": "2.7.0", "node-x": "18", "lodash": "4", "react": "",
+            "a": "", "b": "", "c": "", "d": "", "e": "", "f": "", "g": "",
+            "i": "1", "framework": "11.2", "y": ""})
+
+    def test_requirements_versions(self):
+        self.write("requirements.txt",
+                   "django==4.2.7\nnumpy>=1.26,<2\nflask!=2.0,>=2.3\n"
+                   "requests ; python_version < '3.8'\nattrs~=23.1  # c\n"
+                   "rich[jupyter]==13.7 --hash=sha256:abc\n")
+        findings, _ = self.scan()
+        self.assertEqual(self.versions(findings), {
+            "django": "4.2.7", "numpy": "1.26", "flask": "2.3",
+            "requests": "", "attrs": "23.1", "rich": "13.7"})
+
+    def test_requirements_direct_reference(self):
+        self.write("requirements.txt",
+                   "foo @ https://example.com/foo-1.0.whl\n"
+                   "bar@git+https://x.org/bar.git\n")
+        findings, _ = self.scan()
+        self.assertEqual(self.versions(findings), {"foo": "", "bar": ""})
+
+    def test_gemfile_versions(self):
+        self.write("Gemfile", "gem 'rails', '~> 7.1'\ngem \"pg\"\n"
+                   "gem 'x', github: 'a/x'\n")
+        findings, _ = self.scan()
+        self.assertEqual(self.versions(findings),
+                         {"rails": "7.1", "pg": "", "x": ""})
+
+    @unittest.skipIf(sys.version_info < (3, 11), "tomllib needs Python 3.11")
+    def test_toml_versions_and_groups(self):
+        self.write("pyproject.toml",
+                   '[project]\ndependencies = ["Django>=4.2,<5"]\n'
+                   '[dependency-groups]\ndev = ["pytest==8.1", '
+                   '{include-group = "x"}]\n'
+                   '[tool.poetry.dependencies]\nrequests = "^2.31"\n'
+                   'httpx = {version = "0.27"}\n'
+                   '[tool.poetry.group.docs.dependencies]\nsphinx = "7.2"\n')
+        self.write("Cargo.toml",
+                   '[dependencies]\nserde = "1.0"\n'
+                   'tokio = {version = "1.37", features = ["full"]}\n'
+                   'local = {path = "../local"}\n'
+                   '[workspace.dependencies]\nclap = "4.5"\n')
+        findings, notes = self.scan()
+        self.assertEqual(notes, [])
+        self.assertEqual(self.versions(findings), {
+            "django": "4.2", "pytest": "8.1", "requests": "2.31",
+            "httpx": "0.27", "sphinx": "7.2", "serde": "1.0",
+            "tokio": "1.37", "local": "", "clap": "4.5"})
+
+    def test_dockerfile_variants(self):
+        self.write("Dockerfile.dev", "FROM python:3.12-slim\n")
+        self.write("api.Dockerfile", "FROM node:20\n")
+        findings, _ = self.scan()
+        self.assertEqual(
+            sorted((f.source, f.names, f.version) for f in findings
+                   if f.kind == "lib"),
+            [("Dockerfile.dev", ("python",), "3.12"),
+             ("api.Dockerfile", ("node",), "20")])
+
 
 class SuggestTests(unittest.TestCase):
     def setUp(self):
@@ -4896,8 +4972,85 @@ class SuggestTests(unittest.TestCase):
         self.write(".docshelf.json", "{}")
         sub = os.path.join(self.proj, "sub")
         os.makedirs(sub)
+        os.makedirs(os.path.join(self.proj, ".git"))
         r = self.suggest(cwd=sub)
         self.assertIn('"docvols": ["flask"]', r.stdout)
+        self.assertIn("note: scanned %s" % self.proj, r.stderr)
+
+    def test_project_file_above_non_git_folder_scans_current(self):
+        self.listed(row("Flask", "flask", "3"), row("Django", "django", "5"))
+        self.write(".docshelf.json", "{}", folder=self.tmp)
+        self.write("requirements.txt", "django\n", folder=self.tmp)
+        self.write("requirements.txt", "flask\n")
+        r = self.suggest()
+        self.assertIn('"docvols": ["flask"]', r.stdout)
+        self.assertIn("note: scanned %s" % self.proj, r.stderr)
+
+    def test_fallback_project_file_scans_current(self):
+        self.listed(row("Flask", "flask", "3"), row("Django", "django", "5"))
+        other = os.path.join(self.tmp, "other")
+        os.makedirs(other)
+        self.write(".docshelf.json", "{}", folder=other)
+        self.write("requirements.txt", "django\n", folder=other)
+        self.write("requirements.txt", "flask\n")
+        w = run_cli("where", cwd=self.proj,
+                    env=dict(self.env, OLDPWD=other))
+        self.assertIn("OLDPWD", w.stderr)  # the fallback found it
+        r = self.suggest(env={"OLDPWD": other})
+        self.assertIn('"docvols": ["flask"]', r.stdout)
+        self.assertIn("note: scanned %s" % self.proj, r.stderr)
+
+    def test_json_notes_only_in_json(self):
+        self.write("go.mod", "module x\n\ngo 1.22\n")
+        r = self.suggest("--json")
+        data = json.loads(r.stdout)
+        self.assertIn("note: scanned %s" % self.proj, data["notes"])
+        self.assertNotIn("note:", r.stderr)
+
+    def test_one_family_one_version(self):
+        self.listed(row("Python", "python~3.14", "3.14", version="3.14"),
+                    row("Python", "python~3.12", "3.12", version="3.12"))
+        self.write(".python-version", "3.12\n")
+        self.write("pyproject.toml",
+                   '[project]\nname = "x"\nrequires-python = ">=3.10"\n')
+        self.write("requirements.txt", "\n")
+        self.write("Dockerfile", "FROM python:3.12-slim\n")
+        r = self.suggest()
+        lines = [x for x in r.stdout.splitlines() if "python~" in x]
+        self.assertEqual(lines, [
+            "available python~3.12  (.python-version, Dockerfile, "
+            "pyproject.toml, requirements.txt)",
+            '"docvols": ["python~3.12"]'], r.stdout)
+
+    def test_library_versions_pick_docvol_version(self):
+        self.listed(row("Django", "django~5.2", "5.2", version="5.2"),
+                    row("Django", "django~4.2", "4.2", version="4.2"),
+                    row("Vue", "vue~3", "3", version="3"),
+                    row("Vue", "vue~2", "2", version="2"),
+                    row("React", "react", "19"))
+        self.write("requirements.txt", "django==4.2.7\n")
+        self.write("package.json", json.dumps({"dependencies": {
+            "vue": "^2.7.0", "react": "*"}}))
+        lines = self.suggest().stdout.splitlines()
+        self.assertIn("available django~4.2  (requirements.txt)", lines)
+        self.assertIn("available vue~2  (package.json)", lines)
+        self.assertIn("available react  (package.json)", lines)
+
+    def test_scoped_npm_names(self):
+        self.listed(row("React", "react", "19"), row("Node.js", "node", "22"),
+                    row("Angular", "angular", "17"))
+        self.write("package.json", json.dumps({"dependencies": {
+            "@sentry/node": "8", "@testing-library/react": "16"}}))
+        self.assertIn('"docvols": []', self.suggest().stdout)
+        self.write("package.json", json.dumps({"dependencies": {
+            "@angular/core": "17", "@types/node": "22"}}))
+        self.assertIn('"docvols": ["angular", "node"]', self.suggest().stdout)
+
+    def test_tanstack_alias(self):
+        self.listed(row("TanStack Query", "tanstack_query", "5"))
+        self.write("package.json", json.dumps({"dependencies": {
+            "@tanstack/react-query": "5"}}))
+        self.assertIn('"docvols": ["tanstack_query"]', self.suggest().stdout)
 
     def test_fallback_picks_newest_installed(self):
         self.installed("python~3.8", "Python")

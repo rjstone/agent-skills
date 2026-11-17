@@ -72,12 +72,37 @@ def _load_toml(text: str) -> dict:
     return tomllib.loads(text)
 
 
+_RANGE_SKIP = ("workspace:", "file:", "link:", "portal:", "patch:", "npm:",
+               "github:", "gitlab:", "bitbucket:", "git+", "git:", "http:",
+               "https:")
+
+
+def _range_version(spec: object) -> str:
+    """First number of an npm, composer, Cargo or Poetry version range;
+    '' for *, latest, tags, paths, aliases, git and URL specs."""
+    if not isinstance(spec, str):
+        return ""
+    spec = spec.strip()
+    if spec.lower().startswith(_RANGE_SKIP) or "/" in spec or "://" in spec:
+        return ""
+    return _first_number(spec)
+
+
+def _table_version(value: object) -> str:
+    """Cargo / Poetry: a version string or a table with a "version" key."""
+    if isinstance(value, dict):
+        value = value.get("version")
+    return _range_version(value)
+
+
 def _npm_names(name: str) -> Tuple[str, ...]:
+    """'@types/x' -> x; '@scope/pkg' -> the whole name when ALIASES has it,
+    else the scope only ('@sentry/node' is not node)."""
     if name.startswith("@types/"):
         return (name[len("@types/"):],)
     if name.startswith("@") and "/" in name:
-        scope, pkg = name[1:].split("/", 1)
-        return (scope, pkg)
+        full = normalize(name[1:])
+        return (full,) if full in ALIASES else (name[1:].split("/", 1)[0],)
     return (name,)
 
 
@@ -88,14 +113,29 @@ def parse_package_json(text: str) -> List[Finding]:
     if "node" in engines:
         out.append(_lang("node", _first_number(str(engines["node"]))))
     for section in ("dependencies", "devDependencies"):
-        for name in _dict(data.get(section)):
-            out.append(_lib(*_npm_names(name)))
+        for name, spec in _dict(data.get(section)).items():
+            out.append(_lib(*_npm_names(name), version=_range_version(spec)))
     return out
 
 
-def _requirement_name(line: str) -> Optional[str]:
-    m = _NAME.match(line.strip())
-    return normalize(m.group(0)) if m else None
+_DIRECT_REF = re.compile(r"\s*[A-Za-z0-9][A-Za-z0-9._-]*\s*(?:\[[^\]]*\])?\s*@")
+
+
+def _requirement(line: str) -> Optional[Finding]:
+    """A lib finding for a PEP 508 requirement: the first number of its
+    first specifier that is not '!=' ('>=4.2,<5' -> 4.2); none for a direct
+    reference ('foo @ https://...')."""
+    line = line.split(";", 1)[0].split(" --", 1)[0].strip()
+    m = _NAME.match(line)
+    if not m:
+        return None
+    rest = re.sub(r"^\s*\[[^\]]*\]", "", line[m.end():])
+    version = ""
+    if not rest.lstrip().startswith("@"):
+        clauses = [c.strip() for c in rest.split(",")]
+        version = next((_first_number(c) for c in clauses
+                        if c and not c.startswith("!=")), "")
+    return _lib(m.group(0), version=version)
 
 
 def parse_pyproject(text: str) -> List[Finding]:
@@ -110,15 +150,20 @@ def parse_pyproject(text: str) -> List[Finding]:
                  if isinstance(spec, str) else "")]
     reqs: List[str] = [r for r in _list(project.get("dependencies"))
                        if isinstance(r, str)]
-    for group in _dict(project.get("optional-dependencies")).values():
+    groups = (list(_dict(project.get("optional-dependencies")).values())
+              + list(_dict(data.get("dependency-groups")).values()))  # PEP 735
+    for group in groups:
         reqs.extend(r for r in _list(group) if isinstance(r, str))
     for req in reqs:
-        name = _requirement_name(req)
-        if name:
-            out.append(_lib(name))
-    for name in poetry_deps:
-        if name.lower() != "python":
-            out.append(_lib(name))
+        found = _requirement(req)
+        if found:
+            out.append(found)
+    tables = [poetry_deps] + [_dict(_dict(g).get("dependencies")) for g in
+                              _dict(poetry.get("group")).values()]
+    for table in tables:
+        for name, spec in table.items():
+            if name.lower() != "python":
+                out.append(_lib(name, version=_table_version(spec)))
     return out
 
 
@@ -126,11 +171,12 @@ def parse_requirements(text: str) -> List[Finding]:
     out = [_lang("python")]
     for raw in text.splitlines():
         line = raw.split("#", 1)[0].strip()
-        if not line or line.startswith("-") or "://" in line:
+        if not line or line.startswith("-") \
+                or ("://" in line and not _DIRECT_REF.match(line)):
             continue
-        name = _requirement_name(line)
-        if name:
-            out.append(_lib(name))
+        found = _requirement(line)
+        if found:
+            out.append(found)
     return out
 
 
@@ -147,9 +193,11 @@ def parse_cmake(text: str) -> List[Finding]:
 def parse_cargo(text: str) -> List[Finding]:
     data = _load_toml(text)
     out = [_lang("rust")]
-    for section in ("dependencies", "dev-dependencies"):
-        for name in _dict(data.get(section)):
-            out.append(_lib(name))
+    tables = [_dict(data.get("dependencies")), _dict(data.get("dev-dependencies")),
+              _dict(_dict(data.get("workspace")).get("dependencies"))]
+    for table in tables:
+        for name, spec in table.items():
+            out.append(_lib(name, version=_table_version(spec)))
     return out
 
 
@@ -161,8 +209,9 @@ def parse_go_mod(text: str) -> List[Finding]:
 def parse_gemfile(text: str) -> List[Finding]:
     m = re.search(r"^\s*ruby\s+['\"]([^'\"]+)['\"]", text, re.M)
     out = [_lang("ruby", _first_number(m.group(1)) if m else "")]
-    for g in re.finditer(r"^\s*gem\s+['\"]([^'\"]+)['\"]", text, re.M):
-        out.append(_lib(g.group(1)))
+    for g in re.finditer(r"^\s*gem\s+['\"]([^'\"]+)['\"]"
+                         r"(?:\s*,\s*['\"]([^'\"]+)['\"])?", text, re.M):
+        out.append(_lib(g.group(1), version=_first_number(g.group(2) or "")))
     return out
 
 
@@ -170,11 +219,13 @@ def parse_composer(text: str) -> List[Finding]:
     data = _dict(json.loads(text))
     out = [_lang("php")]
     for section in ("require", "require-dev"):
-        for name in _dict(data.get(section)):
+        for name, spec in _dict(data.get(section)).items():
             if name == "php" or name.startswith("ext-"):
                 continue
             vendor, _, pkg = name.partition("/")
-            out.append(_lib(pkg, vendor) if pkg else _lib(vendor))
+            version = _range_version(spec)
+            out.append(_lib(pkg, vendor, version=version) if pkg
+                       else _lib(vendor, version=version))
     return out
 
 
@@ -267,6 +318,7 @@ PARSERS: Dict[str, Callable[[str], List[Finding]]] = {
     ".tool-versions": parse_tool_versions,
 }
 REQUIREMENTS_PATTERN = "requirements*.txt"
+DOCKERFILE_PATTERNS = ("Dockerfile.*", "*.Dockerfile")
 
 
 def _parser_for(name: str) -> Optional[Callable[[str], List[Finding]]]:
@@ -274,6 +326,9 @@ def _parser_for(name: str) -> Optional[Callable[[str], List[Finding]]]:
         return PARSERS[name]
     if fnmatch.fnmatchcase(name, REQUIREMENTS_PATTERN):
         return parse_requirements
+    if any(fnmatch.fnmatchcase(name, p) for p in DOCKERFILE_PATTERNS) \
+            and not name.endswith(".dockerignore"):
+        return parse_dockerfile
     return None
 
 
@@ -344,18 +399,19 @@ def scan_project(root: str) -> Tuple[List[Finding], List[str]]:
 
 # Normalized dependency name -> DevDocs family (checked against the DevDocs
 # list in 2026-11). Names that equal a family need no entry; the identity
-# entries below are the common ones.
+# entries below are the common ones. A scoped npm name is listed without
+# its '@' ("tanstack/react-query").
 ALIASES: Dict[str, str] = {
-    "react-dom": "react", "react-native-web": "react",
+    "react-dom": "react",
     "react-native": "react_native", "react-router-dom": "react_router",
     "react-router": "react_router", "react-bootstrap": "react_bootstrap",
     "vue-router": "vue_router", "vue": "vue", "typescript": "typescript",
-    "next": "nextjs", "tanstack-react-query": "tanstack_query",
+    "next": "nextjs", "tanstack/react-query": "tanstack_query",
     "postgres": "postgresql", "golang": "go", "httpd": "apache_http_server",
-    "qt6": "qt", "qt5": "qt", "make": "gnu_make", "eigen": "eigen3",
+    "qt6": "qt", "qt5": "qt", "eigen": "eigen3",
     "jquery-ui": "jqueryui", "djangorestframework": "django_rest_framework",
     "jinja2": "jinja", "scikit-learn": "scikit_learn", "sklearn": "scikit_learn",
-    "scikit-image": "scikit_image", "torch": "pytorch", "spring-boot": "spring_boot",
+    "scikit-image": "scikit_image", "torch": "pytorch",
     "numpy": "numpy", "pandas": "pandas", "django": "django", "flask": "flask",
 }
 
@@ -383,7 +439,9 @@ def _row_version(row: dict) -> str:
 
 
 def _suggest_for(finding: Finding, installed: List[Docvol],
-                 manifest: Optional[List[dict]]) -> Optional[Suggestion]:
+                 manifest: Optional[List[dict]]
+                 ) -> Optional[Tuple[str, Suggestion]]:
+    """(family, suggestion) for the first candidate name with docs."""
     v = finding.version
     for n in finding.names:
         family = normalize(ALIASES.get(n, n))
@@ -398,7 +456,7 @@ def _suggest_for(finding: Finding, installed: List[Docvol],
             found = next((c for c in pool
                           if not v or _agrees(v, version_of(c))), None)
             if found is not None:
-                return _make(found, "", finding.source)
+                return family, _make(found, "", finding.source)
         for pool, version_of in pools:  # nothing agrees: the newest
             if pool:
                 if pool is have:  # list order is not version order
@@ -407,7 +465,7 @@ def _suggest_for(finding: Finding, installed: List[Docvol],
                 newest = version_of(pool[0])
                 note = ("no %s docs; newest is %s" % (v, newest) if newest
                         else "no %s docs listed" % v)
-                return _make(pool[0], note, finding.source)
+                return family, _make(pool[0], note, finding.source)
     return None
 
 
@@ -421,29 +479,69 @@ def _make(candidate, note: str, source: str) -> Suggestion:
 
 def match(findings: List[Finding], installed: List[Docvol],
           manifest: Optional[List[dict]]) -> Tuple[List[Suggestion], int]:
-    """Suggestions (first found first, one per name, sources merged) and the
-    number of distinct library names that matched no docvol."""
-    out: Dict[str, Suggestion] = {}
+    """Suggestions (one per family and per name, in the order first found,
+    sources merged in finding order) and the number of distinct library
+    names that matched no docvol. Versioned findings are resolved first, so
+    a family gets one version: a later or unversioned finding for it only
+    adds its source."""
+    out: Dict[str, Suggestion] = {}  # suggestion name -> suggestion
+    name_of: Dict[str, str] = {}  # family -> suggestion name
+    found: Dict[str, List[int]] = {}  # suggestion name -> finding indexes
     unmatched = set()
-    for f in findings:
-        s = _suggest_for(f, installed, manifest)
-        if s is None:
+    order = sorted(range(len(findings)), key=lambda i: not findings[i].version)
+    for i in order:
+        f = findings[i]
+        result = _suggest_for(f, installed, manifest)
+        if result is None:
             if f.kind == "lib":
                 unmatched.add(f.names)
             continue
-        if s.name in out:
-            old = out[s.name]
-            merged = old.sources + [x for x in s.sources if x not in old.sources]
-            out[s.name] = old._replace(sources=merged)
-        else:
-            out[s.name] = s
-    return list(out.values()), len(unmatched)
+        family, s = result
+        name = name_of.get(family, s.name)
+        name_of.setdefault(family, name)
+        out.setdefault(name, s)
+        found.setdefault(name, []).append(i)
+    result_list = []
+    for name in sorted(out, key=lambda n: min(found[n])):
+        sources: List[str] = []
+        for i in sorted(found[name]):
+            if findings[i].source not in sources:
+                sources.append(findings[i].source)
+        result_list.append(out[name]._replace(sources=sources))
+    return result_list, len(unmatched)
+
+
+def _git_top(folder: str) -> Optional[str]:
+    """The nearest folder at or above folder that has a .git entry."""
+    d = os.path.abspath(folder)
+    while True:
+        if os.path.exists(os.path.join(d, ".git")):
+            return d
+        parent = os.path.dirname(d)
+        if parent == d:
+            return None
+        d = parent
+
+
+def scan_root(cfg: Config, cwd: str) -> str:
+    """The project file's folder when it was found from cwd upward (not by
+    a fallback) and is cwd or in cwd's git work tree; else cwd."""
+    cwd = os.path.abspath(cwd)
+    if not cfg.project_file or cfg.project_note:
+        return cwd
+    project = os.path.dirname(os.path.abspath(cfg.project_file))
+    if project == cwd:
+        return project
+    top = _git_top(cwd)
+    if top and os.path.commonpath([project, top]) == top:
+        return project
+    return cwd
 
 
 def cmd_suggest(cfg: Config, args) -> int:
-    root = (os.path.dirname(os.path.abspath(cfg.project_file))
-            if cfg.project_file else os.getcwd())
+    root = scan_root(cfg, os.getcwd())
     findings, notes = scan_project(root)
+    notes.insert(0, "note: scanned %s" % root)
     manifest = shelf_devdocs.cached_manifest(cfg)
     if manifest is None:
         notes.append("note: no DevDocs list cached; run sources (network) "
@@ -451,13 +549,13 @@ def cmd_suggest(cfg: Config, args) -> int:
     suggestions, unmatched = match(
         findings, shelf_backends.installed_docvols(cfg), manifest)
     names = [s.name for s in suggestions]
-    for note in notes:
-        print(note, file=sys.stderr)
-    if args.json:
+    if args.json:  # the notes are in the JSON only
         print(json.dumps({
             "suggestions": [s._asdict() for s in suggestions],
             "docvols": names, "unmatched": unmatched, "notes": notes}, indent=2))
         return 0
+    for note in notes:
+        print(note, file=sys.stderr)
     for s in suggestions:
         print("%-9s %s  (%s)%s" % (s.status, s.name, ", ".join(s.sources),
                                    "  " + s.note if s.note else ""))
