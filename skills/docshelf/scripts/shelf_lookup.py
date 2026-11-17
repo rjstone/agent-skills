@@ -561,28 +561,31 @@ def cmd_fts(cfg: Config, args: argparse.Namespace) -> int:
     docs = select_docvols(cfg, shelf_backends.installed_docvols(cfg),
                           args.docvol or [], args.all)
     _print_family_note(docs, args)
+    if not fts_match_expr(args.query):  # before any index is built
+        print("no searchable words in '%s'" % args.query)
+        return 0
     for ds in docs:
         ensure_fts(cfg, ds)
     # text output takes two lines per hit: fetch enough hits to reach the line cap
     limit = args.max_lines if args.json else args.max_lines // 2 + 1
-    if not fts_match_expr(args.query):
-        print("no searchable words in '%s'" % args.query)
-        return 0
     hits = fts_search(cfg, docs, args.query, limit)
+    lines = []
     if not hits and len(_query_tokens(args.query)) > 1:
         hits = fts_search(cfg, docs, args.query, limit, mode="any")
         if hits:
-            print("note: no page has all the words; showing pages with any "
-                  "of them", file=sys.stderr if args.json else sys.stdout)
+            note = "note: no page has all the words; showing pages with any of them"
+            if args.json:
+                print(note, file=sys.stderr)
+            else:
+                lines.append(note)  # counts toward --max-lines
     if args.json:
         print(json.dumps(hits, indent=2))
         return 0
     if not hits:
         print("no matches for %r" % args.query)
         return 0
-    room = (max(1, (args.max_lines - 1) // 2)
-            if len(hits) * 2 > args.max_lines else len(hits))
-    lines = []
+    cap = args.max_lines - len(lines)
+    room = (max(1, (cap - 1) // 2) if len(hits) * 2 > cap else len(hits))
     for h in hits[:room]:
         lines.append(h["ref"])
         lines.append("    " + h["snippet"])

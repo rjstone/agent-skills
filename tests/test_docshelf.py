@@ -1722,6 +1722,20 @@ class FtsIdentifierTests(unittest.TestCase):
         self.assertIn("note: no page has all", r.stderr)
         self.assertEqual(len(json.loads(r.stdout)), 2)
 
+    def test_any_word_retry_note_counts_toward_max_lines(self):
+        for n in (1, 2):
+            r = self.cli("fts", "collect", "nodes", "-d", "py", "--max-lines", str(n))
+            self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+            lines = r.stdout.splitlines()
+            self.assertTrue(1 <= len(lines) <= n, (n, r.stdout))
+            self.assertTrue(lines[0].startswith("note: no page has all"), r.stdout)
+        self.assertTrue(lines[1].startswith("py:"), r.stdout)
+
+    def test_no_searchable_words_builds_no_index(self):
+        r = self.cli("fts", "-", "()", "-d", "py")
+        self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+        self.assertFalse(os.path.exists(self.db()))
+
     def test_no_note_when_all_words_match(self):
         r = self.cli("fts", "collect", "errors", "-d", "py")
         self.assertNotIn("note:", r.stdout)
