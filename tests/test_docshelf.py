@@ -1694,6 +1694,21 @@ class FtsIdentifierTests(unittest.TestCase):
         r = self.cli("fts", "collect", "errors", "-d", "py")
         self.assertNotIn("note:", r.stdout)
 
+    def test_plain_word_prefers_prose(self):
+        make_devdocs(
+            self.cache, "el", name="El", release="1",
+            entries=[("PA", "Guide", "pa"), ("PB", "Guide", "pb")],
+            pages={"pa": "<h1>PA</h1><p>getElementById setElementValue ElementTree "
+                         "getElementById setElementValue ElementTree</p>",
+                   "pb": "<h1>PB</h1><p>An element is a node. Each element has "
+                         "a name; element names matter.</p>"})
+        r = self.cli("fts", "element", "-d", "el", "--json")
+        self.assertEqual(json.loads(r.stdout)[0]["page"], "pb", r.stdout)
+
+    def test_ids_deduplicated(self):
+        ids = shelf_lookup.page_identifiers("self.x " * 50 + "getFoo getFoo")
+        self.assertEqual(ids.split(), ["selfx", "getfoo", "get", "foo"])
+
     def test_existing_index_rebuilt(self):
         self.cli("fts", "getElementById", "-d", "py")
         con = sqlite3.connect(self.db())

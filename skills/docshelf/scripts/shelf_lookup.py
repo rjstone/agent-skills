@@ -336,7 +336,7 @@ def page_identifiers(text) -> str:
         if forms and len(forms[0]) > 1:
             out.append(forms[0])
             out.extend(forms[1])
-    return " ".join(out)
+    return " ".join(dict.fromkeys(out))
 
 
 def build_fts(cfg, ds) -> int:
@@ -410,14 +410,17 @@ def _quote(t):
     return '"%s"' % t.replace('"', '""')
 
 
+def _query_tokens(query):
+    """The query words that contain a letter or digit."""
+    return [t for t in query.split() if re.search(r"[^\W_]", t)]
+
+
 def fts_match_expr(query, mode="all") -> str:
     """Quote each token as an FTS5 string (user text is data) and AND (or, for
     mode "any", OR) them. Identifier-like tokens also match the `ids` column
     by their joined form. Tokens with no letter or digit are dropped."""
     terms = []
-    for tok in query.split():
-        if not re.search(r"[^\W_]", tok):
-            continue
+    for tok in _query_tokens(query):
         term = _quote(tok)
         forms = _ident_forms(tok) if _IDENT_RE.fullmatch(tok) else None
         # plain words also try `ids`, which holds camelCase pieces
@@ -496,8 +499,8 @@ def fts_search(cfg, docvols, query, limit, mode="all") -> List[dict]:
             try:
                 rows = con.execute(
                     "SELECT page, snippet(pages, 1, char(2), char(3), '...', %d), "
-                    "bm25(pages, 0, 1.0, 3.0) FROM pages WHERE pages MATCH ? "
-                    "ORDER BY bm25(pages, 0, 1.0, 3.0) LIMIT ?" % FTS_SNIPPET_TOKENS,
+                    "bm25(pages, 0, 1.0, 0.5) FROM pages WHERE pages MATCH ? "
+                    "ORDER BY bm25(pages, 0, 1.0, 0.5) LIMIT ?" % FTS_SNIPPET_TOKENS,
                     (expr, limit)).fetchall()
                 for page, snip, score in rows:
                     ids = match_anchor(ds, page, query, snip)  # \x02 marks matches
@@ -566,7 +569,7 @@ def cmd_fts(cfg: Config, args: argparse.Namespace) -> int:
         print("no searchable words in '%s'" % args.query)
         return 0
     hits = fts_search(cfg, docs, args.query, limit)
-    if not hits and len(fts_match_expr(args.query, "any").split(" OR (")) > 1:
+    if not hits and len(_query_tokens(args.query)) > 1:
         hits = fts_search(cfg, docs, args.query, limit, mode="any")
         if hits:
             print("note: no page has all the words; showing pages with any "
