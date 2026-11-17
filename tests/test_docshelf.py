@@ -1842,6 +1842,8 @@ Look up (usual order):
                                  heading, table header row, and a matching
                                  term's definition (repeatable; plain text,
                                  not a pattern, case-insensitive)
+  toc REF                        the page's headings, indented, each with
+                                 its REF (to show one section)
   fts QUERY... [-d NAME]         words inside pages, 5 best hits with REFs;
                                  include the function name: fts read_csv skip
 
@@ -1867,6 +1869,7 @@ Get and manage docvols (references/getting-docvols.md):
 Only if you need these, see `<command> --help`:
   search     --type --all --max-lines --json
   show       --full --max-lines --no-notes
+  toc        --max-lines
   fts        --all --max-lines --json
   sources    --refresh
   install    --force
@@ -1910,6 +1913,73 @@ class HelpTests(unittest.TestCase):
                     text = f.read()
                 for bad in ("dash-docvol", "docvol.py", ".dash-docvol"):
                     self.assertNotIn(bad, text, path)
+
+
+class TocTests(unittest.TestCase):
+    PAGE = ("<h1 id='t'>T</h1><h2 id='a'>A</h2><h3 id='b'>B</h3>"
+            "<h2 id='c'>C</h2>")
+    WANT = ["(page: T)", "T  lib:p#t", "  A  lib:p#a", "    B  lib:p#b",
+            "  C  lib:p#c"]
+
+    def setUp(self):
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        self.tmp = os.path.realpath(tmp.name)
+        self.cache = os.path.join(self.tmp, "cache")
+        self.env = {"HOME": self.tmp, "DOCSHELF_CACHE_DIR": self.cache,
+                    "DOCSHELF_NOTES_DIR": os.path.join(self.tmp, "notes")}
+        make_devdocs(self.cache, "lib", name="Lib", release="1",
+                     entries=[("fb", "Function", "p#b")],
+                     pages={"p": self.PAGE})
+
+    def toc(self, *args):
+        r = run_cli("toc", *args, env=self.env, cwd=self.tmp)
+        self.assertEqual(r.returncode, 0, r.stderr)
+        return r.stdout
+
+    def test_toc_lists_headings_with_refs(self):
+        self.assertEqual(self.toc("lib:p").splitlines(), self.WANT)
+
+    def test_toc_from_entry_ref_lists_whole_page(self):
+        self.assertEqual(self.toc("lib:p#b").splitlines(), self.WANT)
+
+    def test_toc_anchorless_heading_uses_enclosing_anchor(self):
+        make_devdocs(self.cache, "lib2", name="Lib2", release="1",
+                     entries=[("x", "Function", "q")],
+                     pages={"q": "<h1 id='t'>T</h1><h2>A</h2>"})
+        self.assertEqual(self.toc("lib2:q").splitlines(),
+                         ["(page: T)", "T  lib2:q#t", "  A  lib2:q#t"])
+
+    def test_toc_max_lines_caps(self):
+        lines = self.toc("lib:p", "--max-lines", "2").splitlines()
+        self.assertEqual(lines[:3], self.WANT[:3])
+        self.assertEqual(len(lines), 4)
+        self.assertIn("more lines cut", lines[3])
+
+    def test_toc_docset_refs(self):
+        make_docset(self.tmp, "Dset", [("fb", "Function", "p.html")],
+                    {"p.html": self.PAGE})
+        env = dict(self.env, DOCSHELF_DOCSET_DIRS=self.tmp,
+                   XDG_DATA_HOME=os.path.join(self.tmp, "data"),
+                   PATH=os.path.join(self.tmp, "path"))
+        r = run_cli("toc", "Dset:page:p.html", env=env, cwd=self.tmp)
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertEqual(r.stdout.splitlines(), [
+            "(page: T)", "T  Dset:page:p.html#t", "  A  Dset:page:p.html#a",
+            "    B  Dset:page:p.html#b", "  C  Dset:page:p.html#c"])
+
+    def test_toc_over_mcp(self):
+        mcp = McpTests("test_initialize_and_list")
+        mcp.setUp()
+        self.addCleanup(mcp.doCleanups)
+        make_devdocs(mcp.cache, "lib", name="Lib", release="1",
+                     entries=[("fb", "Function", "p#b")],
+                     pages={"p": self.PAGE})
+        r = mcp.call("toc", {"ref": "lib:p"})
+        self.assertFalse(r["isError"], r)
+        cli = run_cli("toc", "lib:p", env=mcp.env, cwd=mcp.tmp)
+        self.assertEqual(r["content"][0]["text"], cli.stdout)
+        self.assertEqual(cli.stdout.splitlines(), self.WANT)
 
 
 class McpTests(unittest.TestCase):
@@ -1969,7 +2039,8 @@ class McpTests(unittest.TestCase):
         tools = self.rpc("tools/list")["result"]["tools"]
         by_name = {t["name"]: t for t in tools}
         self.assertEqual(sorted(by_name), ["fts", "install", "list", "notes",
-                                           "remove", "search", "show", "sources"])
+                                           "remove", "search", "show", "sources",
+                                           "toc"])
         q = by_name["search"]["inputSchema"]
         self.assertEqual(q["properties"]["query"]["type"], "array")
         self.assertEqual(q["properties"]["query"]["items"], {"type": "string"})

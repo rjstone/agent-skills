@@ -95,6 +95,12 @@ COMMANDS: List[Command] = [
               default=150),
         Param(("--no-notes",), "Do not print notes.", kind="flag", rare=True),
     ]),
+    Command("toc", "List a page's headings with their REFs.",
+            shelf_lookup.cmd_toc, [
+        Param(("ref",), "REF from search: <docvol>:<path>[#anchor]."),
+        Param(("--max-lines",), "Output line cap.", kind="posint", rare=True,
+              default=150),
+    ]),
     Command("fts", "Full-text search inside pages (SQLite FTS5).",
             shelf_lookup.cmd_fts, [
         Param(("query",), "Words that must all appear in a page.", nargs="+"),
@@ -170,6 +176,8 @@ Look up (usual order):
                                  heading, table header row, and a matching
                                  term's definition (repeatable; plain text,
                                  not a pattern, case-insensitive)
+  toc REF                        the page's headings, indented, each with
+                                 its REF (to show one section)
   fts QUERY... [-d NAME]         words inside pages, 5 best hits with REFs;
                                  include the function name: fts read_csv skip
 

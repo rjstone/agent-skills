@@ -14,7 +14,7 @@ from typing import Dict, List, Optional, Tuple
 
 import shelf_backends
 import shelf_notes
-from shelf_render import (_print_lines, _print_page_title,
+from shelf_render import (_print_lines, _print_page_title, page_title,
                           section_headings, section_lines)
 from shelf_core import (CLIError, Config, cap_lines, pick_docvol, rank,
                         same_family_note, select_docvols, short_name, warn)
@@ -233,6 +233,29 @@ def cmd_show(cfg: Config, args: argparse.Namespace) -> int:
         _p, text = shelf_notes._read_notes(cfg, ds.family)
         for w in shelf_notes.size_warnings(text or ""):
             print("warning: notes: " + w, file=sys.stderr)
+    return 0
+
+
+def cmd_toc(cfg: Config, args: argparse.Namespace) -> int:
+    """The whole page's headings, indented by level, each with its REF."""
+    name, rest = _split_ref(args.ref)
+    ds = pick_docvol(shelf_backends.installed_docvols(cfg), name)
+    page, _anchor, _entry = ds.resolve(rest)
+    blocks = ds.page_blocks(page, link=lambda href: ds.resolve_href(page, href))
+    heads = [b for b in blocks if b.level]
+    out = []
+    title = page_title(blocks)
+    if title:
+        print("(page: %s)" % title)
+    if heads:
+        top = min(b.level for b in heads)
+        refs = shelf_notes.heading_refs(blocks)
+        for b, (text, anchor) in zip(heads, refs):
+            out.append("%s%s  %s" % ("  " * (b.level - top), text,
+                                     ds.make_ref(page, anchor)))
+    for line in cap_lines(out, args.max_lines,
+                          "use show REF for a section, or raise --max-lines"):
+        print(line)
     return 0
 
 
