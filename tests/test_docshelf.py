@@ -4263,7 +4263,9 @@ class DashRobustnessTests(unittest.TestCase):
 
     def test_malformed_info_plist_still_loads(self):
         for n, body in enumerate((b"<plist><dict><key>x", b"not a plist at all",
-                     b"bplist00\x00garbage", b"", plistlib.dumps([1, 2]))):
+                     b"bplist00\x00garbage", b"", plistlib.dumps([1, 2]),
+                     b"<plist><dict><key>CFBundleName</key><date>zzz</date>"
+                     b"</dict></plist>")):
             path = make_docset(os.path.join(self.tmp, str(n)), "Lib",
                                [("os", "Module", "os.html")], {"os.html": "x"})
             with open(os.path.join(path, "Contents", "Info.plist"), "wb") as f:
@@ -4299,6 +4301,14 @@ class DashRobustnessTests(unittest.TestCase):
                 dv.resolve_href("os.html", href)
         probes = [s for s in statements if "LIKE" in s]
         self.assertEqual(len(probes), 1, statements)
+
+    def test_non_code_7_error_in_has_page_is_silent(self):
+        dv = shelf_dash.DashDocvol(self._docset(tarix=True), "dash", self.cache)
+        err = io.StringIO()
+        with contextlib.redirect_stderr(err):
+            self.assertFalse(dv._has_page("../../escape.html"))
+            self.assertIsNone(dv.resolve_href("os.html", "../../../x.html"))
+        self.assertEqual(err.getvalue(), "")
 
     def test_tarix_read_error_warns_once_per_docvol(self):
         path = self._docset(tarix=True)

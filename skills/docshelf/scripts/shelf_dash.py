@@ -158,9 +158,10 @@ class DashDocvol(Docvol):
                 plist = plistlib.load(f)
             if isinstance(plist, dict) and plist.get("CFBundleName"):
                 self.title = str(plist["CFBundleName"])
-        except (OSError, ValueError, ExpatError):
+        except (OSError, ValueError, ExpatError, AttributeError):
             # missing/unreadable file, binary plist error (InvalidFileException
-            # is a ValueError) or malformed XML (ExpatError): keep the name
+            # is a ValueError), malformed XML (ExpatError) or a bad <date>
+            # (AttributeError): keep the name
             pass
         self.display_name = self.title
         meta = _load_json(os.path.join(self.path, "meta.json"))
