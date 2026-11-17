@@ -4428,7 +4428,7 @@ class DashDiscoveryTests(unittest.TestCase):
         self.assertEqual(self.cli("list", DOCSHELF_DOCSET_DIRS=gone).returncode, 0)
         w = self.cli("where", DOCSHELF_DOCSET_DIRS=gone)
         self.assertEqual(w.returncode, 0, w.stderr)
-        self.assertIn("%s (missing)" % gone, w.stdout)
+        self.assertIn("%s [folder] (missing)" % gone, w.stdout)
 
     def test_where_reports_no_apps(self):
         w = self.cli("where")
@@ -4785,6 +4785,52 @@ class DashReadOnlyTests(unittest.TestCase):
             "  devdocs  also as docset Python_3"), out)
         self.assertTrue(lines["Python_3"].endswith(
             "  also as DevDocs python~3.12"), out)
+
+    def test_list_gives_one_also_as_listing_all_twins(self):
+        self.docset(version="3")
+        for v in ("3.12", "3.11"):
+            self.assertEqual(self.main("install", "python~" + v, "--force")[0], 0)
+        self.docset("Python_2", version="3")
+        code, out, err = self.main("list")
+        self.assertEqual(code, 0, err)
+        lines = {ln.split("  ")[0]: ln for ln in out.splitlines()}
+        line = lines["Python_3"]
+        self.assertEqual(line.count("also as"), 1, line)
+        self.assertTrue(line.endswith(
+            "  also as DevDocs python~3.11, python~3.12"), line)
+        self.assertEqual(lines["python~3.12"].count("also as"), 1)
+        self.assertIn("also as docset Python_2, Python_3", lines["python~3.12"])
+
+    def test_where_then_list_opens_each_docset_once(self):
+        self.docset()
+        self.docset("Other", version="1")
+        opened = []
+        real = shelf_dash.open_docset
+
+        def counting(path, *a, **k):
+            opened.append(os.path.basename(path))
+            return real(path, *a, **k)
+
+        with mock.patch.object(shelf_dash, "open_docset", counting):
+            self.assertEqual(self.main("where")[0], 0)
+            self.assertEqual(self.main("list")[0], 0)
+            self.assertEqual(self.main("list")[0], 0)
+        self.assertEqual(sorted(opened), ["Other.docset", "Python_3.docset"])
+
+    def test_discovery_sees_a_docset_added_later(self):
+        self.docset()
+        self.assertNotIn("Late", self.main("list")[1])
+        self.docset("Late", version="1")
+        self.assertIn("Late", self.main("list")[1])
+
+    def test_where_lists_missing_folder_with_source(self):
+        gone = os.path.join(self.tmp, "gone")
+        with mock.patch.dict(os.environ, {
+                "DOCSHELF_DOCSET_DIRS": self.docs + os.pathsep + gone}):
+            code, out, err = self.main("where")
+        self.assertEqual(code, 0, err)
+        self.assertIn("  %s [folder] (missing)" % gone, out)
+        self.assertIn("  %s [folder] (found 0)" % self.docs, out)
 
 
 class DashCatalogTests(unittest.TestCase):

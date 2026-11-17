@@ -735,11 +735,35 @@ def _scan(env):
             for f, s, d in _search_folders(env) if os.path.isdir(f)]
 
 
+def _docset_sig(path):
+    """Cheap change signature of one docset folder (mtimes of its parts)."""
+    sig = []
+    for rel in ("", "Contents/Info.plist", "Contents/Resources/docSet.dsidx"):
+        try:
+            sig.append(os.stat(os.path.join(path, rel)).st_mtime_ns)
+        except OSError:
+            sig.append(None)
+    return tuple(sig)
+
+
+# One result per process: (key, docvols). The key holds the cache folder, the
+# folders and docsets found, and each docset's signature, so a different cfg
+# or a changed folder never reuses a stale result.
+_OPEN_MEMO: list = []
+
+
 def _open_all(cfg, env):
     """Open the docsets, the first of each name; later copies of a name go
-    to the winner's `shadowed` list. Returns the list of docvols."""
+    to the winner's `shadowed` list. Returns the list of docvols. Within one
+    process the same discovery is opened once (`where` and `list` share it)."""
+    scan = _scan(env)
+    key = (cfg.cache_dir, tuple(
+        (f, s, tuple((p, _docset_sig(p)) for p in paths))
+        for f, s, paths in scan))
+    if _OPEN_MEMO and _OPEN_MEMO[0][0] == key:
+        return list(_OPEN_MEMO[0][1])
     docvols, by_name = [], {}
-    for folder, source, paths in _scan(env):
+    for folder, source, paths in scan:
         for path in paths:
             name = os.path.basename(path)[:-len(".docset")]
             if name in by_name:
@@ -751,7 +775,8 @@ def _open_all(cfg, env):
             if d is not None:
                 by_name[name] = d
                 docvols.append(d)
-    return docvols
+    _OPEN_MEMO[:] = [(key, docvols)]
+    return list(docvols)
 
 
 def installed_docsets(cfg, env=None) -> List[DashDocvol]:
@@ -768,7 +793,7 @@ def where_lines(cfg, env=None) -> List[str]:
     for folder, source, depth in _search_folders(env):
         shown = True
         if not os.path.isdir(folder):
-            lines.append("  %s (missing)" % folder)
+            lines.append("  %s [%s] (missing)" % (folder, source))
             continue
         paths = list(_docset_dirs(folder, depth))
         lines.append("  %s [%s] (found %d)" % (folder, source, len(paths)))
