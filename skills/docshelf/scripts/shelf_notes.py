@@ -8,6 +8,7 @@ import sys
 from typing import Dict, Iterable, List, Optional, Tuple
 
 import shelf_backends
+import shelf_dash
 import shelf_devdocs
 from shelf_core import CLIError, Config, make_temp, pick_docvol, short_name, warn
 
@@ -201,9 +202,10 @@ def docvol_headings(ds) -> Dict[str, List[List[Optional[str]]]]:
 
 def headings_index(ds) -> Tuple[Dict[str, List[List[Optional[str]]]], int]:
     """(docvol_headings, number of pages that could not be read), cached in
-    <data dir>/headings.json under ds.stamp() and HEADINGS_FORMAT (rebuilt
-    when either changes)."""
-    stamp = "%s|headings%d" % (ds.stamp(), HEADINGS_FORMAT)
+    <data dir>/headings.json under ds.stamp(), HEADINGS_FORMAT and shelf_dash.REPEAT_FORMAT
+    (rebuilt when any changes)."""
+    stamp = "%s|headings%d|repeats%d" % (ds.stamp(), HEADINGS_FORMAT,
+                                         shelf_dash.REPEAT_FORMAT)
     cache = os.path.join(ds.data_dir(), "headings.json")
     try:
         with open(cache, encoding="utf-8") as f:

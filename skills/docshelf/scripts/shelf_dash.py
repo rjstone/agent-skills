@@ -455,9 +455,12 @@ class DashDocvol(Docvol):
         stamp = "%s|repeats%d" % (self.stamp(), REPEAT_FORMAT)
         cache = os.path.join(self.data_dir(), "repeats.json")
         data = _load_json(cache)
-        if data.get("stamp") == stamp and isinstance(data.get("header"), list) \
-                and isinstance(data.get("footer"), list) \
-                and data.get("header_start") in REPEAT_HEADER_STARTS:
+        keep = data.get("keep")
+        if data.get("stamp") == stamp \
+                and _is_str_list(data.get("header")) \
+                and _is_str_list(data.get("footer")) \
+                and data.get("header_start") in REPEAT_HEADER_STARTS \
+                and (keep is None or isinstance(keep, str)):
             self._repeats = Repeats(data["header_start"], data["header"],
                                     data["footer"], data.get("keep"))
             return self._repeats
@@ -532,6 +535,10 @@ class DashDocvol(Docvol):
 
     def stamp(self) -> str:
         return docset_stamp(self.path)
+
+
+def _is_str_list(v) -> bool:
+    return isinstance(v, list) and all(isinstance(x, str) for x in v)
 
 
 class _Conn:

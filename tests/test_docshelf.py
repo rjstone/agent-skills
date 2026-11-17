@@ -1860,6 +1860,38 @@ class FtsIdentifierTests(unittest.TestCase):
             self.assertEqual([h["page"] for h in json.loads(r.stdout)][:1],
                              ["pc"], q)
 
+    def test_ids_query_strips_punctuation(self):
+        make_devdocs(self.cache, "pd", name="Pd", release="1",
+                     entries=[("X", "Guide", "px")],
+                     pages={"px": "<h1>X</h1><p>Call pd.read_csv now.</p>"})
+        for q in ("read_csv,", "(read_csv)", "pd.read_csv."):
+            r = self.cli("fts", q, "-d", "pd", "--json")
+            self.assertEqual([h["page"] for h in json.loads(r.stdout)], ["px"], q)
+        for q in ("getElementById,", "(getElementById)"):  # text has no match
+            r = self.cli("fts", q, "-d", "py", "--json")
+            self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+            self.assertEqual([h["page"] for h in json.loads(r.stdout)][:1], ["pc"], q)
+
+    def test_match_expression_built_once_per_query(self):
+        import contextlib
+        import io
+        from unittest import mock
+        shelf_lookup._match_terms.cache_clear()
+        real = shelf_lookup._quote
+        calls = []
+
+        def counting(t):
+            calls.append(t)
+            return real(t)
+        out = io.StringIO()
+        # no page has both words, so the "any" retry runs as well
+        with mock.patch.object(shelf_lookup, "_quote", counting), \
+                mock.patch.dict(os.environ, self.env), \
+                contextlib.redirect_stdout(out), \
+                contextlib.redirect_stderr(io.StringIO()):
+            shelf_cli.main(["fts", "collect", "zzzzqq", "-d", "py"])
+        self.assertEqual(len(calls), 4, calls)  # (text + ids) x 2 tokens, once
+
     def test_dotted_identifier(self):
         for q in ("os.path.join", "ospathjoin"):
             r = self.cli("fts", q, "-d", "py", "--json")
@@ -3597,9 +3629,9 @@ class NotesPageHeadingTests(unittest.TestCase):
         cache = os.path.join(self.folder, shelf_devdocs.DERIVED, "headings.json")
         self.assertTrue(os.path.isfile(cache))
         with open(cache, encoding="utf-8") as f:
-            self.assertEqual(json.load(f)["stamp"], "%s|headings%d" % (
+            self.assertEqual(json.load(f)["stamp"], "%s|headings%d|repeats%d" % (
                 shelf_devdocs.DevDocsDocvol(self.folder).stamp(),
-                shelf_notes.HEADINGS_FORMAT))
+                shelf_notes.HEADINGS_FORMAT, shelf_dash.REPEAT_FORMAT))
         with open(os.path.join(self.folder, "db.json"), encoding="utf-8") as f:
             pages = json.load(f)
         pages["sql/other"] = self.OTHER + "<h3 id='sumx'>sum(x)</h3><p>Adds.</p>"
@@ -4527,6 +4559,62 @@ class DashFooterTests(unittest.TestCase):
         r = self.cli("fts", "Licensed", "-d", "Lib")
         self.assertEqual(r.returncode, 0, r.stderr)
         self.assertEqual(r.stdout.count("Lib:"), 1, r.stdout)
+
+    def _data_file(self, name):
+        import glob
+        found = glob.glob(os.path.join(self.tmp, "cache", "docsets", "*", name))
+        self.assertEqual(len(found), 1, (name, found))
+        return found[0]
+
+    def _docvol(self):
+        with mock.patch.dict(os.environ, self.env):
+            cfg = shelf_core.load_config(self.tmp, self.env)
+            return shelf_backends.installed_docvols(cfg)[0]
+
+    def test_malformed_repeats_cache_is_rebuilt(self):
+        self.build(6)
+        ds = self._docvol()
+        good = ds.repeats_info()
+        self.assertTrue(good.footer)
+        path = self._data_file("repeats.json")
+        with open(path, encoding="utf-8") as f:
+            data = json.load(f)
+        for field, bad in (("header", [1, 2]), ("footer", [["x"]]),
+                           ("footer", [None]), ("keep", 5), ("keep", ["p1"])):
+            broken = dict(data, **{field: bad})
+            with open(path, "w", encoding="utf-8") as f:
+                json.dump(broken, f)
+            ds._repeats = None  # as in a new process: read the file again
+            self.assertEqual(ds.repeats_info(), good, (field, bad))
+            with open(path, encoding="utf-8") as f:  # rewritten, well-formed
+                self.assertEqual(json.load(f)["footer"], good.footer)
+
+    def test_repeat_format_bump_rebuilds_fts_and_headings_once(self):
+        self.build(6)
+        with mock.patch.dict(os.environ, self.env):
+            cfg = shelf_core.load_config(self.tmp, self.env)
+
+            def stamps():
+                ds = shelf_backends.installed_docvols(cfg)[0]
+                shelf_lookup.ensure_fts(cfg, ds)
+                shelf_notes.headings_index(ds)
+                with open(self._data_file("headings.json"), encoding="utf-8") as f:
+                    head = json.load(f)["stamp"]
+                return shelf_lookup._stored_stamp(self._data_file("fts.sqlite")), head
+
+            with contextlib.redirect_stderr(io.StringIO()):
+                first = stamps()
+                self.assertEqual(stamps(), first)  # stable: no rebuild
+                with mock.patch.object(shelf_dash, "REPEAT_FORMAT",
+                                       shelf_dash.REPEAT_FORMAT + 1):
+                    with mock.patch.object(shelf_lookup, "build_fts",
+                                           wraps=shelf_lookup.build_fts) as built:
+                        bumped = stamps()
+                        self.assertEqual(built.call_count, 1)
+                        self.assertNotEqual(bumped[0], first[0])
+                        self.assertNotEqual(bumped[1], first[1])
+                        self.assertEqual(stamps(), bumped)
+                        self.assertEqual(built.call_count, 1)  # not again
 
     def test_no_footer_when_pages_differ(self):
         self.build(6, lambda i: "<p>Ends differently %d.</p>" % i)
