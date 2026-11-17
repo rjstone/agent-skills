@@ -1750,8 +1750,7 @@ class NetworkTests(unittest.TestCase):
             shelf_devdocs.MANIFEST_URL, "blocked")
         code, out, err = self.main("sources", "python")
         self.assertEqual(code, 7)
-        self.assertIn("devdocs.io", err)
-        self.assertIn("documents.devdocs.io", err)
+        self.assertIn("cannot reach devdocs.io", err)
         self.assertIn("assets/allowlist.txt", err)
 
     def test_bad_slug_exit_2(self):
@@ -3246,6 +3245,150 @@ class DashReadOnlyTests(unittest.TestCase):
             "  devdocs  also as docset Python_3"), out)
         self.assertTrue(lines["Python_3"].endswith(
             "  also as DevDocs python~3.12"), out)
+
+
+class DashCatalogTests(unittest.TestCase):
+    """`sources` lists Dash/Zeal docset names (GitHub listings, Zeal's catalog
+    as fallback) when Dash or Zeal is around; the not-installed hint reads the
+    cached catalogs."""
+
+    def setUp(self):
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        self.tmp = os.path.realpath(tmp.name)
+        self.cache = os.path.join(self.tmp, "cache")
+        os.makedirs(os.path.join(self.cache, "devdocs"))
+        self.data = os.path.join(self.tmp, "data")
+        env = mock.patch.dict(os.environ, {
+            "HOME": self.tmp, "USERPROFILE": self.tmp,
+            "XDG_DATA_HOME": self.data,
+            "XDG_CONFIG_HOME": os.path.join(self.tmp, "config"),
+            "LOCALAPPDATA": os.path.join(self.tmp, "local"),
+            "PATH": os.path.join(self.tmp, "path"),
+            "DOCSHELF_CACHE_DIR": self.cache,
+            "DOCSHELF_NOTES_DIR": os.path.join(self.tmp, "notes")})
+        env.start()
+        self.addCleanup(env.stop)
+        rows = [row("Python", "python~3.12", "3.12.1", version="3.12")]
+        self.feeds = json.dumps([
+            {"name": "Python_3.xml", "type": "file"},
+            {"name": "README.md", "type": "file"},
+            {"name": "Lua_5.xml", "type": "file"}])
+        self.contrib = json.dumps([{"name": "Lua", "type": "dir"},
+                                   {"name": "notes.txt", "type": "file"}])
+        self.zeal = json.dumps([
+            {"name": "Python_3", "title": "Python 3", "sourceId": "com.kapeli.dash",
+             "versions": ["3.12"], "icon": "x" * 50},
+            {"name": "Lua", "title": "Lua", "sourceId": "com.kapeli.contrib"}])
+        self.net = FakeNet(self, {
+            shelf_devdocs.MANIFEST_URL: json.dumps(rows),
+            shelf_dash.FEEDS_LIST_URL: self.feeds,
+            shelf_dash.CONTRIB_LIST_URL: self.contrib,
+            shelf_dash.ZEAL_CATALOG_URL: self.zeal})
+
+    def zeal_install(self):
+        os.makedirs(os.path.join(self.data, "Zeal", "Zeal", "docsets"))
+
+    def catalog_urls(self):
+        return [u for u in self.net.fetched
+                if u != shelf_devdocs.MANIFEST_URL]
+
+    def main(self, *argv):
+        out, err = io.StringIO(), io.StringIO()
+        with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
+            code = shelf_cli.main(list(argv))
+        return code, out.getvalue(), err.getvalue()
+
+    def test_sources_lists_catalog_names_when_app_present(self):
+        self.zeal_install()
+        code, out, _ = self.main("sources", "python")
+        self.assertEqual(code, 0)
+        self.assertIn("python~3.12", out)
+        self.assertIn("Python_3  (Dash/Zeal: download in the app, official)\n", out)
+        self.assertNotIn("Lua", out)
+        out = self.main("sources", "lua")[1]
+        self.assertIn("Lua  (Dash/Zeal: download in the app, user-contributed)", out)
+
+    def test_sources_no_catalog_without_app_or_folder(self):
+        code, out, _ = self.main("sources", "python")
+        self.assertEqual(code, 0)
+        self.assertEqual(self.catalog_urls(), [])
+        self.assertNotIn("Dash/Zeal", out)
+
+    def test_zeal_catalog_fallback(self):
+        self.zeal_install()
+        for u in (shelf_dash.FEEDS_LIST_URL, shelf_dash.CONTRIB_LIST_URL):
+            self.net.pages[u] = shelf_devdocs.NetError(u, "blocked")
+        code, out, err = self.main("sources", "python")
+        self.assertEqual(code, 0)
+        self.assertIn("Python_3  (Dash/Zeal: download in the app, official)", out)
+        self.assertIn("Zeal's catalog", err)
+        self.assertIn(shelf_dash.ZEAL_CATALOG_URL, self.net.fetched)
+
+    def test_catalog_failure_keeps_devdocs_part(self):
+        self.zeal_install()
+        for u in (shelf_dash.FEEDS_LIST_URL, shelf_dash.CONTRIB_LIST_URL,
+                  shelf_dash.ZEAL_CATALOG_URL):
+            self.net.pages[u] = shelf_devdocs.NetError(u, "blocked")
+        code, out, err = self.main("sources", "python")
+        self.assertEqual(code, 0)
+        self.assertIn("python~3.12", out)
+        self.assertNotIn("Dash/Zeal:", out)
+        self.assertIn("note: the Dash/Zeal official list could not be loaded", err)
+        self.assertIn("note: the Dash/Zeal user-contributed list could not be loaded",
+                      err)
+
+    def test_catalog_cached_for_a_week(self):
+        self.zeal_install()
+        self.main("sources", "python")
+        self.main("sources", "lua")
+        self.assertEqual(sorted(self.catalog_urls()),
+                         sorted([shelf_dash.FEEDS_LIST_URL,
+                                 shelf_dash.CONTRIB_LIST_URL]))
+
+    def test_not_installed_hint_from_cached_catalog(self):
+        self.zeal_install()
+        cdir = os.path.join(self.cache, "docsets", "catalogs")
+        os.makedirs(cdir)
+        with open(os.path.join(cdir, "contrib-list.json"), "w") as f:
+            json.dump(["Lua"], f)
+        code, _, err = self.main("search", "x", "-d", "Lua")
+        self.assertEqual(code, 4)
+        self.assertIn("Dash/Zeal can download docset 'Lua'", err)
+        self.assertIn("docshelf doesn't install docsets", err)
+        self.assertEqual(self.net.fetched, [])
+        code, _, err = self.main("show", "lua:x")
+        self.assertEqual(code, 5)
+        self.assertIn("Dash/Zeal can download docset 'Lua'", err)
+
+    def test_not_installed_hint_needs_an_app(self):
+        cdir = os.path.join(self.cache, "docsets", "catalogs")
+        os.makedirs(cdir)
+        with open(os.path.join(cdir, "contrib-list.json"), "w") as f:
+            json.dump(["Lua"], f)
+        code, _, err = self.main("search", "x", "-d", "Lua")
+        self.assertEqual(code, 4)
+        self.assertIn("unknown docvol 'Lua'", err)
+
+    def test_allowlist_lists_exactly_the_hosts_used(self):
+        path = os.path.join(os.path.dirname(os.path.abspath(__file__)), os.pardir,
+                            "skills", "docshelf", "assets", "allowlist.txt")
+        with open(path, encoding="utf-8") as f:
+            listed = {ln.strip() for ln in f
+                      if ln.strip() and not ln.lstrip().startswith("#")}
+        urls = [shelf_devdocs.MANIFEST_URL, shelf_devdocs.DOCUMENTS_BASE,
+                shelf_dash.FEEDS_LIST_URL, shelf_dash.CONTRIB_LIST_URL,
+                shelf_dash.ZEAL_CATALOG_URL]
+        from urllib.parse import urlsplit
+        self.assertEqual(listed, {urlsplit(u).hostname for u in urls})
+        self.assertEqual(listed, {"devdocs.io", "documents.devdocs.io",
+                                  "api.github.com", "api.zealdocs.org"})
+
+    def test_net_error_names_host_without_fixed_list(self):
+        e = shelf_devdocs.NetError("https://api.github.com/x", "HTTP 403")
+        self.assertIn("api.github.com", str(e))
+        self.assertIn("assets/allowlist.txt", str(e))
+        self.assertNotIn("(devdocs.io", str(e))
 
 
 if __name__ == "__main__":

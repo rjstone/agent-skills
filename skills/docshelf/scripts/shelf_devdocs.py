@@ -234,9 +234,8 @@ class NetError(CLIError):
     def __init__(self, url: str, reason: str):
         host = urlsplit(url).hostname or url
         super().__init__(
-            "cannot reach %s (%s). Hosts to allow are listed in "
-            "assets/allowlist.txt in the skill folder (devdocs.io, "
-            "documents.devdocs.io)." % (host, reason), 7)
+            "cannot reach %s (%s). The hosts docshelf may contact are listed "
+            "in assets/allowlist.txt in the skill folder." % (host, reason), 7)
 
 
 def _write_error(path: str, e: OSError) -> CLIError:
@@ -325,8 +324,17 @@ def not_installed_message(cfg: Config, name: str, how) -> Optional[str]:
         row = resolve_install(_manifest_rows(_load(
             os.path.join(devdocs_dir(cfg), "docs.json"))), name)
     except (OSError, ValueError, CLIError):
-        return None
-    return "docvol %r is not installed; DevDocs has it: %s" % (name, how(row["slug"]))
+        row = None
+    if row is not None:
+        return "docvol %r is not installed; DevDocs has it: %s" % (
+            name, how(row["slug"]))
+    import shelf_dash
+    docset = shelf_dash.cached_catalog_match(cfg, name)
+    if docset and shelf_dash.catalogs_wanted(os.environ):
+        return ("docvol %r is not installed; Dash/Zeal can download docset "
+                "%r (in the app); docshelf doesn't install docsets"
+                % (name, docset))
+    return None
 
 
 def _manifest_rows(data) -> List[dict]:
@@ -466,7 +474,35 @@ def cmd_sources(cfg, args) -> int:
             "  (installed)" if r["slug"] in have else ""))
     if not hits:
         print("no DevDocs documentation matches %s" % " ".join(args.query))
+    _print_catalog_hits(cfg, args, words)
     return 0
+
+
+def _print_catalog_hits(cfg, args, words) -> None:
+    """Dash/Zeal docset names matching the query, when an app or a docset
+    folder exists; a failing list is a note, never an error."""
+    import shelf_dash
+    if not shelf_dash.catalogs_wanted(os.environ):
+        return
+    norm = [shelf_dash._norm(w) for w in words]
+    here = {shelf_dash._norm(d.name): d.name
+            for d in shelf_dash.installed_docsets(cfg)}
+    for label in shelf_dash.DOCSET_LISTS:
+        try:
+            names = shelf_dash.label_names(cfg, label, args.refresh)
+        except CLIError as e:
+            print("note: the Dash/Zeal %s list could not be loaded (%s)"
+                  % (label, e), file=sys.stderr)
+            continue
+        shown = 0
+        for name, _v, title in sorted(names):
+            key = shelf_dash._norm(name)
+            if shown < 30 and all(w in key or w in shelf_dash._norm(title)
+                                  for w in norm):
+                shown += 1
+                print("%s  (Dash/Zeal: download in the app, %s)%s" % (
+                    name, label,
+                    "  (here as %s)" % here[key] if key in here else ""))
 
 
 def _row_version(row: dict) -> str:

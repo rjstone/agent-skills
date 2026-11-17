@@ -12,6 +12,7 @@ import sqlite3
 import sys
 import tarfile
 import tempfile
+import time
 import zlib
 from typing import List, Optional, Tuple
 from urllib.parse import unquote
@@ -611,3 +612,165 @@ def where_lines(cfg, env=None) -> List[str]:
     lines.append("apps: " + (", ".join("%s (%s)" % a for a in apps)
                              if apps else "none found"))
     return lines
+
+
+# --- catalogs: which docsets Dash or Zeal could download --------------------
+# docshelf never contacts kapeli.com or its mirrors: Kapeli asked that tools
+# add no load to his servers (the user, 2026-11-16). Docset archives are served
+# only from there, so docshelf downloads none: Dash and Zeal do. `sources`
+# only lists docset names, to tell the user what the app can download.
+# Names come from GitHub, one API request each (the API lists at most 1000
+# entries of a folder). Official: the *.xml files at the root of the
+# Kapeli/feeds repo (214 in 2026-11). Only the listing is read, never a feed
+# file: those hold the kapeli.com download URLs. User-contributed: one folder
+# per docset under docsets/ in Kapeli/Dash-User-Contributions (630 in 2026-11).
+FEEDS_LIST_URL = "https://api.github.com/repos/Kapeli/feeds/contents/"
+CONTRIB_LIST_URL = ("https://api.github.com/repos/Kapeli/Dash-User-Contributions"
+                    "/contents/docsets")
+# Zeal's combined catalog: a best-effort public service with no stability
+# promise. Used only when the GitHub list fails and cached without its icons.
+# Entries: {name, title, sourceId, versions, ...}; sourceId com.kapeli.dash =
+# official, com.kapeli.contrib = user-contributed.
+ZEAL_CATALOG_URL = "https://api.zealdocs.org/_api/v1/catalog.json"
+CATALOG_MAX_AGE = 7 * 86400
+# label: (cache key, GitHub listing URL, entry type, suffix, Zeal sourceId)
+DOCSET_LISTS = {
+    "official": ("feeds-list", FEEDS_LIST_URL, "file", ".xml", "com.kapeli.dash"),
+    "user-contributed": ("contrib-list", CONTRIB_LIST_URL, "dir", "",
+                         "com.kapeli.contrib"),
+}
+_ZEAL_KEY = "zeal-catalog"
+_SOURCE_ERRORS = (CLIError, ValueError, KeyError, TypeError, AttributeError)
+
+
+def _norm(name: str) -> str:
+    return re.sub(r"[\s_]+", "_", name.strip().lower())
+
+
+def catalogs_wanted(env) -> bool:
+    """Dash or Zeal installed, or a docset folder present."""
+    return bool(viewer_apps(env) or docset_folders(env))
+
+
+def _catalog_path(cfg, key: str) -> str:
+    return os.path.join(cfg.cache_dir, "docsets", "catalogs", key + ".json")
+
+
+def _read_catalog(cfg, key: str, max_age=None):
+    """The cached JSON under key, or None (missing, unreadable, too old)."""
+    path = _catalog_path(cfg, key)
+    try:
+        if max_age is not None and not 0 <= time.time() - os.path.getmtime(path) < max_age:
+            return None
+        with open(path, encoding="utf-8") as f:
+            return json.load(f)
+    except (OSError, ValueError):
+        return None
+
+
+def _write_catalog(cfg, key: str, data) -> None:
+    path = _catalog_path(cfg, key)
+    try:
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        fd, tmp = tempfile.mkstemp(dir=os.path.dirname(path), suffix=".tmp")
+        try:
+            with os.fdopen(fd, "w", encoding="utf-8") as f:
+                json.dump(data, f, ensure_ascii=False)
+            os.replace(tmp, path)
+        except BaseException:
+            try:
+                os.remove(tmp)
+            except OSError:
+                pass
+            raise
+    except OSError as e:
+        raise CLIError("cannot write the docset list in %s: %s (set "
+                       "DOCSHELF_CACHE_DIR to a writable folder)"
+                       % (os.path.dirname(path), e), 2)
+
+
+def _github_names(body: bytes, kind: str, suffix: str) -> List[str]:
+    """Sorted names of a GitHub folder listing's entries of type kind,
+    minus suffix; others are left out."""
+    data = json.loads(body.decode("utf-8"))
+    if not isinstance(data, list):
+        raise ValueError("the GitHub listing is not a list")
+    names = [str(i["name"]) for i in data if isinstance(i, dict)
+             and i.get("type") == kind and str(i.get("name") or "").endswith(suffix)]
+    return sorted(n[:len(n) - len(suffix)] for n in names if n != suffix)
+
+
+def _slim_catalog(body: bytes) -> list:
+    """Zeal's catalog without icons and other fields never read."""
+    data = json.loads(body.decode("utf-8"))
+    if not isinstance(data, list):
+        raise ValueError("Zeal catalog is not a list")
+    keep = ("name", "title", "sourceId", "versions")
+    return [{k: e.get(k) for k in keep if k in e}
+            for e in data if isinstance(e, dict) and e.get("name")]
+
+
+def _first_version(e) -> str:
+    return next((str(v) for v in e.get("versions") or [] if v), "")
+
+
+def _cached_or_fetched(cfg, key: str, url: str, refresh: bool, slim):
+    import shelf_devdocs
+    if not refresh:
+        data = _read_catalog(cfg, key, CATALOG_MAX_AGE)
+        if data is not None:
+            return data
+    data = slim(shelf_devdocs.fetch(url))
+    _write_catalog(cfg, key, data)
+    return data
+
+
+def label_names(cfg, label: str, refresh: bool = False) -> List[Tuple[str, str, str]]:
+    """(name, version, title) of each docset of one kind: from GitHub (names
+    only), from Zeal's catalog only when GitHub fails. CLIError(7) when both
+    fail."""
+    key, url, kind, suffix, source_id = DOCSET_LISTS[label]
+    try:
+        names = _cached_or_fetched(cfg, key, url, refresh,
+                                   lambda b: _github_names(b, kind, suffix))
+        return [(str(n), "", "") for n in names]
+    except _SOURCE_ERRORS as first:
+        if getattr(first, "code", 7) != 7:
+            raise
+        try:
+            cat = _cached_or_fetched(cfg, _ZEAL_KEY, ZEAL_CATALOG_URL, refresh,
+                                     _slim_catalog)
+            out = [(str(e["name"]), _first_version(e), str(e.get("title") or ""))
+                   for e in cat if isinstance(e, dict) and e.get("sourceId") == source_id]
+        except _SOURCE_ERRORS as e:
+            raise CLIError("cannot load the %s docset list (GitHub: %s; Zeal's "
+                           "catalog: %s)" % (label, first, e), 7)
+        print("note (no action needed): the %s list came from Zeal's catalog; "
+              "GitHub was unreachable (%s)" % (label, first), file=sys.stderr)
+        return out
+
+
+def catalog_names(cfg, refresh: bool = False) -> List[Tuple[str, str, str, str]]:
+    """(name, version, title, label) of every official and user-contributed
+    docset; raises CLIError(7) when a kind cannot be loaded at all."""
+    return [(n, v, t, label) for label in DOCSET_LISTS
+            for n, v, t in label_names(cfg, label, refresh)]
+
+
+def cached_catalog_match(cfg, name: str) -> Optional[str]:
+    """The docset name a cached catalog (any age; never the network) lists
+    for name, compared by _norm; else None."""
+    want = _norm(name)
+    for label, (key, _u, _k, _s, source_id) in DOCSET_LISTS.items():
+        names = _read_catalog(cfg, key)
+        if isinstance(names, list):
+            for n in names:
+                if isinstance(n, str) and _norm(n) == want:
+                    return n
+    zeal = _read_catalog(cfg, _ZEAL_KEY)
+    if isinstance(zeal, list):
+        for e in zeal:
+            if isinstance(e, dict) and isinstance(e.get("name"), str) \
+                    and _norm(e["name"]) == want:
+                return e["name"]
+    return None

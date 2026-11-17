@@ -27,10 +27,12 @@ HINTS = {
         "notes files are plain Markdown, one section per entry; "
         "run the `notes` tool with check=true to see which REFs a section shows",
     "assets/allowlist.txt":
-        "allow devdocs.io and documents.devdocs.io in the network settings",
+        "allow the hosts docshelf contacts (devdocs.io, documents.devdocs.io, "
+        "api.github.com, api.zealdocs.org) in the network settings",
 }
 _POINTER = re.compile(
-    r"(?:[Hh]osts to allow are )?(?:listed in |see |in )?"
+    r"(?:[Hh]osts to allow are |[Tt]he hosts docshelf may contact are )?"
+    r"(?:listed in |see |in )?"
     r"((?:references|assets)/[\w.-]+\.(?:md|txt))"
     r"(?: in the skill folder)?(?: \([^)]*\))?")
 
