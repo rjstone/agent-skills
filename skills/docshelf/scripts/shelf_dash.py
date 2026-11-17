@@ -11,14 +11,14 @@ import shutil
 import sqlite3
 import sys
 import tarfile
-import tempfile
 import time
 import zlib
+from xml.parsers.expat import ExpatError
 from datetime import datetime
 from typing import List, NamedTuple, Optional, Tuple
 from urllib.parse import unquote, urlsplit
 
-from shelf_core import CLIError, Docvol, Entry, resolve_doc_path, warn
+from shelf_core import CLIError, Docvol, Entry, make_temp, resolve_doc_path, warn
 
 INDEX_REL = ("Contents", "Resources", "docSet.dsidx")
 DOCS_REL = ("Contents", "Resources", "Documents")
@@ -65,7 +65,7 @@ def _write_json(path: str, data) -> None:
     """Write data to path atomically (temp file + os.replace)."""
     folder = os.path.dirname(path)
     os.makedirs(folder, exist_ok=True)
-    fd, tmp = tempfile.mkstemp(dir=folder, suffix=".tmp")
+    fd, tmp = make_temp(folder)
     try:
         with os.fdopen(fd, "w", encoding="utf-8") as f:
             json.dump(data, f, ensure_ascii=False)
@@ -142,6 +142,24 @@ def _load_json(path):
     return data if isinstance(data, dict) else {}
 
 
+def docset_stamp(path: str) -> str:
+    """(size, mtime) of the files that change when a docset is updated: its
+    index and WAL, tarix archive and index and WAL, and Info.plist."""
+    res = os.path.join(path, "Contents", "Resources")
+    tarix_index = os.path.join(res, "tarixIndex.db")
+    index = os.path.join(path, *INDEX_REL)
+    parts = []
+    for f in (index, index + "-wal", os.path.join(res, "tarix.tgz"),
+              tarix_index, tarix_index + "-wal",
+              os.path.join(path, "Contents", "Info.plist")):
+        try:
+            st = os.stat(f)
+            parts.append("%d:%d" % (st.st_size, int(st.st_mtime)))
+        except OSError:
+            parts.append("-")
+    return "|".join(parts)
+
+
 class DashDocvol(Docvol):
     def __init__(self, path: str, source: str, cache_dir: str):
         self.path = os.path.abspath(path)
@@ -158,7 +176,11 @@ class DashDocvol(Docvol):
                 plist = plistlib.load(f)
             if isinstance(plist, dict) and plist.get("CFBundleName"):
                 self.title = str(plist["CFBundleName"])
-        except Exception:  # any unreadable plist (e.g. ExpatError): keep the name
+        except (OSError, ValueError, ExpatError, AttributeError, LookupError):
+            # missing/unreadable file, binary plist error (InvalidFileException
+            # is a ValueError), malformed XML (ExpatError), a bad <date>
+            # (AttributeError) or an unknown encoding= in the XML declaration
+            # (LookupError): keep the name
             pass
         self.display_name = self.title
         meta = _load_json(os.path.join(self.path, "meta.json"))
@@ -171,6 +193,10 @@ class DashDocvol(Docvol):
         self._pages: Optional[List[str]] = None
         self._repeats: Optional[Repeats] = None
         self._count: Optional[int] = None
+        self._by_id: Optional[dict] = None  # ref -> Entry, built on first resolve
+        self._tarix_prefix: Optional[str] = None  # "<Name>.docset/", probed once
+        self._tarix_probed = False
+        self._tarix_warned = False
         self._copied: set = set()  # data_dir() subfolders copied this run
         # Discovery reads no rows (counting or copying a big index on every
         # command is slow): only the header, to skip a file that is no SQLite.
@@ -197,15 +223,15 @@ class DashDocvol(Docvol):
         dest = os.path.join(dest_dir, os.path.basename(path))
         stamp_file = os.path.join(dest_dir, "stamp")
         stamp = self.stamp()
-        if sub in self._copied or (os.path.isfile(dest)
-                                   and _load_json(stamp_file).get("stamp") == stamp):
+        if os.path.isfile(dest) and (sub in self._copied
+                                     or _load_json(stamp_file).get("stamp") == stamp):
             return dest
         os.makedirs(dest_dir, exist_ok=True)
         moves = []
         try:
             for suffix in ("", "-wal"):
                 if os.path.exists(path + suffix):
-                    fd, tmp = tempfile.mkstemp(dir=dest_dir, suffix=".tmp")
+                    fd, tmp = make_temp(dest_dir)
                     os.close(fd)
                     moves.append((tmp, dest + suffix))
                     shutil.copyfile(path + suffix, tmp)
@@ -321,11 +347,16 @@ class DashDocvol(Docvol):
             return None
         try:
             with _Conn(self._open_db(idx, "tarix")) as con:
-                row = con.execute("SELECT path FROM tarindex WHERE path LIKE "
-                                  "'%.docset/%' LIMIT 1").fetchone()
-                if not row:
+                if not self._tarix_probed:
+                    row = con.execute("SELECT path FROM tarindex WHERE path LIKE "
+                                      "'%.docset/%' LIMIT 1").fetchone()
+                    if row:
+                        self._tarix_prefix = row[0][:row[0].index(".docset/")
+                                                    + len(".docset/")]
+                    self._tarix_probed = True
+                prefix = self._tarix_prefix
+                if prefix is None:
                     return None
-                prefix = row[0][:row[0].index(".docset/") + len(".docset/")]
                 row = con.execute("SELECT hash FROM tarindex WHERE path = ?",
                                   (prefix + rel,)).fetchone()
         except (sqlite3.Error, ValueError, OSError) as e:
@@ -377,7 +408,8 @@ class DashDocvol(Docvol):
         try:
             with open(os.path.join(self.path, "Contents", "Info.plist"), "rb") as f:
                 value = plistlib.load(f).get("dashIndexFilePath")
-        except Exception:  # unreadable or malformed plist: no index page
+        except (OSError, ValueError, ExpatError, AttributeError, LookupError):
+            # unreadable or malformed plist, or a plist that is no dict: no index page
             return None
         return entry_location(value)[0] if isinstance(value, str) and value else None
 
@@ -424,9 +456,12 @@ class DashDocvol(Docvol):
         stamp = "%s|repeats%d" % (self.stamp(), REPEAT_FORMAT)
         cache = os.path.join(self.data_dir(), "repeats.json")
         data = _load_json(cache)
-        if data.get("stamp") == stamp and isinstance(data.get("header"), list) \
-                and isinstance(data.get("footer"), list) \
-                and data.get("header_start") in REPEAT_HEADER_STARTS:
+        keep = data.get("keep")
+        if data.get("stamp") == stamp \
+                and _is_str_list(data.get("header")) \
+                and _is_str_list(data.get("footer")) \
+                and data.get("header_start") in REPEAT_HEADER_STARTS \
+                and (keep is None or isinstance(keep, str)):
             self._repeats = Repeats(data["header_start"], data["header"],
                                     data["footer"], data.get("keep"))
             return self._repeats
@@ -463,7 +498,7 @@ class DashDocvol(Docvol):
     def resolve_href(self, page: str, href: str) -> Optional[str]:
         for decode in (True, False):  # a file name may hold a literal %XX
             target, frag = resolve_doc_path(page, href, decode)
-            if self._has_page(target):
+            if target is not None and self._has_page(target):
                 return self.make_ref(target, frag)
         return None
 
@@ -473,16 +508,22 @@ class DashDocvol(Docvol):
         except CLIError:
             try:
                 return self._tarix_row(self._tarix_rel(target)) is not None
-            except CLIError:
+            except CLIError as e:
+                if e.code == 7 and not self._tarix_warned:  # unreadable archive
+                    self._tarix_warned = True
+                    warn("%s: links not resolved, %s" % (self.name, e))
                 return False
         return True
 
     def resolve(self, rest: str) -> Tuple[str, Optional[str], Optional[Entry]]:
         if rest.isascii() and rest.isdecimal():
-            ref = "%s:%s" % (self.name, int(rest))
-            for e in self.entries():
-                if e.ref == ref:
-                    return e.page, e.anchor, e
+            if self._by_id is None:
+                self._by_id = {}
+                for e in self.entries():
+                    self._by_id.setdefault(e.ref, e)  # first wins, as a scan did
+            e = self._by_id.get("%s:%s" % (self.name, int(rest)))
+            if e is not None:
+                return e.page, e.anchor, e
             raise CLIError("no entry %s in %s" % (rest, self.name), 5)
         if rest.startswith("page:") and len(rest) > 5:
             path, _, anchor = rest[5:].partition("#")
@@ -494,17 +535,11 @@ class DashDocvol(Docvol):
         return "%s:page:%s%s" % (self.name, page, "#" + anchor if anchor else "")
 
     def stamp(self) -> str:
-        parts = []
-        res = os.path.join(self.path, "Contents", "Resources")
-        tarix_index = os.path.join(res, "tarixIndex.db")
-        for f in (self.index_file, self.index_file + "-wal",
-                  os.path.join(res, "tarix.tgz"), tarix_index, tarix_index + "-wal"):
-            try:
-                st = os.stat(f)
-                parts.append("%d:%d" % (st.st_size, int(st.st_mtime)))
-            except OSError:
-                parts.append("-")
-        return "|".join(parts)
+        return docset_stamp(self.path)
+
+
+def _is_str_list(v) -> bool:
+    return isinstance(v, list) and all(isinstance(x, str) for x in v)
 
 
 class _Conn:
@@ -716,11 +751,25 @@ def _scan(env):
             for f, s, d in _search_folders(env) if os.path.isdir(f)]
 
 
+# One result per process (the CLI and MCP server are single-threaded, so a
+# plain module global is safe): (key, docvols). The key holds the cache folder, the
+# folders and docsets found, and each docset's signature, so a different cfg
+# or a changed folder never reuses a stale result.
+_OPEN_MEMO: list = []
+
+
 def _open_all(cfg, env):
     """Open the docsets, the first of each name; later copies of a name go
-    to the winner's `shadowed` list. Returns the list of docvols."""
+    to the winner's `shadowed` list. Returns the list of docvols. Within one
+    process the same discovery is opened once (`where` and `list` share it)."""
+    scan = _scan(env)
+    key = (cfg.cache_dir, tuple(
+        (f, s, tuple((p, docset_stamp(p)) for p in paths))
+        for f, s, paths in scan))
+    if _OPEN_MEMO and _OPEN_MEMO[0][0] == key:
+        return list(_OPEN_MEMO[0][1])
     docvols, by_name = [], {}
-    for folder, source, paths in _scan(env):
+    for folder, source, paths in scan:
         for path in paths:
             name = os.path.basename(path)[:-len(".docset")]
             if name in by_name:
@@ -732,7 +781,8 @@ def _open_all(cfg, env):
             if d is not None:
                 by_name[name] = d
                 docvols.append(d)
-    return docvols
+    _OPEN_MEMO[:] = [(key, docvols)]
+    return list(docvols)
 
 
 def installed_docsets(cfg, env=None) -> List[DashDocvol]:
@@ -749,7 +799,7 @@ def where_lines(cfg, env=None) -> List[str]:
     for folder, source, depth in _search_folders(env):
         shown = True
         if not os.path.isdir(folder):
-            lines.append("  %s (missing)" % folder)
+            lines.append("  %s [%s] (missing)" % (folder, source))
             continue
         paths = list(_docset_dirs(folder, depth))
         lines.append("  %s [%s] (found %d)" % (folder, source, len(paths)))
@@ -824,7 +874,7 @@ def _write_catalog(cfg, key: str, data) -> None:
     path = _catalog_path(cfg, key)
     try:
         os.makedirs(os.path.dirname(path), exist_ok=True)
-        fd, tmp = tempfile.mkstemp(dir=os.path.dirname(path), suffix=".tmp")
+        fd, tmp = make_temp(os.path.dirname(path))
         try:
             with os.fdopen(fd, "w", encoding="utf-8") as f:
                 json.dump(data, f, ensure_ascii=False)
@@ -936,8 +986,11 @@ def label_names(cfg, label: str, refresh: bool = False,
         except _SOURCE_ERRORS as e:
             raise CLIError("cannot load the %s docset list (GitHub: %s; Zeal's "
                            "catalog: %s)" % (label, first, e), 7)
-        print("note (no action needed): the %s list came from Zeal's catalog; "
-              "GitHub was unreachable (%s)" % (label, first), file=sys.stderr)
+        if zeal is None or not zeal.get("noted"):
+            if zeal is not None:
+                zeal["noted"] = True
+            print("note (no action needed): the docset lists came from Zeal's "
+                  "catalog; GitHub was unreachable (%s)" % first, file=sys.stderr)
         if skipped:
             print("note: skipped %d malformed entr%s in Zeal's catalog"
                   % (skipped, "y" if skipped == 1 else "ies"), file=sys.stderr)

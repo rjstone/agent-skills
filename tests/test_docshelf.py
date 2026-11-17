@@ -477,7 +477,8 @@ class DevDocsDiskTests(unittest.TestCase):
     def test_encoded_dots_and_slashes_resolve_like_literal_ones(self):
         rdp = shelf_core.resolve_doc_path
         self.assertEqual(rdp("a/b/p", "%2e%2e/x#f"), ("a/x", "f"))
-        self.assertEqual(rdp("a/b/p", "..%2F..%2F..%2Fx"), ("x", None))
+        self.assertEqual(rdp("a/b/p", "..%2F..%2Fx"), ("x", None))
+        self.assertEqual(rdp("a/b/p", "..%2F..%2F..%2Fx"), (None, None))
         self.assertEqual(rdp("p", "a%2F%2F..%2Fb"), ("b", None))
         self.assertEqual(rdp("a/p", "c%2F.%2Fd"), ("a/c/d", None))
         self.make(entries=[("Guide", "Guide", "api/index")],
@@ -489,6 +490,15 @@ class DevDocsDiskTests(unittest.TestCase):
         self.assertEqual(d.resolve_href("api/index", "%2e%2e/api/other#s"),
                          "vite:api/other#s")
         self.assertEqual(d.resolve_href("api/index", "a%20b"), "vite:api/a%20b")
+
+    def test_link_above_the_root_gets_no_ref(self):
+        self.make(entries=[("Guide", "Guide", "index")],
+                  pages={"index": "<p>x</p>", "x": "<p>r</p>",
+                         "sub/page": "<p>y</p>"})
+        d = shelf_devdocs.installed_docvols(self.cfg())[0]
+        self.assertIsNone(d.resolve_href("index", "../../x"))
+        self.assertIsNone(d.resolve_href("sub/page", "../../x"))
+        self.assertEqual(d.resolve_href("sub/page", "../x"), "vite:x")
 
     def test_entries_and_resolve(self):
         self.make(entries=[("Guide", "Guide", "guide"),
@@ -1860,6 +1870,38 @@ class FtsIdentifierTests(unittest.TestCase):
             self.assertEqual([h["page"] for h in json.loads(r.stdout)][:1],
                              ["pc"], q)
 
+    def test_ids_query_strips_punctuation(self):
+        make_devdocs(self.cache, "pd", name="Pd", release="1",
+                     entries=[("X", "Guide", "px")],
+                     pages={"px": "<h1>X</h1><p>Call pd.read_csv now.</p>"})
+        for q in ("read_csv,", "(read_csv)", "pd.read_csv."):
+            r = self.cli("fts", q, "-d", "pd", "--json")
+            self.assertEqual([h["page"] for h in json.loads(r.stdout)], ["px"], q)
+        for q in ("getElementById,", "(getElementById)"):  # text has no match
+            r = self.cli("fts", q, "-d", "py", "--json")
+            self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+            self.assertEqual([h["page"] for h in json.loads(r.stdout)][:1], ["pc"], q)
+
+    def test_match_expression_built_once_per_query(self):
+        import contextlib
+        import io
+        from unittest import mock
+        shelf_lookup._match_terms.cache_clear()
+        real = shelf_lookup._quote
+        calls = []
+
+        def counting(t):
+            calls.append(t)
+            return real(t)
+        out = io.StringIO()
+        # no page has both words, so the "any" retry runs as well
+        with mock.patch.object(shelf_lookup, "_quote", counting), \
+                mock.patch.dict(os.environ, self.env), \
+                contextlib.redirect_stdout(out), \
+                contextlib.redirect_stderr(io.StringIO()):
+            shelf_cli.main(["fts", "collect", "zzzzqq", "-d", "py"])
+        self.assertEqual(len(calls), 4, calls)  # (text + ids) x 2 tokens, once
+
     def test_dotted_identifier(self):
         for q in ("os.path.join", "ospathjoin"):
             r = self.cli("fts", q, "-d", "py", "--json")
@@ -2092,6 +2134,97 @@ class NetworkTests(unittest.TestCase):
         self.assertEqual(code, 0)
         self.assertIn("python~3.14", err)
         self.assertTrue(out.startswith("up to date node ("), out)
+
+    def test_reinstall_with_missing_db_reinstalls(self):
+        self.main("install", "python~3.14")
+        folder = os.path.join(self.root, "python~3.14")
+        os.remove(os.path.join(folder, "db.json"))
+        code, out, err = self.main("install", "python~3.14")
+        self.assertEqual(code, 0, err)
+        self.assertTrue(out.startswith("updated python~3.14"), out)
+        self.assertTrue(os.path.isfile(os.path.join(folder, "db.json")))
+
+    def test_reinstall_with_missing_index_reinstalls(self):
+        self.main("install", "python~3.14")
+        folder = os.path.join(self.root, "python~3.14")
+        os.remove(os.path.join(folder, "index.json"))
+        self.assertTrue(self.main("install", "python~3.14")[1].startswith("updated"))
+        self.assertTrue(os.path.isfile(os.path.join(folder, "index.json")))
+
+    def test_install_builds_page_index_once(self):
+        with mock.patch.object(shelf_devdocs, "build_page_index",
+                               wraps=shelf_devdocs.build_page_index) as spy:
+            self.assertEqual(self.main("install", "python~3.14")[0], 0)
+        self.assertEqual(spy.call_count, 1)
+        pages = os.path.join(self.root, "python~3.14", ".docshelf", "pages.json")
+        with open(pages, encoding="utf-8") as f:
+            self.assertEqual(set(json.load(f)["pages"]), {"intro", "api"})
+
+    def test_install_stores_entry_count(self):
+        self.main("install", "python~3.14")
+        self.assertEqual(self.meta("python~3.14")["entry_count"], 2)
+
+    def test_list_uses_stored_entry_count_without_index(self):
+        self.main("install", "python~3.14")
+        with mock.patch.object(shelf_devdocs.DevDocsDocvol, "entries",
+                               side_effect=AssertionError("index read")):
+            code, out, err = self.main("list")
+        self.assertEqual((code, err), (0, ""))
+        self.assertIn("2", out)
+        self.assertIn("python~3.14", out)
+
+    def test_old_install_without_entry_count_still_counts(self):
+        self.main("install", "python~3.14")
+        path = os.path.join(self.root, "python~3.14", "meta.json")
+        meta = self.meta("python~3.14")
+        del meta["entry_count"]
+        with open(path, "w", encoding="utf-8") as f:
+            json.dump(meta, f)
+        d = shelf_devdocs.DevDocsDocvol(os.path.join(self.root, "python~3.14"))
+        self.assertEqual(d.entry_count, 2)
+        self.assertNotIn("entry_count", self.meta("python~3.14"))  # no write
+
+    def test_installed_files_get_umask_permissions(self):
+        old = os.umask(0o022)
+        self.addCleanup(os.umask, old)
+        self.main("install", "python~3.14")
+        folder = os.path.join(self.root, "python~3.14")
+        for rel in ("index.json", "db.json", "meta.json",
+                    os.path.join(".docshelf", "pages.json")):
+            mode = stat.S_IMODE(os.stat(os.path.join(folder, rel)).st_mode)
+            self.assertEqual(mode, 0o644, rel)
+        self.assertEqual(stat.S_IMODE(os.stat(
+            os.path.join(self.root, "docs.json")).st_mode), 0o644)
+
+    def test_install_sweeps_only_old_tmp_files(self):
+        self.main("install", "python~3.14")
+        folder = os.path.join(self.root, "python~3.14")
+        old, fresh, other = (os.path.join(folder, n) for n in
+                             ("db.json.old.tmp", "db.json.new.tmp", "keep.txt"))
+        for p in (old, fresh, other):
+            with open(p, "w") as f:
+                f.write("x")
+        t = time.time() - 2 * 3600
+        os.utime(old, (t, t))
+        os.utime(other, (t, t))
+        newer = [dict(r, mtime=1800000000) if r["slug"] == "python~3.14" else r
+                 for r in self.rows]
+        self.net.pages.update(self.docs_pages(newer))
+        self.write_manifest(newer)
+        self.assertEqual(self.main("install", "python~3.14")[0], 0)
+        self.assertFalse(os.path.exists(old))
+        self.assertTrue(os.path.exists(fresh))
+        self.assertTrue(os.path.exists(other))
+
+    def test_other_cache_writers_use_umask_permissions(self):
+        old = os.umask(0o027)
+        self.addCleanup(os.umask, old)
+        path = os.path.join(self.tmp, "w", "x.json")
+        shelf_dash._write_json(path, {"a": 1})
+        self.assertEqual(stat.S_IMODE(os.stat(path).st_mode), 0o640)
+        fd, tmp = shelf_core.make_temp(os.path.dirname(path))
+        os.close(fd)
+        self.assertEqual(stat.S_IMODE(os.stat(tmp).st_mode), 0o640)
 
     def test_install_failure_leaves_nothing(self):
         url = "%s/python~3.15/db.json" % shelf_devdocs.DOCUMENTS_BASE
@@ -3506,9 +3639,9 @@ class NotesPageHeadingTests(unittest.TestCase):
         cache = os.path.join(self.folder, shelf_devdocs.DERIVED, "headings.json")
         self.assertTrue(os.path.isfile(cache))
         with open(cache, encoding="utf-8") as f:
-            self.assertEqual(json.load(f)["stamp"], "%s|headings%d" % (
+            self.assertEqual(json.load(f)["stamp"], "%s|headings%d|repeats%d" % (
                 shelf_devdocs.DevDocsDocvol(self.folder).stamp(),
-                shelf_notes.HEADINGS_FORMAT))
+                shelf_notes.HEADINGS_FORMAT, shelf_dash.REPEAT_FORMAT))
         with open(os.path.join(self.folder, "db.json"), encoding="utf-8") as f:
             pages = json.load(f)
         pages["sql/other"] = self.OTHER + "<h3 id='sumx'>sum(x)</h3><p>Adds.</p>"
@@ -4141,6 +4274,99 @@ class DashTarixTests(unittest.TestCase):
         self.assertEqual(cm.exception.code, 7)
 
 
+class DashRobustnessTests(unittest.TestCase):
+    """0.7.1: id map built once, specific exceptions, tarix prefix cached."""
+
+    def setUp(self):
+        self.tmp = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, self.tmp, ignore_errors=True)
+        self.cache = os.path.join(self.tmp, "cache")
+
+    def _docset(self, tarix=False):
+        path = make_docset(self.tmp, "Lib",
+                           [("os", "Module", "os.html"), ("sys", "Module", "sys.html")],
+                           {"os.html": "<h1>os</h1>", "sys.html": "<h1>sys</h1>"})
+        if tarix:
+            make_tarix(path, {"os.html": b"<h1>os</h1>", "a.html": b"<p>a</p>",
+                              "b.html": b"<p>b</p>"})
+        return path
+
+    def test_resolve_builds_id_map_once(self):
+        dv = shelf_dash.DashDocvol(self._docset(), "dash", self.cache)
+        with mock.patch.object(dv, "entries", wraps=dv.entries) as spy:
+            for _ in range(3):
+                page, anchor, entry = dv.resolve("2")
+                self.assertEqual(page, "sys.html")
+                self.assertEqual(entry.name, "sys")
+            self.assertEqual(spy.call_count, 1)
+        with self.assertRaises(CLIError) as cm:
+            dv.resolve("99")
+        self.assertEqual(cm.exception.code, 5)
+
+    def test_malformed_info_plist_still_loads(self):
+        for n, body in enumerate((b"<plist><dict><key>x", b"not a plist at all",
+                     b"bplist00\x00garbage", b"", plistlib.dumps([1, 2]),
+                     b"<plist><dict><key>CFBundleName</key><date>zzz</date>"
+                     b"</dict></plist>")):
+            path = make_docset(os.path.join(self.tmp, str(n)), "Lib",
+                               [("os", "Module", "os.html")], {"os.html": "x"})
+            with open(os.path.join(path, "Contents", "Info.plist"), "wb") as f:
+                f.write(body)
+            dv = shelf_dash.DashDocvol(path, "dash", self.cache)
+            self.assertEqual(dv.title, "Lib")
+            self.assertIsNone(dv._index_page())
+
+    def test_unexpected_plist_error_is_not_swallowed(self):
+        path = make_docset(self.tmp, "Lib", [("os", "Module", "os.html")],
+                           {"os.html": "x"}, plist_name="Lib")
+        with mock.patch.object(shelf_dash.plistlib, "load",
+                               side_effect=RuntimeError("boom")):
+            with self.assertRaises(RuntimeError):
+                shelf_dash.DashDocvol(path, "dash", self.cache)
+        dv = shelf_dash.DashDocvol(path, "dash", self.cache)
+        with mock.patch.object(shelf_dash.plistlib, "load",
+                               side_effect=RuntimeError("boom")):
+            with self.assertRaises(RuntimeError):
+                dv._index_page()
+
+    def test_tarix_prefix_probed_once(self):
+        dv = shelf_dash.DashDocvol(self._docset(tarix=True), "dash", self.cache)
+        statements = []
+        real = dv._open_db
+
+        def spy(path, sub):
+            con = real(path, sub)
+            con.set_trace_callback(statements.append)
+            return con
+        with mock.patch.object(dv, "_open_db", side_effect=spy):
+            for href in ("a.html", "b.html", "os.html", "nope.html"):
+                dv.resolve_href("os.html", href)
+        probes = [s for s in statements if "LIKE" in s]
+        self.assertEqual(len(probes), 1, statements)
+
+    def test_non_code_7_error_in_has_page_is_silent(self):
+        dv = shelf_dash.DashDocvol(self._docset(tarix=True), "dash", self.cache)
+        err = io.StringIO()
+        with contextlib.redirect_stderr(err):
+            self.assertFalse(dv._has_page("../../escape.html"))
+            self.assertIsNone(dv.resolve_href("os.html", "../../../x.html"))
+        self.assertEqual(err.getvalue(), "")
+
+    def test_tarix_read_error_warns_once_per_docvol(self):
+        path = self._docset(tarix=True)
+        os.remove(os.path.join(path, "Contents", "Resources", "tarixIndex.db"))
+        with open(os.path.join(path, "Contents", "Resources", "tarixIndex.db"), "wb") as f:
+            f.write(b"SQLite format 3\x00" + b"\xff" * 200)
+        dv = shelf_dash.DashDocvol(path, "dash", self.cache)
+        err = io.StringIO()
+        with contextlib.redirect_stderr(err):
+            for href in ("a.html", "b.html", "os.html"):
+                self.assertIsNone(dv.resolve_href("os.html", href))
+        lines = [l for l in err.getvalue().splitlines() if l.strip()]
+        self.assertEqual(len(lines), 1, lines)
+        self.assertIn("tarix", lines[0])
+
+
 class DashDiscoveryTests(unittest.TestCase):
     ENTRIES = [("frobnicate", "Function", "api.html#frob")]
     PAGES = {"api.html": "<h1 id=\"frob\">frobnicate</h1><p>Frobs it.</p>"}
@@ -4244,7 +4470,7 @@ class DashDiscoveryTests(unittest.TestCase):
         self.assertEqual(self.cli("list", DOCSHELF_DOCSET_DIRS=gone).returncode, 0)
         w = self.cli("where", DOCSHELF_DOCSET_DIRS=gone)
         self.assertEqual(w.returncode, 0, w.stderr)
-        self.assertIn("%s (missing)" % gone, w.stdout)
+        self.assertIn("%s [folder] (missing)" % gone, w.stdout)
 
     def test_where_reports_no_apps(self):
         w = self.cli("where")
@@ -4343,6 +4569,62 @@ class DashFooterTests(unittest.TestCase):
         r = self.cli("fts", "Licensed", "-d", "Lib")
         self.assertEqual(r.returncode, 0, r.stderr)
         self.assertEqual(r.stdout.count("Lib:"), 1, r.stdout)
+
+    def _data_file(self, name):
+        import glob
+        found = glob.glob(os.path.join(self.tmp, "cache", "docsets", "*", name))
+        self.assertEqual(len(found), 1, (name, found))
+        return found[0]
+
+    def _docvol(self):
+        with mock.patch.dict(os.environ, self.env):
+            cfg = shelf_core.load_config(self.tmp, self.env)
+            return shelf_backends.installed_docvols(cfg)[0]
+
+    def test_malformed_repeats_cache_is_rebuilt(self):
+        self.build(6)
+        ds = self._docvol()
+        good = ds.repeats_info()
+        self.assertTrue(good.footer)
+        path = self._data_file("repeats.json")
+        with open(path, encoding="utf-8") as f:
+            data = json.load(f)
+        for field, bad in (("header", [1, 2]), ("footer", [["x"]]),
+                           ("footer", [None]), ("keep", 5), ("keep", ["p1"])):
+            broken = dict(data, **{field: bad})
+            with open(path, "w", encoding="utf-8") as f:
+                json.dump(broken, f)
+            ds._repeats = None  # as in a new process: read the file again
+            self.assertEqual(ds.repeats_info(), good, (field, bad))
+            with open(path, encoding="utf-8") as f:  # rewritten, well-formed
+                self.assertEqual(json.load(f)["footer"], good.footer)
+
+    def test_repeat_format_bump_rebuilds_fts_and_headings_once(self):
+        self.build(6)
+        with mock.patch.dict(os.environ, self.env):
+            cfg = shelf_core.load_config(self.tmp, self.env)
+
+            def stamps():
+                ds = shelf_backends.installed_docvols(cfg)[0]
+                shelf_lookup.ensure_fts(cfg, ds)
+                shelf_notes.headings_index(ds)
+                with open(self._data_file("headings.json"), encoding="utf-8") as f:
+                    head = json.load(f)["stamp"]
+                return shelf_lookup._stored_stamp(self._data_file("fts.sqlite")), head
+
+            with contextlib.redirect_stderr(io.StringIO()):
+                first = stamps()
+                self.assertEqual(stamps(), first)  # stable: no rebuild
+                with mock.patch.object(shelf_dash, "REPEAT_FORMAT",
+                                       shelf_dash.REPEAT_FORMAT + 1):
+                    with mock.patch.object(shelf_lookup, "build_fts",
+                                           wraps=shelf_lookup.build_fts) as built:
+                        bumped = stamps()
+                        self.assertEqual(built.call_count, 1)
+                        self.assertNotEqual(bumped[0], first[0])
+                        self.assertNotEqual(bumped[1], first[1])
+                        self.assertEqual(stamps(), bumped)
+                        self.assertEqual(built.call_count, 1)  # not again
 
     def test_no_footer_when_pages_differ(self):
         self.build(6, lambda i: "<p>Ends differently %d.</p>" % i)
@@ -4602,6 +4884,106 @@ class DashReadOnlyTests(unittest.TestCase):
         self.assertTrue(lines["Python_3"].endswith(
             "  also as DevDocs python~3.12"), out)
 
+    def test_list_gives_one_also_as_listing_all_twins(self):
+        self.docset(version="3")
+        for v in ("3.12", "3.11"):
+            self.assertEqual(self.main("install", "python~" + v, "--force")[0], 0)
+        self.docset("Python_2", version="3")
+        code, out, err = self.main("list")
+        self.assertEqual(code, 0, err)
+        lines = {ln.split("  ")[0]: ln for ln in out.splitlines()}
+        line = lines["Python_3"]
+        self.assertEqual(line.count("also as"), 1, line)
+        self.assertTrue(line.endswith(
+            "  also as DevDocs python~3.11, python~3.12"), line)
+        self.assertEqual(lines["python~3.12"].count("also as"), 1)
+        self.assertIn("also as docset Python_2, Python_3", lines["python~3.12"])
+
+    def test_where_then_list_opens_each_docset_once(self):
+        self.docset()
+        self.docset("Other", version="1")
+        opened = []
+        real = shelf_dash.open_docset
+
+        def counting(path, *a, **k):
+            opened.append(os.path.basename(path))
+            return real(path, *a, **k)
+
+        with mock.patch.object(shelf_dash, "open_docset", counting):
+            self.assertEqual(self.main("where")[0], 0)
+            self.assertEqual(self.main("list")[0], 0)
+            self.assertEqual(self.main("list")[0], 0)
+        self.assertEqual(sorted(opened), ["Other.docset", "Python_3.docset"])
+
+    def test_discovery_sees_a_docset_added_later(self):
+        self.docset()
+        self.assertNotIn("Late", self.main("list")[1])
+        self.docset("Late", version="1")
+        self.assertIn("Late", self.main("list")[1])
+
+    def test_where_lists_missing_folder_with_source(self):
+        gone = os.path.join(self.tmp, "gone")
+        with mock.patch.dict(os.environ, {
+                "DOCSHELF_DOCSET_DIRS": self.docs + os.pathsep + gone}):
+            code, out, err = self.main("where")
+        self.assertEqual(code, 0, err)
+        self.assertIn("  %s [folder] (missing)" % gone, out)
+        self.assertIn("  %s [folder] (found 0)" % self.docs, out)
+
+    def _count_opens(self, *cmds):
+        opened = []
+        real = shelf_dash.open_docset
+
+        def counting(path, *a, **k):
+            opened.append(os.path.basename(path))
+            return real(path, *a, **k)
+
+        with mock.patch.object(shelf_dash, "open_docset", counting):
+            for c in cmds:
+                self.assertEqual(self.main(c)[0], 0)
+        return opened
+
+    def test_memo_misses_when_wal_changes(self):
+        path = make_docset(self.docs, "Wal", [("a", "Function", "a.html")],
+                           {"a.html": "<h1>a</h1>"}, wal=True)
+        self.assertEqual(self._count_opens("list", "list"), ["Wal.docset"])
+        wal = os.path.join(path, "Contents", "Resources", "docSet.dsidx-wal")
+        self.assertTrue(os.path.isfile(wal))
+        with open(wal, "ab") as f:
+            f.write(b"\0" * 32)
+        self.assertEqual(self._count_opens("list"), ["Wal.docset"])
+
+    def test_memo_misses_when_tarix_index_replaced(self):
+        path = make_docset(self.docs, "Tx", [("os", "Module", "os.html")],
+                           {"os.html": "<h1>os</h1>"})
+        make_tarix(path, {"os.html": b"<h1>os</h1>"})
+        self.assertEqual(self._count_opens("list", "list"), ["Tx.docset"])
+        idx = os.path.join(path, "Contents", "Resources", "tarixIndex.db")
+        with open(idx, "ab") as f:
+            f.write(b"x")
+        self.assertEqual(self._count_opens("list"), ["Tx.docset"])
+
+    def test_memo_drops_removed_docset(self):
+        a = self.docset()
+        self.docset("Other", version="1")
+        self.assertIn("Other", self.main("list")[1])
+        shutil.rmtree(os.path.join(self.docs, "Other.docset"))
+        out = self.main("list")[1]
+        self.assertNotIn("Other", out)
+        self.assertIn("Python_3", out)
+
+    def test_memo_misses_when_docset_dirs_change(self):
+        self.docset()
+        self.assertEqual(self._count_opens("list", "list"), ["Python_3.docset"])
+        other = os.path.join(self.tmp, "more")
+        os.makedirs(other)
+        make_docset(other, "More", [("a", "Function", "a.html")],
+                    {"a.html": "<h1>a</h1>"})
+        with mock.patch.dict(os.environ, {
+                "DOCSHELF_DOCSET_DIRS": self.docs + os.pathsep + other}):
+            opened = self._count_opens("list")
+        self.assertIn("More.docset", opened)
+
 
 class DashCatalogTests(unittest.TestCase):
     """`sources` lists Dash/Zeal docset names (GitHub listings, Zeal's catalog
@@ -4697,6 +5079,14 @@ class DashCatalogTests(unittest.TestCase):
             self.net.pages[u] = shelf_devdocs.NetError(u, "blocked")
         self.main("sources", "python")
         self.assertEqual(self.net.fetched.count(shelf_dash.ZEAL_CATALOG_URL), 1)
+
+    def test_catalog_note_printed_once_per_command(self):
+        self.zeal_install()
+        for u in (shelf_dash.FEEDS_LIST_URL, shelf_dash.CONTRIB_LIST_URL):
+            self.net.pages[u] = shelf_devdocs.NetError(u, "blocked")
+        code, _out, err = self.main("sources", "python")
+        self.assertEqual(code, 0)
+        self.assertEqual(err.count("came from Zeal's catalog"), 1, err)
 
     def test_zeal_catalog_skips_malformed_entries(self):
         self.zeal_install()
@@ -5535,6 +5925,133 @@ class SuggestTests(unittest.TestCase):
         result = json.loads(r.stdout.splitlines()[0])["result"]
         self.assertFalse(result.get("isError"), result)
         self.assertIn('"docvols": ["flask"]', result["content"][0]["text"])
+
+
+class FinalReviewFixTests(unittest.TestCase):
+    """0.7.1 final review: regressions against 0.7.0 and cheap fixes."""
+
+    def setUp(self):
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        self.tmp = os.path.realpath(tmp.name)
+        self.cache = os.path.join(self.tmp, "cache")
+        self.docs = os.path.join(self.tmp, "docs")
+        self.env = {"HOME": self.tmp, "USERPROFILE": self.tmp,
+                    "DOCSHELF_CACHE_DIR": self.cache,
+                    "DOCSHELF_DOCSET_DIRS": self.docs,
+                    "DOCSHELF_NOTES_DIR": os.path.join(self.tmp, "notes")}
+
+    def cli(self, *args):
+        return run_cli(*args, env=self.env, cwd=self.tmp)
+
+    # 1. plistlib raises LookupError for a bogus encoding declaration
+    def test_bogus_plist_encoding_does_not_break_search(self):
+        bad = make_docset(self.docs, "Bad", [("zzz", "Module", "a.html")],
+                          {"a.html": "<h1>zzz</h1>"})
+        with open(os.path.join(bad, "Contents", "Info.plist"), "wb") as f:
+            f.write(b'<?xml version="1.0" encoding="UTF-o"?>\n<plist><dict>'
+                    b'<key>CFBundleName</key><string>X</string></dict></plist>')
+        make_docset(self.docs, "Good", [("zzz", "Module", "a.html")],
+                    {"a.html": "<h1>zzz</h1>"}, plist_name="Good")
+        r = self.cli("search", "zzz")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertNotIn("Traceback", r.stderr)
+        self.assertIn("zzz", r.stdout)
+        dv = shelf_dash.DashDocvol(bad, "dash", self.cache)
+        self.assertEqual(dv.title, "Bad")
+        self.assertIsNone(dv._index_page())
+
+    # 2. entry_count must not hide a missing or damaged index.json
+    def _with_count(self, slug, name):
+        folder = make_devdocs(self.cache, slug, name=name, release="5",
+                              entries=[("Guide", "Guide", "guide")],
+                              pages={"guide": "<p>hi</p>"})
+        mp = os.path.join(folder, "meta.json")
+        with open(mp, encoding="utf-8") as f:
+            meta = json.load(f)
+        meta["entry_count"] = 1
+        with open(mp, "w", encoding="utf-8") as f:
+            json.dump(meta, f)
+        return folder
+
+    def test_missing_index_json_is_skipped_with_warning(self):
+        folder = self._with_count("vite", "Vite")
+        self._with_count("vue", "Vue")
+        os.remove(os.path.join(folder, "index.json"))
+        r = self.cli("search", "Guide")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertIn("skipping", r.stderr)
+        self.assertNotIn("Traceback", r.stderr)
+        self.assertIn("vue", r.stdout)
+
+    def test_corrupt_index_json_is_a_clean_error(self):
+        folder = self._with_count("vite", "Vite")
+        for body in ('{"entries": [{"name": "x"}]}', "{not json"):
+            with open(os.path.join(folder, "index.json"), "w") as f:
+                f.write(body)
+            r = self.cli("search", "Guide", "-d", "vite")
+            self.assertEqual(r.returncode, 5, r.stderr)
+            self.assertNotIn("Traceback", r.stderr)
+            self.assertIn("vite", r.stderr)
+            self.assertIn("reinstall", r.stderr)
+
+    # 3. the WAL copy can vanish between opens of one DashDocvol
+    def test_deleted_wal_copy_is_recopied(self):
+        path = make_docset(self.docs, "Lib", [("os", "Module", "os.html")],
+                           {"os.html": "<h1>os</h1>"}, wal=True)
+        dv = shelf_dash.DashDocvol(path, "dash", self.cache)
+        self.assertEqual(len(dv.entries()), 1)
+        shutil.rmtree(os.path.join(dv.data_dir(), "index"))
+        dv._entries = None
+        self.assertEqual(len(dv.entries()), 1)
+        self.assertTrue(os.path.isfile(
+            os.path.join(dv.data_dir(), "index", "docSet.dsidx")))
+
+    # 5. SQLite leftovers of a killed fts build
+    def test_sweep_removes_old_sqlite_leftovers(self):
+        folder = os.path.join(self.tmp, "sw")
+        os.makedirs(folder)
+        names = ("a.tmp", "a.tmp-journal", "a.tmp-wal", "keep.sqlite")
+        for n in names:
+            with open(os.path.join(folder, n), "w") as f:
+                f.write("x")
+        fresh = os.path.join(folder, "new.tmp-wal")
+        with open(fresh, "w") as f:
+            f.write("x")
+        t = time.time() - 2 * 3600
+        for n in names:
+            os.utime(os.path.join(folder, n), (t, t))
+        shelf_core.sweep_stale_tmp(folder)
+        self.assertEqual(sorted(os.listdir(folder)), ["keep.sqlite", "new.tmp-wal"])
+
+    # 6. bad entry_count values fall back to counting
+    def test_bad_entry_count_types_fall_back_to_counting(self):
+        folder = make_devdocs(self.cache, "vite", name="Vite", release="5",
+                              entries=[("A", "T", "a"), ("B", "T", "b")],
+                              pages={"a": "x", "b": "y"})
+        mp = os.path.join(folder, "meta.json")
+        with open(mp, encoding="utf-8") as f:
+            meta = json.load(f)
+        for bad in ("2", True, -1, 2.0, None):
+            meta["entry_count"] = bad
+            with open(mp, "w", encoding="utf-8") as f:
+                json.dump(meta, f)
+            self.assertEqual(shelf_devdocs.DevDocsDocvol(folder).entry_count, 2, bad)
+
+    # 9. a link that climbs above the docset root gets no REF
+    def test_dash_link_above_root_gets_no_ref(self):
+        path = make_docset(self.docs, "Lib", [("os", "Module", "sub/os.html")],
+                           {"sub/os.html": "<h1>os</h1>", "x.html": "<h1>x</h1>"})
+        dv = shelf_dash.DashDocvol(path, "dash", self.cache)
+        self.assertIsNone(dv.resolve_href("sub/os.html", "../../x.html"))
+        self.assertIsNotNone(dv.resolve_href("sub/os.html", "../x.html"))
+
+    # 4. one umask helper
+    def test_notes_and_temp_share_the_umask_helper(self):
+        old = os.umask(0o027)
+        self.addCleanup(os.umask, old)
+        self.assertEqual(shelf_core.umask_mode(), 0o640)
+        self.assertEqual(shelf_notes._new_file_mode(), 0o640)
 
 
 if __name__ == "__main__":

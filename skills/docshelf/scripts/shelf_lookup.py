@@ -2,21 +2,22 @@
 import argparse
 import collections
 import contextlib
+import functools
 import json
 import os
 import pathlib
 import re
 import sqlite3
 import sys
-import tempfile
 import time
 from typing import Dict, List, Optional, Tuple
 
 import shelf_backends
+import shelf_dash
 import shelf_notes
 from shelf_render import (_print_lines, _page_title_line, page_title,
                           section_headings, section_lines, unquote_all)
-from shelf_core import (CLIError, Config, cap_lines, pick_docvol, rank,
+from shelf_core import (CLIError, Config, cap_lines, make_temp, pick_docvol, rank,
                         same_family_note, select_docvols, short_name, warn)
 
 FUZZY_SHOWN = 0  # fuzzy hits shown when exact, prefix or substring hits exist
@@ -301,7 +302,9 @@ def fts_path(ds) -> str:
 
 
 def fts_stamp(ds) -> str:
-    return "%s|fts%d" % (ds.stamp(), FTS_FORMAT)
+    # REPEAT_FORMAT is in the stamp on purpose (the indexed text follows the
+    # repeats): DevDocs indexes rebuild once on the 0.7.1 upgrade too.
+    return "%s|fts%d|repeats%d" % (ds.stamp(), FTS_FORMAT, shelf_dash.REPEAT_FORMAT)
 
 
 def _stored_stamp(db):
@@ -357,7 +360,7 @@ def build_fts(cfg, ds) -> int:
     db = fts_path(ds)
     try:
         os.makedirs(os.path.dirname(db), exist_ok=True)
-        fd, tmp = tempfile.mkstemp(dir=os.path.dirname(db), suffix=".tmp")
+        fd, tmp = make_temp(os.path.dirname(db))
         os.close(fd)  # sqlite opens it itself; the name is unique per build
     except OSError as e:
         raise CLIError("cannot write the index for %s in %s: %s (set "
@@ -425,18 +428,26 @@ def _query_tokens(query):
     return [t for t in query.split() if re.search(r"[^\W_]", t)]
 
 
+@functools.lru_cache(maxsize=8)
+def _match_terms(query) -> Tuple[str, ...]:
+    """The FTS5 term for each query word (cached: one build per query, however
+    many times the caller needs the expression)."""
+    terms = []
+    for tok in _query_tokens(query):
+        # punctuation around a word is no part of it (the text index drops it)
+        core = re.sub(r"^\W+|\W+$", "", tok)
+        forms = _ident_forms(core) if _IDENT_RE.fullmatch(core) else None
+        # plain words also try `ids`, which holds camelCase pieces
+        terms.append("(%s OR ids:%s)" % (
+            _quote(tok), _quote(forms[0] if forms else core.lower())))
+    return tuple(terms)
+
+
 def fts_match_expr(query, mode="all") -> str:
     """Quote each token as an FTS5 string (user text is data) and AND (or, for
     mode "any", OR) them. Identifier-like tokens also match the `ids` column
     by their joined form. Tokens with no letter or digit are dropped."""
-    terms = []
-    for tok in _query_tokens(query):
-        term = _quote(tok)
-        forms = _ident_forms(tok) if _IDENT_RE.fullmatch(tok) else None
-        # plain words also try `ids`, which holds camelCase pieces
-        term = "(%s OR ids:%s)" % (term, _quote(forms[0] if forms else tok.lower()))
-        terms.append(term)
-    return (" OR " if mode == "any" else " AND ").join(terms)
+    return (" OR " if mode == "any" else " AND ").join(_match_terms(query))
 
 
 def _snippet_phrases(snippet) -> List[str]:

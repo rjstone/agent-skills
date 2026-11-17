@@ -3,17 +3,69 @@ import json
 import os
 import re
 import sys
+import tempfile
+import time
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from typing import Dict, Iterator, List, Optional, Tuple
 from urllib.parse import unquote
 
-VERSION = "0.7.0"
+VERSION = "0.7.1"
 PROJECT_FILE = ".docshelf.json"
 
 
 def warn(msg: str) -> None:
     print("warning: " + msg, file=sys.stderr)
+
+
+STALE_TMP_SECONDS = 3600
+
+
+def sweep_stale_tmp(folder: str, max_age: float = STALE_TMP_SECONDS) -> None:
+    """Remove '*.tmp', '*.tmp-journal' and '*.tmp-wal' files in folder older
+    than max_age seconds (leftovers of a killed run, SQLite's included);
+    nothing else is touched. Errors are ignored."""
+    try:
+        names = os.listdir(folder)
+    except OSError:
+        return
+    now = time.time()
+    for n in names:
+        if not n.endswith((".tmp", ".tmp-journal", ".tmp-wal")):
+            continue
+        p = os.path.join(folder, n)
+        try:
+            if os.path.isfile(p) and now - os.path.getmtime(p) > max_age:
+                os.remove(p)
+        except OSError:
+            pass
+
+
+def umask_mode() -> int:
+    """The mode open() gives a new file: 0o666 minus the umask. Reading the
+    umask means setting it and restoring it, which is safe here: docshelf is
+    single-threaded."""
+    mask = os.umask(0)
+    os.umask(mask)
+    return 0o666 & ~mask
+
+
+def make_temp(folder: str, prefix: str = "", sweep: bool = True):
+    """tempfile.mkstemp(dir=folder, suffix='.tmp') with the permissions
+    open() would give (0o666 minus the umask), not mkstemp's 0600. With
+    sweep, old '*.tmp' files in folder are removed first. Returns (fd, path)."""
+    if sweep:
+        sweep_stale_tmp(folder)
+    fd, tmp = tempfile.mkstemp(dir=folder, prefix=prefix, suffix=".tmp")
+    try:
+        mode = umask_mode()
+        if hasattr(os, "fchmod"):
+            os.fchmod(fd, mode)
+        else:
+            os.chmod(tmp, mode)
+    except OSError:
+        pass
+    return fd, tmp
 
 
 class CLIError(Exception):
@@ -253,7 +305,7 @@ class Docvol(ABC):
             self._href_known = set(self.pages())
         for decode in (True, False):  # a page name may hold a literal %XX
             target, frag = resolve_doc_path(page, href, decode)
-            if target in self._href_known:
+            if target is not None and target in self._href_known:
                 return self.make_ref(target, frag)
         return None
 
@@ -279,7 +331,7 @@ def resolve_doc_path(page, href, decode=True):
     the docvol root; a '?query' is dropped and, with decode, each segment is
     percent-decoded (a decoded '/' splits it, so %2F and %2e%2e act like
     literal ones); returns (path, fragment or None). The fragment is
-    returned as written."""
+    returned as written. A '..' that climbs above the root gives path None."""
     rel, _, frag = href.partition("#")
     rel = rel.partition("?")[0]
     segments = [] if rel.startswith("/") else page.split("/")[:-1]
@@ -288,8 +340,9 @@ def resolve_doc_path(page, href, decode=True):
             if part in ("", "."):
                 continue
             if part == "..":
-                if segments:
-                    segments.pop()
+                if not segments:
+                    return None, frag or None
+                segments.pop()
             else:
                 segments.append(part)
     return "/".join(segments), frag or None
