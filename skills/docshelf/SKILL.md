@@ -6,7 +6,7 @@ license: MIT
 metadata:
   author: Robert Stone
   source: https://github.com/rjstone/agent-skills
-  version: "0.5.0"
+  version: "0.6.0"
   credits: "DevDocs, devdocs-mcp, Zeal"
 ---
 
@@ -59,6 +59,9 @@ User-contributed docsets carry their own licences.
 
 ## Read when needed
 
+- No AGENTS.md or CLAUDE.md (project or user) says which tool to use for
+  documentation lookups: [references/lookup-defaults.md](references/lookup-defaults.md),
+  once.
 - Docsets, their folders, REF forms or the message for step 3:
   [references/dash-zeal.md](references/dash-zeal.md).
 
@@ -91,7 +94,8 @@ User-contributed docsets carry their own licences.
 - Notes: write a lesson with `notes NAME --set HEADING --text TEXT` (or
   `--delete HEADING`); see [references/notes.md](references/notes.md).
 - Scope: a project `"docvols"` list in `.docshelf.json` limits searches to
-  those docvols. Without one, searches cover every installed docvol unless
+  those docvols. A project without one: run `suggest` and offer its list
+  to the user. Without a list, searches cover every installed docvol unless
   more than 4 are full-size; then (exit 4) narrow with `-d NAME`, set the
   list, or pass `--all`. The first `fts` on a docvol builds its index
   (seconds for large docvols); `index-text DOCVOL` builds it ahead.

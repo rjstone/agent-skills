@@ -27,6 +27,18 @@ user explicitly asks for the DevDocs copy. docshelf never installs, updates
 or removes docsets (see [dash-zeal.md](dash-zeal.md)); `sources` also lists
 docsets Dash or Zeal could download, when one of them is present.
 
+## Suggesting docvols for a project
+
+`python scripts/docshelf.py suggest` reads the project's build and version
+files (`package.json`, `pyproject.toml`, `requirements*.txt`,
+`CMakeLists.txt`, `Cargo.toml`, `go.mod`, `Gemfile`, `composer.json`,
+Dockerfiles, compose files, `.nvmrc` and similar) in the project root, its
+direct child folders and those of `packages/` and `apps/`. It uses no
+network: it matches them against installed docvols and the cached DevDocs
+list. Each line is `installed`, `docset` or `available` (`install` fetches
+it). It ends with a `"docvols": [...]` list to paste into `.docshelf.json`;
+it never writes that file.
+
 ## Sizes
 
 Some documentations are large (ansible is about 281 MB). Run `sources` first and
