@@ -75,7 +75,8 @@ items are done.
   - [ ] 6.13.12 Over MCP, hint lines in normal output still use CLI wording
         (`-d NAME picks one`, `raise --max-lines`, `show REF opens`);
         `explain()` runs only on error text, since rewriting output could
-        change quoted doc text.
+        change quoted doc text. This includes stderr notes such as the
+        catalog network note naming `assets/allowlist.txt`.
   - [ ] 6.13.18 A live temp older than one hour can be swept by a
         concurrent process (a long fts build or install).
   - [ ] 6.13.21 The `ids` term is useless for `printf(3)` / `vector<int>`
@@ -84,6 +85,16 @@ items are done.
         `index.json` with `entry_count`, or a damaged docset index) stops
         every search over all docvols; warn and skip it there instead (one
         helper for every multi-docvol loop; `-d NAME` still exits 5).
+  - [ ] 6.13.26 "zzz: no DevDocs documentation matches 'zzz'" repeats the
+        name after the new prefix.
+  - [ ] 6.13.27 Tests missing: meta.json untouched when `entry_count` is
+        present; the docset folder survives a family `remove`.
+  - [ ] 6.13.28 `make_temp` and install's meta.json write can raise a raw
+        OSError (not CacheError).
+  - [ ] 6.13.29 The catalog note order (after the list) and the
+        second-list failure path are untested.
+  - [ ] 6.13.30 The MCP tool schema reads `p.default` directly, a second
+        place that knows the default rule.
 
 #### Reference: other docset and DevDocs readers (skimmed 2026-11-17)
 
