@@ -3,6 +3,7 @@ import difflib
 import json
 import os
 import re
+import stat
 import sys
 import tempfile
 from typing import Dict, Iterable, List, Optional, Tuple
@@ -61,12 +62,30 @@ def parse_notes(text):
 
 
 def _read_notes(cfg, family):
+    """For display: (path, text or None); bad bytes show as U+FFFD."""
     path = notes_path(cfg, family)
     try:
         with open(path, encoding="utf-8", errors="replace") as f:
             return path, f.read()
     except OSError:
         return path, None
+
+
+def _read_notes_strict(path) -> Optional[str]:
+    """For a write: the text, None only when the file does not exist. Any
+    other read problem refuses the write, so no note is lost or altered."""
+    try:
+        with open(path, "rb") as f:
+            raw = f.read()
+    except FileNotFoundError:
+        return None
+    except OSError as e:
+        raise CLIError("cannot read %s: %s; not written" % (path, e), 2)
+    try:
+        return raw.decode("utf-8")
+    except UnicodeDecodeError as e:
+        raise CLIError("%s is not valid UTF-8 (%s); fix it in an editor; not written"
+                       % (path, e), 2)
 
 
 def _entry_hit(key, typ, name, entry_type):
@@ -295,6 +314,9 @@ def _target(lines, heading):
 
 def _check_heading(heading):
     heading = heading.strip()
+    m = _HEADING.match(heading)
+    if m:  # "## foo" names the section "foo"
+        heading = m.group(1)
     if not heading or "\n" in heading or "\r" in heading:
         raise CLIError("a notes heading must be one non-empty line", 2)
     return heading
@@ -344,8 +366,22 @@ def delete_section(text: str, heading: str) -> str:
     return _join(new) if end == len(lines) else "\n".join(new) + "\n"
 
 
+def _new_file_mode() -> int:
+    umask = os.umask(0)
+    os.umask(umask)
+    return 0o666 & ~umask
+
+
 def _write_notes(path, text):
+    # write beside the real file, so a symlinked notes file stays a symlink
+    path = os.path.realpath(path)
     d = os.path.dirname(path)
+    try:
+        mode = stat.S_IMODE(os.stat(path).st_mode)
+    except FileNotFoundError:
+        mode = _new_file_mode()
+    except OSError as e:
+        raise CLIError("cannot read %s: %s; not written" % (path, e), 2)
     try:
         os.makedirs(d, exist_ok=True)
         fd, tmp = tempfile.mkstemp(dir=d, suffix=".tmp")
@@ -353,6 +389,7 @@ def _write_notes(path, text):
         raise CLIError("cannot write %s: %s (set DOCSHELF_NOTES_DIR to a "
                        "writable folder)" % (path, e), 2)
     try:
+        os.chmod(tmp, mode)  # mkstemp makes it 0600; keep the file's mode
         with os.fdopen(fd, "w", encoding="utf-8", newline="\n") as f:
             f.write(text)
         os.replace(tmp, path)
@@ -396,6 +433,10 @@ def cmd_notes(cfg: Config, args) -> int:
     if family is None:
         family = pick_docvol(docvols, args.docvol).family
     path = notes_path(cfg, family)
+    writing = args.set is not None or args.delete is not None or args.text is not None
+    if args.path and writing:
+        raise CLIError("--path only prints the file path; use --set/--delete "
+                       "without --path to write", 2)
     if args.path:
         try:
             os.makedirs(os.path.dirname(path), exist_ok=True)
@@ -404,11 +445,11 @@ def cmd_notes(cfg: Config, args) -> int:
                            "a writable folder)" % (os.path.dirname(path), e), 2)
         print(path)
         return 0
-    _, text = _read_notes(cfg, family)
-    writing = args.set is not None or args.delete is not None or args.text is not None
     if writing:
-        text = _write_request(cfg, args, path, text)
+        text = _write_request(cfg, args, path, _read_notes_strict(path))
         args.check = True
+    else:
+        _, text = _read_notes(cfg, family)
     if text is None:
         print("notes file not present: %s" % path)
         return 0

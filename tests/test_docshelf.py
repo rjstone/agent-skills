@@ -10,6 +10,7 @@ import os
 import plistlib
 import shutil
 import sqlite3
+import stat
 import subprocess
 import sys
 import tempfile
@@ -2290,6 +2291,12 @@ class McpTests(unittest.TestCase):
         r = self.call("notes", {"docvol": "alpha", "delete": "nope"})
         self.assertTrue(r["isError"])
 
+    def test_notes_path_with_set_refused_over_mcp(self):
+        r = self.call("notes", {"docvol": "alpha", "path": True, "set": "x",
+                                "text": "y"})
+        self.assertTrue(r["isError"], r)
+        self.assertFalse(os.path.exists(os.path.join(self.tmp, "notes", "alpha.md")))
+
     def test_not_installed_docvol_names_the_install_tool(self):
         add_listed_only(self.cache, "duckdb", "DuckDB")
         r = self.call("search", {"query": ["x"], "docvols": ["duckdb"]})
@@ -2748,6 +2755,82 @@ class NotesWriteTests(unittest.TestCase):
         self.assertEqual(r.returncode, 2)
         self.assertIn("limit", r.stderr)
         self.assertEqual(self.read(), "## a\n1\n")
+
+    def test_invalid_utf8_refused_file_unchanged(self):
+        os.makedirs(self.notes, exist_ok=True)
+        raw = b"## a\ncaf\xe9\n\n## b\nkeep\n"
+        with open(self.file, "wb") as f:
+            f.write(raw)
+        for args in (["--set", "b", "--text", "new"], ["--delete", "b"]):
+            r = self.cli("notes", "python", *args)
+            self.assertEqual(r.returncode, 2, r.stdout + r.stderr)
+            self.assertIn("not valid UTF-8", r.stderr)
+            self.assertIn("not written", r.stderr)
+            with open(self.file, "rb") as f:
+                self.assertEqual(f.read(), raw)
+
+    def test_unreadable_notes_path_refused(self):
+        os.makedirs(self.file)  # a directory where the notes file should be
+        marker = os.path.join(self.file, "keep")
+        with open(marker, "w") as f:
+            f.write("x")
+        r = self.cli("notes", "python", "--set", "a", "--text", "b")
+        self.assertEqual(r.returncode, 2, r.stdout + r.stderr)
+        self.assertIn("cannot read", r.stderr)
+        self.assertIn("not written", r.stderr)
+        self.assertTrue(os.path.isdir(self.file))
+        self.assertTrue(os.path.exists(marker))
+
+    @unittest.skipUnless(hasattr(os, "symlink") and os.name == "posix",
+                         "symlinks need POSIX here")
+    def test_symlinked_notes_file_stays_symlink(self):
+        real_dir = os.path.join(self.tmp, "real")
+        os.makedirs(real_dir)
+        real = os.path.join(real_dir, "python.md")
+        with open(real, "w", encoding="utf-8") as f:
+            f.write("## a\n1\n")
+        os.makedirs(self.notes, exist_ok=True)
+        os.symlink(real, self.file)
+        r = self.cli("notes", "python", "--set", "b", "--text", "2")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertTrue(os.path.islink(self.file))
+        with open(real, encoding="utf-8") as f:
+            self.assertEqual(f.read(), "## a\n1\n\n## b\n2\n")
+        self.assertEqual([n for n in os.listdir(self.notes)], ["python.md"])
+
+    @unittest.skipUnless(os.name == "posix", "file modes are POSIX")
+    def test_write_keeps_file_mode(self):
+        self.put("## a\n1\n")
+        os.chmod(self.file, 0o644)
+        self.cli("notes", "python", "--set", "b", "--text", "2")
+        self.assertEqual(stat.S_IMODE(os.stat(self.file).st_mode), 0o644)
+        os.chmod(self.file, 0o640)
+        self.cli("notes", "python", "--set", "b", "--text", "3")
+        self.assertEqual(stat.S_IMODE(os.stat(self.file).st_mode), 0o640)
+
+    @unittest.skipUnless(os.name == "posix", "file modes are POSIX")
+    def test_new_file_mode_follows_umask(self):
+        old = os.umask(0o022)
+        self.addCleanup(os.umask, old)
+        self.cli("notes", "python", "--set", "a", "--text", "1")
+        self.assertEqual(stat.S_IMODE(os.stat(self.file).st_mode), 0o644)
+
+    def test_path_with_write_flags_exit_2(self):
+        self.put("## a\n1\n")
+        for args in (["--set", "b", "--text", "x"], ["--delete", "a"], ["--text", "x"]):
+            r = self.cli("notes", "python", "--path", *args)
+            self.assertEqual(r.returncode, 2, args)
+            self.assertIn("--path", r.stderr)
+            self.assertEqual(self.read(), "## a\n1\n")
+
+    def test_set_heading_with_hashes_stripped(self):
+        self.cli("notes", "python", "--set", "## foo", "--text", "x")
+        self.assertEqual(self.read(), "## foo\nx\n")
+        self.cli("notes", "python", "--set", "  ##  foo ", "--text", "y")
+        self.assertEqual(self.read(), "## foo\ny\n")
+        r = self.cli("notes", "python", "--delete", "## foo")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertEqual(self.read(), "")
 
     def test_crlf_text_and_file_stay_lf(self):
         self.put("## a\n1\n")
