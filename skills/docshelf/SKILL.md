@@ -96,7 +96,8 @@ User-contributed docsets carry their own licences.
   `--delete HEADING`); see [references/notes.md](references/notes.md).
 - Scope: a project `"docvols"` list in `.docshelf.json` limits searches to
   those docvols. No list: run `suggest` and offer its list to the user;
-  until one is set, searches cover every installed docvol unless more than 4 are full-size; then (exit 4) narrow with `-d NAME`, set the
+  until one is set, searches cover every installed docvol unless more
+  than 4 are full-size; then (exit 4) narrow with `-d NAME`, set the
   list, or pass `--all`. The first `fts` on a docvol builds its index
   (seconds for large docvols); `index-text DOCVOL` builds it ahead.
 
