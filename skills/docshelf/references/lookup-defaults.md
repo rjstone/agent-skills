@@ -6,10 +6,11 @@ is written down, so the question is asked once per project.
 
 ## Ask
 
-1. List the lookup tools you actually have: docshelf, documentation MCP
-   connectors (Context7, Microsoft Learn, ...), web search.
+1. Check which lookup tools you actually have: docshelf, documentation
+   MCP tools in your tool list (names like `context7`, `docs`, `learn`),
+   web search or fetch. Name only those; never a tool you don't have.
 2. Finish the lookup at hand with your best choice first; then ask the
-   user, naming those tools, which to use by default:
+   user, naming the tools from step 1, which to use by default:
    - docshelf by default,
    - another tool by default,
    - an order to try them in (only when there are two or more),

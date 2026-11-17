@@ -41,7 +41,8 @@ Do these before the first lookup, once per project:
    [references/lookup-defaults.md](references/lookup-defaults.md) now and
    follow it. It asks the user once and records the answer.
 2. No `"docvols"` list in a `.docshelf.json`: run `suggest` (not `list`)
-   and offer its list to the user.
+   and show the user its `"docvols"` line, offering to add it to
+   `.docshelf.json` (if you can't ask now, put the offer in your reply).
 
 The documentation comes from DevDocs (https://devdocs.io); docshelf is not
 affiliated with DevDocs, and each documentation keeps its own licence:
