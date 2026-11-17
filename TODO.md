@@ -57,6 +57,14 @@ items are done.
 - [ ] 5.2 Agent trials as dash-docset ran them (no-skill baseline, Haiku,
       the opencode model set, CLI vs `--mcp`), DevDocs and docsets
       (the user, 2026-11-16).
+  - Done 2026-11-17 (0.6.0, one Jinja task, DevDocs, CLI, default effort):
+    Haiku x3, Sonnet x1. All found `select_autoescape` and cited the REF.
+    After the "First lookup" steps moved near the top of SKILL.md, all ran
+    `suggest` and asked the lookup-defaults question; Sonnet also offered
+    the `"docvols"` list, Haiku sometimes skips that offer. Accepted: weaker
+    models may skip it (the user, 2026-11-17).
+  - Still open: no-skill baseline, the opencode model set, `--mcp`,
+    docsets.
 
 #### 6. Deferred review items
 
