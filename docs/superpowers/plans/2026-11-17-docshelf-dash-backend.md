@@ -287,3 +287,19 @@ A real Dash-format docset (HTTP reference, `ZTOKEN` index, WAL index,
 - Read-only: only the docset's `-shm` coordination file was touched by
   SQLite; its content files were unchanged.
 - No bug found.
+
+### Rerun after the final-review fixes (2026-11-17)
+
+Fresh copy of the same docset with `docSet.dsidx-shm` deleted, read through
+`DOCSHELF_DOCSET_DIRS` with an empty cache:
+
+- The docset folder was unchanged afterwards (every path, size and mtime
+  identical; no `-shm` created): the WAL index is read from a copy in the
+  cache.
+- `list`: 377 entries, small, source `folder`. `search GET` 0.09 s.
+- `show` on an entry: starts with the page's title line and heading; no
+  "Skip to" navigation lines (repeated header found at block 1).
+- `fts "Skip to search"`: one page, the keeper (the docset's index page).
+- First `fts` index build: about 5.5 s.
+- Seen in passing, not from this branch: piping `show` into `head` prints
+  `error: BrokenPipeError` (the CLI's catch-all handler, also on `main`).

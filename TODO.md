@@ -40,6 +40,9 @@
       `@madhan-g-p/devdocs-mcp-server` (npm). Non-MCP: dasht, and Zeal's
       `zeal python:pprint` (opens the GUI). These are also candidates for
       `references/dash-zeal.md`'s "check for an existing MCP server first".
+- [ ] `docshelf`: piping output into `head` (`show REF | head`) prints
+      `error: BrokenPipeError` from the CLI's catch-all handler; exit
+      quietly on a closed stdout instead.
 - [ ] `docshelf`: agent trials as dash-docset ran them (no-skill baseline,
       Haiku, the opencode model set, CLI vs `--mcp`): fine-tuning after v1
       (the user, 2026-11-16).
