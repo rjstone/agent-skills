@@ -31,6 +31,14 @@ sandboxes and CI, where no docsets exist, need nothing new.
    proceed.
 4. Before downloading a DevDocs documentation, check `list` for a docset
    of the same documentation; if there is one, use it instead.
+5. Always narrow searches to the subject: `-d FAMILY` (or an exact name)
+   or a project `"docvols"` list, not unscoped searches (the user,
+   2026-11-17).
+6. When several versions of one documentation are installed, pick the
+   one that fits the project. When `list` flags redundant documentation
+   (a DevDocs docvol and a docset of the same documentation), warn the
+   user and ask whether to remove the DevDocs copies. Never remove a
+   docset: Dash or Zeal manages it (the user, 2026-11-17).
 
 ## Goals
 
@@ -146,6 +154,8 @@ The TODO.md items, done before the Dash backend so both backends use them:
 - **Release:** the version Zeal records in the docset's `meta.json` when
   present; else empty.
 - **Size class:** the existing entry-count threshold (500), as for DevDocs.
+  Docsets count toward the unscoped-search limit like any docvol (the
+  user, 2026-11-17).
 - **Stamp:** size and mtime of `docSet.dsidx` and, when present,
   `tarix.tgz`, as dash-docset did, so derived files rebuild when Dash or
   Zeal updates the docset in place.
@@ -157,6 +167,26 @@ The TODO.md items, done before the Dash backend so both backends use them:
   A `page:` REF or link to any other file under `Documents/` (or in the
   tarix index) still opens, by a direct existence check, so link
   resolution doesn't need the full page list.
+
+### Scope and names across docvols (the user, 2026-11-17)
+
+- Unscoped searches: unchanged rule for every docvol, DevDocs or docset:
+  more than 4 full-size docvols in scope and no `-d`, project list or
+  `--all` exits 4. With many docvols the message lists families with a
+  count (`python (3), duckdb, love, ...`) instead of every name (my call:
+  with dozens of docvols a flat list floods the output).
+- A family name in `-d` or a project list selects every docvol of that
+  family (DevDocs and docsets, all versions); an exact docvol name selects
+  one. Today a family matching several docvols is an error; that changes
+  for DevDocs too (`-d python` with `python~3.11` and `python~3.12`).
+- When one search covers several docvols of the same family, the output
+  starts with one note line naming them and saying `-d NAME` picks one.
+- Redundancy: a DevDocs docvol and a docset of the same family, with the
+  same major.minor version or a docset version that is unknown, are
+  flagged in `list` (`also as docset Python_3` / `also as DevDocs
+  python~3.12`). My call on "same documentation": same family plus
+  matching or unknown version.
+- `remove` refuses docsets (see Commands).
 
 ### Where docsets are looked for
 
