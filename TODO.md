@@ -81,13 +81,6 @@ items are done.
         killed mid-build leaves a stray `*.tmp`.
   - [ ] 6.2.6 Every command parses each DevDocs docvol's `index.json` for
         `entry_count`; store the count in `meta.json` at install.
-- [ ] 6.3 MCP
-  - [ ] 6.3.1 Error text still says "(see: docshelf.py list)" and uses CLI
-        flag names.
-  - [ ] 6.3.2 `initialize` sends no "instructions".
-  - [ ] 6.3.3 `"id": null` is treated as a request.
-  - [ ] 6.3.4 Batch arrays are rejected while 2025-03-26 is advertised.
-  - [ ] 6.3.5 `_parser_defaults` reads argparse's private attributes.
 - [ ] 6.4 Docset reading (index, tarix)
   - [ ] 6.4.1 WAL stamps use whole-second mtimes; the stamp test only
         checks for "-".
@@ -183,6 +176,10 @@ items are done.
   - [ ] 6.13.11 `notes --set General` on an unheaded General after the
         title drops the blank line between them (`# T\ng2`); same family as
         the 6.9.1 spacing fix.
+  - [ ] 6.13.12 Over MCP, hint lines in normal output still use CLI wording
+        (`-d NAME picks one`, `raise --max-lines`, `show REF opens`);
+        `explain()` runs only on error text, since rewriting output could
+        change quoted doc text.
 
 #### Reference: other docset and DevDocs readers (skimmed 2026-11-17)
 

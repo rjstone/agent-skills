@@ -10,7 +10,11 @@ Tools: `search`, `show`, `fts`, `list`, `sources`, `install`, `remove` and
 `-d`). `notes` only reads (add `check: true` for the check report); write
 notes files directly. `where`, `update` and `index-text` are command line
 only. A tool result is the command's output; `isError` is true when the exit
-code is not 0.
+code is not 0. Error text names tools and their arguments, not command line
+flags.
+
+`initialize` returns short usage `instructions` for the tools. The server also
+accepts JSON-RPC batches (an array of messages) and answers with an array.
 
 The server runs in the folder the client starts it in, and finds a project's
 `.docshelf.json` from there. `DOCSHELF_CACHE_DIR` and `DOCSHELF_NOTES_DIR`

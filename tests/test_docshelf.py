@@ -2513,6 +2513,28 @@ class TypesTests(unittest.TestCase):
                          ["lib", "  2  Function", "  1  Class"])
 
 
+class ParamDefaultsTests(unittest.TestCase):
+    def test_param_defaults_match_argparse(self):
+        parser = shelf_cli.build_parser()
+        for c in shelf_cli.COMMANDS:
+            if not c.mcp:
+                continue
+            pos = [shelf_cli.param_dest(p) for p in c.params
+                   if not p.flags[0].startswith("-")]
+            ns = vars(parser.parse_args([c.name] + ["x"] * len(pos)))
+            for k in pos + ["help", "mcp", "command", "_command"]:
+                ns.pop(k, None)
+            got = shelf_cli.param_defaults(c)
+            for k in pos:
+                got.pop(k, None)
+            self.assertEqual(got, ns, c.name)
+
+    def test_param_defaults_is_a_copy(self):
+        c = next(c for c in shelf_cli.COMMANDS if c.mcp)
+        shelf_cli.param_defaults(c)["zzz"] = 1
+        self.assertNotIn("zzz", shelf_cli.param_defaults(c))
+
+
 class McpTests(unittest.TestCase):
     def setUp(self):
         tmp = tempfile.TemporaryDirectory()

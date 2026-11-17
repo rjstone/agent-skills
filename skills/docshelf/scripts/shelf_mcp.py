@@ -49,10 +49,7 @@ _POINTER = re.compile(
 
 
 def _dest(p: shelf_cli.Param) -> str:
-    if not p.flags[0].startswith("-"):
-        return p.flags[0]
-    long = [f for f in p.flags if f.startswith("--")] or list(p.flags)
-    return long[0].lstrip("-").replace("-", "_")
+    return shelf_cli.param_dest(p)
 
 
 def _prop_name(p: shelf_cli.Param) -> str:
@@ -187,10 +184,9 @@ def tool_schemas() -> List[dict]:
 
 
 def _parser_defaults(c: shelf_cli.Command) -> dict:
-    """Every dest the command's argparse parser defines, with its default, so
-    tools and the command line cannot drift apart."""
-    sub = shelf_cli.build_parser()._subparsers._group_actions[0].choices[c.name]
-    return {a.dest: a.default for a in sub._actions if a.dest != "help"}
+    """Every dest the command defines, with its default, so tools and the
+    command line cannot drift apart (tests compare with argparse)."""
+    return shelf_cli.param_defaults(c)
 
 
 def _build_namespace(c: shelf_cli.Command, arguments: dict) -> argparse.Namespace:
