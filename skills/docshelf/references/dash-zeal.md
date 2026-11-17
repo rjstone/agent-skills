@@ -46,10 +46,11 @@ searched in this order (the first docset of a name wins):
 
 ## Read-only
 
-docshelf never writes into a docset folder: it opens a docset's index
-read-only, and reads a WAL-mode index (one with a `docSet.dsidx-wal` file)
-from a copy in its cache, refreshed when the docset changes. Its own indexes
-and notes live in the cache and notes folders.
+docshelf never writes into a docset folder: it opens a docset's SQLite files
+(`docSet.dsidx`, `tarixIndex.db`) read-only, and reads a WAL-mode one (for
+example with a `-wal` file beside it) from a copy in its cache, refreshed
+when the docset changes. Its own indexes and notes live in the cache and
+notes folders.
 
 A header or footer that most pages of a docset repeat exactly (navigation
 such as "Skip to main content", a copyright line) is shown once, on one page

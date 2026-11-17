@@ -2979,6 +2979,40 @@ class DashTarixTests(unittest.TestCase):
                          "Lib:page:SUB/a.html#x")
         self.assertIsNone(self.dv.resolve_href("os.html", "nope.html"))
 
+    def test_wal_tarix_index_read_from_a_copy(self):
+        res = os.path.join(self.path, "Contents", "Resources")
+        idx = os.path.join(res, "tarixIndex.db")
+        work = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, work, ignore_errors=True)
+        shutil.copyfile(idx, os.path.join(work, "t.db"))
+        con = sqlite3.connect(os.path.join(work, "t.db"))
+        try:  # rows rewritten into the -wal, copied while the writer is open
+            con.execute("PRAGMA journal_mode=wal")
+            con.execute("PRAGMA wal_autocheckpoint=0")
+            con.execute("UPDATE tarindex SET hash = hash")
+            con.commit()
+            for suffix in ("", "-wal"):
+                shutil.copyfile(os.path.join(work, "t.db" + suffix), idx + suffix)
+        finally:
+            con.close()
+
+        def snapshot():
+            out = []
+            for dirpath, dirs, files in os.walk(self.path):
+                for n in dirs + files:
+                    p = os.path.join(dirpath, n)
+                    st = os.stat(p)
+                    out.append((os.path.relpath(p, self.path), st.st_size,
+                                st.st_mtime_ns))
+            return sorted(out)
+
+        before = snapshot()
+        dv = shelf_dash.DashDocvol(self.path, "dash", os.path.join(self.tmp, "cache"))
+        self.assertEqual(dv.page_html("sub/a.html"), "<p>a</p>")
+        self.assertEqual(dv.resolve_href("os.html", "sub/a.html"), "Lib:page:sub/a.html")
+        self.assertEqual(snapshot(), before)
+        self.assertTrue(os.path.isfile(os.path.join(dv.data_dir(), "tarix", "tarixIndex.db")))
+
     def test_corrupt_tarix_entry_exit_7(self):
         con = sqlite3.connect(os.path.join(
             self.path, "Contents", "Resources", "tarixIndex.db"))

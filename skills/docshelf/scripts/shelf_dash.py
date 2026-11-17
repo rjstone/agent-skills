@@ -91,6 +91,16 @@ def _open_ro(path: str) -> sqlite3.Connection:
     return sqlite3.connect(uri, uri=True)
 
 
+def _is_wal(path: str) -> bool:
+    """True for a WAL-mode SQLite file: a -wal file beside it, or header
+    bytes 18-19 (write/read version) equal to 2."""
+    if os.path.exists(path + "-wal"):
+        return True
+    with open(path, "rb") as f:
+        head = f.read(20)
+    return len(head) == 20 and 2 in (head[18], head[19])
+
+
 def _tables(con) -> set:
     return {r[0] for r in con.execute("SELECT name FROM sqlite_master WHERE type='table'")}
 
@@ -149,7 +159,7 @@ class DashDocvol(Docvol):
         self._pages: Optional[List[str]] = None
         self._repeats: Optional[Tuple[List[str], List[str], Optional[str]]] = None
         self._count: Optional[int] = None
-        self._copied = False
+        self._copied: set = set()  # data_dir() subfolders copied this run
         # Discovery reads no rows (counting or copying a big index on every
         # command is slow): only the header, to skip a file that is no SQLite.
         with open(self.index_file, "rb") as f:
@@ -160,36 +170,33 @@ class DashDocvol(Docvol):
         digest = hashlib.sha1(self.path.encode("utf-8")).hexdigest()[:8]
         return os.path.join(self.cache_dir, "docsets", "%s-%s" % (self.name, digest))
 
-    def _is_wal(self) -> bool:
-        """True for a WAL-mode index: header bytes 18-19 are 2, or a -wal
-        file sits beside it."""
-        if os.path.exists(self.index_file + "-wal"):
-            return True
-        with open(self.index_file, "rb") as f:
-            head = f.read(20)
-        return len(head) == 20 and 2 in (head[18], head[19])
-
-    def _index_copy(self) -> str:
-        """A copy of the WAL index (and its -wal) in data_dir()/index,
-        refreshed only when stamp() changes. Files are copied to temporary
-        names and moved into place, and the stamp is written last, so a crash
-        leaves no half copy that looks current."""
-        dest_dir = os.path.join(self.data_dir(), "index")
-        dest = os.path.join(dest_dir, "docSet.dsidx")
+    def _copy_if_wal(self, path: str, sub: str) -> str:
+        """path itself for a rollback-journal database. A WAL-mode one
+        (header bytes 18-19 are 2, or a -wal file beside it) is read from a
+        copy in data_dir()/sub instead, because SQLite writes a -shm file
+        beside any WAL database it reads, and docshelf never writes into a
+        docset. The copy (with the -wal) is refreshed only when stamp()
+        changes: files are copied to temporary names and moved into place,
+        and the stamp is written last, so a crash leaves no half copy that
+        looks current."""
+        if not _is_wal(path):
+            return path
+        dest_dir = os.path.join(self.data_dir(), sub)
+        dest = os.path.join(dest_dir, os.path.basename(path))
         stamp_file = os.path.join(dest_dir, "stamp")
         stamp = self.stamp()
-        if self._copied or (os.path.isfile(dest)
-                            and _load_json(stamp_file).get("stamp") == stamp):
+        if sub in self._copied or (os.path.isfile(dest)
+                                   and _load_json(stamp_file).get("stamp") == stamp):
             return dest
         os.makedirs(dest_dir, exist_ok=True)
         moves = []
         try:
             for suffix in ("", "-wal"):
-                if os.path.exists(self.index_file + suffix):
+                if os.path.exists(path + suffix):
                     fd, tmp = tempfile.mkstemp(dir=dest_dir, suffix=".tmp")
                     os.close(fd)
                     moves.append((tmp, dest + suffix))
-                    shutil.copyfile(self.index_file + suffix, tmp)
+                    shutil.copyfile(path + suffix, tmp)
             for old in (stamp_file, dest + "-wal", dest + "-shm"):
                 if os.path.exists(old):
                     os.remove(old)
@@ -200,17 +207,18 @@ class DashDocvol(Docvol):
                 if os.path.exists(tmp):
                     os.remove(tmp)
         _write_json(stamp_file, {"stamp": stamp})
-        self._copied = True
+        self._copied.add(sub)
         return dest
 
+    def _open_db(self, path: str, sub: str) -> sqlite3.Connection:
+        """Open a docset database: read-only in place, or (WAL mode) an
+        ordinary open of our own copy (see _copy_if_wal)."""
+        db = self._copy_if_wal(path, sub)
+        return sqlite3.connect(db) if db != path else _open_ro(path)
+
     def _connect(self) -> "_Conn":
-        """Open the index. A rollback-journal index is opened read-only in
-        place; a WAL index is read from a copy in data_dir() (an ordinary
-        open of our own copy), because SQLite writes a -shm file beside any
-        WAL database it reads, and docshelf never writes into a docset."""
-        if self._is_wal():
-            return _Conn(sqlite3.connect(self._index_copy()))
-        return _Conn(_open_ro(self.index_file))
+        """Open the index (docSet.dsidx); see _open_db."""
+        return _Conn(self._open_db(self.index_file, "index"))
 
     def _index_error(self, e: Exception) -> CLIError:
         return CLIError("cannot read the index of docset %s (%s): %s"
@@ -300,7 +308,7 @@ class DashDocvol(Docvol):
         if not (os.path.isfile(os.path.join(res, "tarix.tgz")) and os.path.isfile(idx)):
             return None
         try:
-            with _Conn(_open_ro(idx)) as con:
+            with _Conn(self._open_db(idx, "tarix")) as con:
                 row = con.execute("SELECT path FROM tarindex WHERE path LIKE "
                                   "'%.docset/%' LIMIT 1").fetchone()
                 if not row:
@@ -308,7 +316,7 @@ class DashDocvol(Docvol):
                 prefix = row[0][:row[0].index(".docset/") + len(".docset/")]
                 row = con.execute("SELECT hash FROM tarindex WHERE path = ?",
                                   (prefix + rel,)).fetchone()
-        except (sqlite3.Error, ValueError) as e:
+        except (sqlite3.Error, ValueError, OSError) as e:
             raise CLIError("tarix index error for %s: %s" % (rel, e), 7)
         return str(row[0]) if row and row[0] else None
 
@@ -464,8 +472,10 @@ class DashDocvol(Docvol):
 
     def stamp(self) -> str:
         parts = []
+        res = os.path.join(self.path, "Contents", "Resources")
+        tarix_index = os.path.join(res, "tarixIndex.db")
         for f in (self.index_file, self.index_file + "-wal",
-                  os.path.join(self.path, "Contents", "Resources", "tarix.tgz")):
+                  os.path.join(res, "tarix.tgz"), tarix_index, tarix_index + "-wal"):
             try:
                 st = os.stat(f)
                 parts.append("%d:%d" % (st.st_size, int(st.st_mtime)))

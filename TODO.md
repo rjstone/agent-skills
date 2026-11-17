@@ -103,8 +103,6 @@
     unclear note; unused loop variables in `cached_catalog_match`; no tests
     for catalog cache expiry, malformed JSON or the MCP text of the new
     NetError; a stale GitHub cache isn't reused when a refetch fails
-  - a WAL-mode `tarixIndex.db` would be opened in place (mode=ro
-    writes its -shm); copy it like `docSet.dsidx` if one turns up
   - the long first line of SKILL.md's body
 
 ## Automation
