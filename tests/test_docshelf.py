@@ -7258,6 +7258,7 @@ class NoShadowedTestCaseNamesTests(unittest.TestCase):
     every assertion that calls it."""
 
     ALLOWED = {"setUp", "tearDown", "setUpClass", "tearDownClass",
+               "maxDiff", "longMessage", "failureException",
                "run", "id", "shortDescription", "countTestCases",
                "defaultTestResult", "debug", "doCleanups",
                "addTypeEqualityFunc", "__init__", "__str__", "__repr__"}
