@@ -7,7 +7,8 @@ Status: design, for review (2026-11-17). Skill: `skills/docshelf/`
 ## Intent
 
 docshelf reads DevDocs documentations it downloads itself. Many users
-already have Dash (macOS) or Zeal (Linux, Windows, macOS) with docsets
+already have Dash (macOS, and Windows 10+ from the Microsoft Store) or Zeal
+(Linux, Windows, macOS) with docsets
 downloaded. docshelf should read those docsets in place, so an agent can
 look things up in them with the same commands and output as a DevDocs
 docvol, without downloading the same documentation again from DevDocs
@@ -194,6 +195,17 @@ The TODO.md items, done before the Dash backend so both backends use them:
 ### Where docsets are looked for
 
 - The discovery folders above, every run.
+- Dash for Windows (the user, 2026-11-17: Dash now has a Windows
+  version). It is a Microsoft Store app (kapeli.com/dash_windows: "Reads
+  any standard docset", Windows 10 or newer), so its data is under
+  `%LOCALAPPDATA%\Packages\<package>\`. Discovery looks in package
+  folders there whose name contains `Dash` and identifies Kapeli, and
+  finds `.docset` folders up to a few levels below; such a package folder
+  also counts as "Dash installed" for `where` and policy step 3.
+  **Unverified:** the package name and the folder layout under it; check
+  them against an installed Dash for Windows (the user's machine) before
+  release, and pin the exact path then. `DOCSHELF_DOCSET_DIRS` covers it
+  until then.
 - Plus `DOCSHELF_DOCSET_DIRS`: extra folders, separated by the OS path
   separator, searched first (they win name clashes). My call: one variable,
   like the other `DOCSHELF_*` settings; no config file.
