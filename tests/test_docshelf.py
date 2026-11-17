@@ -4232,6 +4232,89 @@ class DashTarixTests(unittest.TestCase):
         self.assertEqual(cm.exception.code, 7)
 
 
+class DashRobustnessTests(unittest.TestCase):
+    """0.7.1: id map built once, specific exceptions, tarix prefix cached."""
+
+    def setUp(self):
+        self.tmp = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, self.tmp, ignore_errors=True)
+        self.cache = os.path.join(self.tmp, "cache")
+
+    def _docset(self, tarix=False):
+        path = make_docset(self.tmp, "Lib",
+                           [("os", "Module", "os.html"), ("sys", "Module", "sys.html")],
+                           {"os.html": "<h1>os</h1>", "sys.html": "<h1>sys</h1>"})
+        if tarix:
+            make_tarix(path, {"os.html": b"<h1>os</h1>", "a.html": b"<p>a</p>",
+                              "b.html": b"<p>b</p>"})
+        return path
+
+    def test_resolve_builds_id_map_once(self):
+        dv = shelf_dash.DashDocvol(self._docset(), "dash", self.cache)
+        with mock.patch.object(dv, "entries", wraps=dv.entries) as spy:
+            for _ in range(3):
+                page, anchor, entry = dv.resolve("2")
+                self.assertEqual(page, "sys.html")
+                self.assertEqual(entry.name, "sys")
+            self.assertEqual(spy.call_count, 1)
+        with self.assertRaises(CLIError) as cm:
+            dv.resolve("99")
+        self.assertEqual(cm.exception.code, 5)
+
+    def test_malformed_info_plist_still_loads(self):
+        for n, body in enumerate((b"<plist><dict><key>x", b"not a plist at all",
+                     b"bplist00\x00garbage", b"", plistlib.dumps([1, 2]))):
+            path = make_docset(os.path.join(self.tmp, str(n)), "Lib",
+                               [("os", "Module", "os.html")], {"os.html": "x"})
+            with open(os.path.join(path, "Contents", "Info.plist"), "wb") as f:
+                f.write(body)
+            dv = shelf_dash.DashDocvol(path, "dash", self.cache)
+            self.assertEqual(dv.title, "Lib")
+            self.assertIsNone(dv._index_page())
+
+    def test_unexpected_plist_error_is_not_swallowed(self):
+        path = make_docset(self.tmp, "Lib", [("os", "Module", "os.html")],
+                           {"os.html": "x"}, plist_name="Lib")
+        with mock.patch.object(shelf_dash.plistlib, "load",
+                               side_effect=RuntimeError("boom")):
+            with self.assertRaises(RuntimeError):
+                shelf_dash.DashDocvol(path, "dash", self.cache)
+        dv = shelf_dash.DashDocvol(path, "dash", self.cache)
+        with mock.patch.object(shelf_dash.plistlib, "load",
+                               side_effect=RuntimeError("boom")):
+            with self.assertRaises(RuntimeError):
+                dv._index_page()
+
+    def test_tarix_prefix_probed_once(self):
+        dv = shelf_dash.DashDocvol(self._docset(tarix=True), "dash", self.cache)
+        statements = []
+        real = dv._open_db
+
+        def spy(path, sub):
+            con = real(path, sub)
+            con.set_trace_callback(statements.append)
+            return con
+        with mock.patch.object(dv, "_open_db", side_effect=spy):
+            for href in ("a.html", "b.html", "os.html", "nope.html"):
+                dv.resolve_href("os.html", href)
+        probes = [s for s in statements if "LIKE" in s]
+        self.assertEqual(len(probes), 1, statements)
+
+    def test_tarix_read_error_warns_once_per_docvol(self):
+        path = self._docset(tarix=True)
+        os.remove(os.path.join(path, "Contents", "Resources", "tarixIndex.db"))
+        with open(os.path.join(path, "Contents", "Resources", "tarixIndex.db"), "wb") as f:
+            f.write(b"SQLite format 3\x00" + b"\xff" * 200)
+        dv = shelf_dash.DashDocvol(path, "dash", self.cache)
+        err = io.StringIO()
+        with contextlib.redirect_stderr(err):
+            for href in ("a.html", "b.html", "os.html"):
+                self.assertIsNone(dv.resolve_href("os.html", href))
+        lines = [l for l in err.getvalue().splitlines() if l.strip()]
+        self.assertEqual(len(lines), 1, lines)
+        self.assertIn("tarix", lines[0])
+
+
 class DashDiscoveryTests(unittest.TestCase):
     ENTRIES = [("frobnicate", "Function", "api.html#frob")]
     PAGES = {"api.html": "<h1 id=\"frob\">frobnicate</h1><p>Frobs it.</p>"}

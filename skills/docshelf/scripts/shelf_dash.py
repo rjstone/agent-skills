@@ -13,6 +13,7 @@ import sys
 import tarfile
 import time
 import zlib
+from xml.parsers.expat import ExpatError
 from datetime import datetime
 from typing import List, NamedTuple, Optional, Tuple
 from urllib.parse import unquote, urlsplit
@@ -157,7 +158,9 @@ class DashDocvol(Docvol):
                 plist = plistlib.load(f)
             if isinstance(plist, dict) and plist.get("CFBundleName"):
                 self.title = str(plist["CFBundleName"])
-        except Exception:  # any unreadable plist (e.g. ExpatError): keep the name
+        except (OSError, ValueError, ExpatError):
+            # missing/unreadable file, binary plist error (InvalidFileException
+            # is a ValueError) or malformed XML (ExpatError): keep the name
             pass
         self.display_name = self.title
         meta = _load_json(os.path.join(self.path, "meta.json"))
@@ -170,6 +173,10 @@ class DashDocvol(Docvol):
         self._pages: Optional[List[str]] = None
         self._repeats: Optional[Repeats] = None
         self._count: Optional[int] = None
+        self._by_id: Optional[dict] = None  # ref -> Entry, built on first resolve
+        self._tarix_prefix: Optional[str] = None  # "<Name>.docset/", probed once
+        self._tarix_probed = False
+        self._tarix_warned = False
         self._copied: set = set()  # data_dir() subfolders copied this run
         # Discovery reads no rows (counting or copying a big index on every
         # command is slow): only the header, to skip a file that is no SQLite.
@@ -320,11 +327,16 @@ class DashDocvol(Docvol):
             return None
         try:
             with _Conn(self._open_db(idx, "tarix")) as con:
-                row = con.execute("SELECT path FROM tarindex WHERE path LIKE "
-                                  "'%.docset/%' LIMIT 1").fetchone()
-                if not row:
+                if not self._tarix_probed:
+                    row = con.execute("SELECT path FROM tarindex WHERE path LIKE "
+                                      "'%.docset/%' LIMIT 1").fetchone()
+                    if row:
+                        self._tarix_prefix = row[0][:row[0].index(".docset/")
+                                                    + len(".docset/")]
+                    self._tarix_probed = True
+                prefix = self._tarix_prefix
+                if prefix is None:
                     return None
-                prefix = row[0][:row[0].index(".docset/") + len(".docset/")]
                 row = con.execute("SELECT hash FROM tarindex WHERE path = ?",
                                   (prefix + rel,)).fetchone()
         except (sqlite3.Error, ValueError, OSError) as e:
@@ -376,7 +388,8 @@ class DashDocvol(Docvol):
         try:
             with open(os.path.join(self.path, "Contents", "Info.plist"), "rb") as f:
                 value = plistlib.load(f).get("dashIndexFilePath")
-        except Exception:  # unreadable or malformed plist: no index page
+        except (OSError, ValueError, ExpatError, AttributeError):
+            # unreadable or malformed plist, or a plist that is no dict: no index page
             return None
         return entry_location(value)[0] if isinstance(value, str) and value else None
 
@@ -472,16 +485,22 @@ class DashDocvol(Docvol):
         except CLIError:
             try:
                 return self._tarix_row(self._tarix_rel(target)) is not None
-            except CLIError:
+            except CLIError as e:
+                if e.code == 7 and not self._tarix_warned:  # unreadable archive
+                    self._tarix_warned = True
+                    warn("%s: links not resolved, %s" % (self.name, e))
                 return False
         return True
 
     def resolve(self, rest: str) -> Tuple[str, Optional[str], Optional[Entry]]:
         if rest.isascii() and rest.isdecimal():
-            ref = "%s:%s" % (self.name, int(rest))
-            for e in self.entries():
-                if e.ref == ref:
-                    return e.page, e.anchor, e
+            if self._by_id is None:
+                self._by_id = {}
+                for e in self.entries():
+                    self._by_id.setdefault(e.ref, e)  # first wins, as a scan did
+            e = self._by_id.get("%s:%s" % (self.name, int(rest)))
+            if e is not None:
+                return e.page, e.anchor, e
             raise CLIError("no entry %s in %s" % (rest, self.name), 5)
         if rest.startswith("page:") and len(rest) > 5:
             path, _, anchor = rest[5:].partition("#")
