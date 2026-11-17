@@ -24,9 +24,10 @@ INSTRUCTIONS = (
     "prints REFs (docvol:path#anchor); pass one to `show` to read it. When "
     "names don't match, `fts` searches the words in page text (include the "
     "function name). `toc` lists a long page's headings; `show` a REF from "
-    "it, or use `grep` to see only matching lines. Narrow searches with "
-    "`docvols`; `suggest` proposes a project's docvols. Run `list` to see "
-    "what is installed. Record lessons with `notes`."
+    "it, or pass `grep` to `show` to see only matching lines. Narrow "
+    "searches with `docvols`; `suggest` proposes a project's docvols. Run "
+    "`list` to see what is installed; `sources` finds documentation to "
+    "`install`. Record lessons with `notes`."
 )
 
 # One-line fixes that replace a "references/X.md" (or assets/) pointer in an
@@ -134,12 +135,12 @@ def _rewrite(message: str) -> str:
 
     def with_flag(m):  # install --force alpha
         rest = m.group(3)
-        if rest and rest in message[:m.start()]:
+        if rest and rest in re.split(r"[\s(),;:]+", message[:m.start()]):
             rest = None  # a value already named earlier in the message
         return "the `%s` tool with `%s`%s" % (
             m.group(1), flag_name(m.group(2)), " " + rest if rest else "")
 
-    message = re.sub(r"\b(%s) (--[a-z][\w-]*)(?: ([^\s-]\w*))?" % alt,
+    message = re.sub(r"\b(%s) (--[a-z][\w-]*)(?: ([^\s)-][^\s)]*))?" % alt,
                      with_flag, message)
     message = re.sub(r"\b(%s) [A-Z]{2,}(?:\.\.\.)?\b" % alt,
                      lambda m: "the `%s` tool" % m.group(1), message)
@@ -283,9 +284,12 @@ def handle(msg: Any) -> Optional[dict]:
     """Reply to one decoded message, or None (a notification)."""
     if not isinstance(msg, dict) or not isinstance(msg.get("method"), str):
         id_ = msg.get("id") if isinstance(msg, dict) else None
-        return _error(id_ if isinstance(id_, (str, int)) else None,
+        return _error(id_ if isinstance(id_, (str, int))
+                      and not isinstance(id_, bool) else None,
                       -32600, "invalid request")
-    if "id" in msg and msg["id"] is None:  # MCP forbids a null request id
+    if "id" in msg and (isinstance(msg["id"], bool)
+                        or not isinstance(msg["id"], (str, int))):
+        # MCP forbids a null id; JSON-RPC ids are strings or integers here
         return _error(None, -32600, "invalid request")
     if "id" not in msg:
         return None

@@ -8,6 +8,7 @@ import io
 import json
 import os
 import plistlib
+import re
 import shutil
 import sqlite3
 import stat
@@ -2620,6 +2621,24 @@ class McpTests(unittest.TestCase):
         for word in ("search", "show", "fts", "toc", "docvols"):
             self.assertIn(word, text)
         self.assertNotIn("docshelf.py", text)
+        self.assertIn("`sources`", text)
+        self.assertIn("`install`", text)
+        tools = {t["name"]: t for t in self.rpc("tools/list")["result"]["tools"]}
+        args = set()
+        for t in tools.values():
+            args.update(t["inputSchema"]["properties"])
+        for word in set(re.findall(r"`(\w+)`", text)):
+            self.assertTrue(word in tools or word in args, word)
+        self.assertNotIn("use `grep`", text)
+
+    def test_non_scalar_ids_are_invalid_request(self):
+        for bad in ("true", "1.5", '{"a": 1}', "[1]"):
+            r = self.send_raw('{"jsonrpc": "2.0", "id": %s, "method": "ping"}' % bad)
+            self.assertIsNone(r["id"], bad)
+            self.assertEqual(r["error"]["code"], -32600, bad)
+        for good in ("7", '"x"'):
+            r = self.send_raw('{"jsonrpc": "2.0", "id": %s, "method": "ping"}' % good)
+            self.assertEqual(r["result"], {})
 
     def test_null_id_is_invalid_request(self):
         r = self.send_raw('{"jsonrpc": "2.0", "id": null, "method": "ping"}')
@@ -2818,6 +2837,17 @@ class McpExplainTests(unittest.TestCase):
         self.assert_clean(out)
         self.assertIn("the `sources` tool lists the names", out)
         self.assertNotIn("QUERY", out)
+
+    def test_force_value_with_tilde_slug(self):
+        out = self.explain("python~3.12: skipped, x; install --force "
+                           "python~3.12 downloads it anyway")
+        self.assertNotIn("~3.12 downloads", out.split("; ", 1)[1].replace(
+            "python~3.12", ""))
+        self.assertIn("the `install` tool with `force` downloads it anyway", out)
+
+    def test_force_value_short_slug_not_dropped_by_substring(self):
+        out = self.explain("banana: skipped; install --force a downloads it")
+        self.assertIn("the `install` tool with `force` a downloads it", out)
 
     def test_install_command_with_argument(self):
         out = self.explain("reinstall with: docshelf.py install alpha")

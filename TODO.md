@@ -180,6 +180,15 @@ items are done.
         (`-d NAME picks one`, `raise --max-lines`, `show REF opens`);
         `explain()` runs only on error text, since rewriting output could
         change quoted doc text.
+  - [ ] 6.13.13 Tool schema descriptions still name CLI flags (`notes`
+        `set`: "needs --text", `text`: "for --set").
+  - [ ] 6.13.14 `explain()` tests: an apostrophe in our own text, an
+        unbalanced quote, a hyphenated REF.
+  - [ ] 6.13.15 MCP tests: a nested-array batch element, an all-invalid
+        batch, a parse error on an array line.
+  - [ ] 6.13.16 A permanent `tools/list` regression test.
+  - [ ] 6.13.17 `param_defaults` restates `_add_param`'s default rule; share
+        a helper.
 
 #### Reference: other docset and DevDocs readers (skimmed 2026-11-17)
 
