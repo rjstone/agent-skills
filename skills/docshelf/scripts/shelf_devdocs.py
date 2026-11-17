@@ -265,9 +265,14 @@ class NetError(CLIError):
             "in assets/allowlist.txt in the skill folder." % (host, reason), 7)
 
 
+class CacheError(CLIError):
+    """The cache can't be written (exit code 2): the same for every name, so
+    a loop over names stops at the first."""
+
+
 def _write_error(path: str, e: OSError) -> CLIError:
-    return CLIError("cannot write %s: %s (check free disk space and that "
-                    "DOCSHELF_CACHE_DIR is a writable folder)" % (path, e), 2)
+    return CacheError("cannot write %s: %s (check free disk space and that "
+                      "DOCSHELF_CACHE_DIR is a writable folder)" % (path, e), 2)
 
 
 def fetch(url: str, dest: Optional[str] = None) -> bytes:
@@ -434,6 +439,24 @@ def _documents_host() -> str:
     return urlsplit(DOCUMENTS_BASE).hostname or DOCUMENTS_BASE
 
 
+def _add_entry_count(folder: str, meta: dict) -> None:
+    """Best effort: write entry_count into folder's meta.json."""
+    tmp = None
+    try:
+        idx = _load(os.path.join(folder, "index.json"))
+        meta = dict(meta, entry_count=len(idx["entries"]))
+        fd, tmp = make_temp(folder, prefix="meta.json.", sweep=False)
+        with os.fdopen(fd, "w", encoding="utf-8") as f:
+            json.dump(meta, f, ensure_ascii=False)
+        os.replace(tmp, os.path.join(folder, "meta.json"))
+        tmp = None
+    except (OSError, ValueError, KeyError, TypeError, AttributeError):
+        pass  # the count is read from index.json when absent
+    finally:
+        if tmp:
+            _discard(tmp)
+
+
 def install(cfg: Config, row: dict) -> str:
     """Download row's documentation: 'installed', 'updated' or 'up to date'."""
     slug = row["slug"]
@@ -448,6 +471,8 @@ def install(cfg: Config, row: dict) -> str:
         if (int(old.get("mtime") or 0) >= int(row.get("mtime") or 0)
                 and os.path.isfile(os.path.join(folder, "index.json"))
                 and os.path.isfile(os.path.join(folder, "db.json"))):
+            if "entry_count" not in old:  # from before 0.7.0: add it, no download
+                _add_entry_count(folder, old)
             return "up to date"
     except (OSError, ValueError, AttributeError, TypeError):
         pass
@@ -455,8 +480,8 @@ def install(cfg: Config, row: dict) -> str:
     try:
         os.makedirs(folder, exist_ok=True)
     except OSError as e:
-        raise CLIError("cannot create %s: %s (set DOCSHELF_CACHE_DIR to a "
-                       "writable folder)" % (folder, e), 2)
+        raise CacheError("cannot create %s: %s (set DOCSHELF_CACHE_DIR to a "
+                         "writable folder)" % (folder, e), 2)
     names = ("index.json", "db.json", "meta.json")
     tmps = {}
     pindex = None
@@ -522,17 +547,16 @@ def cmd_sources(cfg, args) -> int:
     rows = get_manifest(cfg, args.refresh)
     words = [w.lower() for w in args.query]
     have = {d.name for d in installed_docvols(cfg)}
-    hits = [r for r in rows
-            if all(w in r["slug"].lower() or w in str(r.get("name", "")).lower()
-                   for w in words)]
-    hits.sort(key=lambda r: (len(r["slug"]), r["slug"]))
     seen = set()
     unique = []
-    for r in hits:  # a slug twice in the list: the first row, as in install
+    for r in rows:  # a slug twice in the list: the first row, as in install
         if r["slug"] not in seen:
             seen.add(r["slug"])
             unique.append(r)
-    hits = unique
+    hits = [r for r in unique
+            if all(w in r["slug"].lower() or w in str(r.get("name", "")).lower()
+                   for w in words)]
+    hits.sort(key=lambda r: (len(r["slug"]), r["slug"]))
     for r in hits[:30]:
         print("%s  %s  %s  %.1f MB%s" % (
             r["slug"], r.get("name", ""), r.get("release", ""),
@@ -618,10 +642,12 @@ def _installed_note(cfg: Config, name: str) -> Optional[str]:
     return None
 
 
-def _each(items, action) -> int:
+def _each(items, action, label=str) -> int:
     """Run action on each item, printing the line it returns; a Redundant is
-    a skip note. Every failure is kept, and one CLIError joins them all (one
-    per line) with the first failure's code once all items have run."""
+    a skip note. Every failure is kept (its line starts with "<label>: ")
+    and one CLIError joins them all (one per line) with the first failure's
+    code once all items have run; a CacheError stops the loop, as it would
+    repeat for every item."""
     failures = []
     for item in items:
         try:
@@ -630,7 +656,13 @@ def _each(items, action) -> int:
             print(str(e), file=sys.stderr)  # a skip, not a failure
             continue
         except CLIError as e:
+            name = label(item)
+            stop = isinstance(e, CacheError)
+            if not str(e).startswith(name + ": "):
+                e = CLIError("%s: %s" % (name, e), e.code)
             failures.append(e)
+            if stop:
+                break
             continue
         if line:
             print(line)
@@ -648,6 +680,7 @@ def cmd_install(cfg, args) -> int:
             raise CLIError('install needs NAME (or a "docvols" list in '
                            '.docshelf.json)', 2)
     rows = get_manifest(cfg)
+    slugs = {}  # a typed name -> the slug it resolved to, for failure lines
 
     def one(name: str) -> Optional[str]:
         if from_project:
@@ -655,10 +688,11 @@ def cmd_install(cfg, args) -> int:
             if note:
                 return note
         row = resolve_install(rows, name)
+        slugs[name] = row["slug"]
         if not getattr(args, "force", False):
             _refuse_redundant(cfg, row)
         return _describe(cfg, install(cfg, row), row["slug"])
-    return _each(names, one)
+    return _each(names, one, lambda n: slugs.get(n, n))
 
 
 def cmd_update(cfg, args) -> int:
@@ -693,7 +727,7 @@ def cmd_update(cfg, args) -> int:
             raise NotOnDevDocs(e.slug, "DevDocs no longer has documents for "
                                "%s (HTTP 404 from %s); the installed copy is "
                                "kept" % (e.slug, _documents_host()))
-    return _each(targets, one)
+    return _each(targets, one, lambda d: d.name)
 
 
 def cmd_remove(cfg, args) -> int:

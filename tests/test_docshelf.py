@@ -2034,6 +2034,97 @@ def row(name, slug, release, mtime=1700000000, version="", alias=None,
             "db_size": db_size, "attribution": "", "alias": alias, "links": {}}
 
 
+class FetchLoopbackTests(unittest.TestCase):
+    """The real fetch() against a loopback http.server (6.2.2)."""
+
+    def setUp(self):
+        import http.server
+        test = self
+        self.seen = []
+
+        class Handler(http.server.BaseHTTPRequestHandler):
+            def log_message(self, *a):
+                pass
+
+            def do_GET(self):
+                test.seen.append((self.path, self.headers.get("User-Agent")))
+                if self.path == "/redirect":
+                    self.send_response(302)
+                    self.send_header("Location", "/ok")
+                    self.send_header("Content-Length", "0")
+                    self.end_headers()
+                    return
+                code = {"/missing": 404, "/boom": 500}.get(self.path, 200)
+                body = b"hello" * 40000 if code == 200 else b"nope"
+                self.send_response(code)
+                self.send_header("Content-Length", str(len(body)))
+                self.end_headers()
+                self.wfile.write(body)
+
+        self.server = http.server.ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+        self.server.daemon_threads = True
+        self.base = "http://127.0.0.1:%d" % self.server.server_address[1]
+        thread = threading.Thread(target=self.server.serve_forever, daemon=True)
+        thread.start()
+
+        def stop():
+            self.server.shutdown()
+            self.server.server_close()
+            thread.join(10)
+        self.addCleanup(stop)
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        self.tmp = tmp.name
+        env = mock.patch.dict(os.environ, {"NO_PROXY": "127.0.0.1",
+                                           "no_proxy": "127.0.0.1"})
+        env.start()
+        self.addCleanup(env.stop)
+        for k in [k for k in os.environ if k.lower().endswith("_proxy")
+                  and k.lower() != "no_proxy"]:
+            del os.environ[k]
+
+    def test_body_and_user_agent(self):
+        data = shelf_devdocs.fetch(self.base + "/ok")
+        self.assertEqual(data, b"hello" * 40000)
+        self.assertEqual(self.seen, [("/ok", shelf_devdocs.USER_AGENT)])
+        self.assertTrue(shelf_devdocs.USER_AGENT.startswith("docshelf/"))
+
+    def test_redirect_followed(self):
+        self.assertEqual(shelf_devdocs.fetch(self.base + "/redirect"),
+                         b"hello" * 40000)
+        self.assertEqual([p for p, _ in self.seen], ["/redirect", "/ok"])
+        self.assertTrue(all(ua == shelf_devdocs.USER_AGENT
+                            for _, ua in self.seen))
+
+    def test_dest_streams_to_file(self):
+        dest = os.path.join(self.tmp, "out.bin")
+        self.assertEqual(shelf_devdocs.fetch(self.base + "/ok", dest), b"")
+        with open(dest, "rb") as f:
+            self.assertEqual(f.read(), b"hello" * 40000)
+
+    def test_404_is_net_error_with_status(self):
+        with self.assertRaises(shelf_devdocs.NetError) as c:
+            shelf_devdocs.fetch(self.base + "/missing")
+        self.assertEqual((c.exception.status, c.exception.code), (404, 7))
+        self.assertIn("HTTP 404", str(c.exception))
+
+    def test_500_is_net_error(self):
+        with self.assertRaises(shelf_devdocs.NetError) as c:
+            shelf_devdocs.fetch(self.base + "/boom")
+        self.assertEqual((c.exception.status, c.exception.code), (500, 7))
+
+    def test_connection_refused_is_net_error(self):
+        import socket
+        s = socket.socket()
+        s.bind(("127.0.0.1", 0))
+        port = s.getsockname()[1]
+        s.close()  # nothing listens here now
+        with self.assertRaises(shelf_devdocs.NetError) as c:
+            shelf_devdocs.fetch("http://127.0.0.1:%d/x" % port)
+        self.assertIsNone(c.exception.status)
+        self.assertEqual(c.exception.code, 7)
+
+
 class NetworkTests(unittest.TestCase):
     def setUp(self):
         tmp = tempfile.TemporaryDirectory()
@@ -2268,6 +2359,81 @@ class NetworkTests(unittest.TestCase):
         self.assertIn("zzz", err)
         self.assertIn("documents.devdocs.io", err)
         self.assertIn("installed python~3.14", out)
+
+    def test_failure_lines_name_their_docvol(self):
+        url = "%s/node/db.json" % shelf_devdocs.DOCUMENTS_BASE
+        self.net.pages[url] = shelf_devdocs.NetError(url, "connection reset")
+        code, _, err = self.main("install", "python~3.14", "node")
+        self.assertEqual(code, 7)
+        self.assertTrue(err.startswith("node: cannot reach"), err)
+        code, _, err = self.main("install", "zzz")
+        self.assertTrue(err.startswith("zzz: no DevDocs"), err)
+        # already named: no second prefix
+        del self.net.pages["%s/python~3.15/index.json"
+                           % shelf_devdocs.DOCUMENTS_BASE]
+        code, _, err = self.main("install", "py")
+        self.assertEqual(code, 5)
+        self.assertTrue(err.startswith("python~3.15: documentation not "
+                                       "found"), err)
+
+    def test_update_failure_line_names_its_docvol(self):
+        self.main("install", "node", "python~3.14")
+        self.newer_manifest()
+        url = "%s/python~3.14/db.json" % shelf_devdocs.DOCUMENTS_BASE
+        self.net.pages[url] = shelf_devdocs.NetError(url, "boom")
+        code, _, err = self.main("update")
+        self.assertEqual(code, 7)
+        self.assertTrue(err.startswith("python~3.14: cannot reach"), err)
+
+    def test_install_404_leaves_no_folder(self):
+        del self.net.pages["%s/python~3.15/db.json"
+                           % shelf_devdocs.DOCUMENTS_BASE]
+        code, _, err = self.main("install", "python~3.15")
+        self.assertEqual(code, 5)
+        self.assertEqual(sorted(os.listdir(self.root)), ["docs.json"])
+
+    def test_unwritable_cache_stops_after_the_first_name(self):
+        self.write_manifest(self.rows)
+        for slug in ("node", "python~3.14"):  # folders that can't be made
+            with open(os.path.join(self.root, slug), "w") as f:
+                f.write("a file")
+        code, out, err = self.main("install", "node", "python~3.14")
+        self.assertEqual(code, 2)
+        self.assertEqual(err.count("DOCSHELF_CACHE_DIR"), 1, err)
+        self.assertIn("node", err)
+        self.assertNotIn("python~3.14", err)
+
+    def test_per_name_exit_2_does_not_stop_the_loop(self):
+        self.write_manifest([row("Evil", "../x", "1")] + self.rows)
+        code, out, err = self.main("install", "../x", "node")
+        self.assertEqual(code, 2)
+        self.assertIn("installed node", out)
+
+    def test_up_to_date_install_adds_entry_count(self):
+        self.main("install", "python~3.14")
+        path = os.path.join(self.root, "python~3.14", "meta.json")
+        meta = self.meta("python~3.14")
+        del meta["entry_count"]
+        with open(path, "w", encoding="utf-8") as f:
+            json.dump(meta, f)
+        before = len(self.net.fetched)
+        code, out, err = self.main("install", "python~3.14")
+        self.assertEqual((code, err), (0, ""))
+        self.assertTrue(out.startswith("up to date python~3.14"), out)
+        self.assertEqual(len(self.net.fetched), before)  # no download
+        self.assertEqual(self.meta("python~3.14")["entry_count"], 2)
+        self.assertEqual(self.meta("python~3.14")["installedAt"],
+                         meta["installedAt"])
+        self.assertEqual([f for f in os.listdir(os.path.dirname(path))
+                          if f.endswith(".tmp")], [])
+
+    def test_sources_dedupes_before_filtering(self):
+        dup = dict(self.rows[0], name="Zebra")  # same slug, later row
+        self.write_manifest(self.rows + [dup])
+        code, out, _ = self.main("sources", "zebra")
+        self.assertEqual(code, 0)
+        self.assertIn("no DevDocs documentation matches zebra", out)
+        self.assertNotIn("python~3.15", out)
 
     def newer_manifest(self):
         newer = [dict(r, mtime=1800000000) for r in self.rows]
@@ -4756,6 +4922,25 @@ class InstallProjectListTests(unittest.TestCase):
         self.assertEqual((code, err), (0, ""))
         self.assertEqual(out, "http: Dash/Zeal docset HTTP, "
                               "not installed from DevDocs\n")
+        self.assertEqual(self.net.fetched, [shelf_devdocs.MANIFEST_URL])
+        self.assertEqual(self.have(), ["docs.json"])  # only the manifest
+
+    def test_mcp_install_without_arguments_uses_the_project_list(self):
+        import shelf_mcp
+        self.project(["lua"])
+        r = shelf_mcp.call_tool("install", {})
+        self.assertFalse(r.get("isError"), r)
+        self.assertIn("installed lua~5.4", r["content"][0]["text"])
+        self.assertIn("lua~5.4", self.have())
+
+    def test_mcp_install_without_arguments_or_list_is_an_error(self):
+        import shelf_mcp
+        r = shelf_mcp.call_tool("install", {})
+        self.assertTrue(r["isError"])
+        text = r["content"][0]["text"]
+        self.assertIn("the `install` tool needs `names`", text)
+        self.assertNotIn("docshelf.py", text)
+        self.assertEqual(self.net.fetched, [])
 
     def test_install_project_list_unknown_name_continues(self):
         self.project(["nosuchdoc", "lua"])
@@ -4837,6 +5022,28 @@ class DashReadOnlyTests(unittest.TestCase):
         code, out, err = self.main("install", "python~3.12", "--force")
         self.assertEqual((code, err), (0, ""))
         self.assertTrue(out.startswith("installed python~3.12"), out)
+
+    def test_redundant_skip_then_failure_exits_with_the_failure(self):
+        self.docset()
+        code, out, err = self.main("install", "python~3.12", "nosuchdoc",
+                                   "python~3.11")
+        self.assertEqual(code, 5, (out, err))
+        self.assertIn("skipped, Dash/Zeal docset", err)
+        self.assertIn("nosuchdoc: no DevDocs documentation", err)
+        self.assertTrue(out.startswith("installed python~3.11"), out)
+
+    def test_remove_and_update_family_matching_docvol_and_docset(self):
+        self.docset()
+        self.assertEqual(self.main("install", "python~3.11")[0], 0)
+        folder = os.path.join(self.cache, "devdocs", "python~3.11")
+        for cmd in ("remove", "update"):
+            code, out, err = self.main(cmd, "python")
+            self.assertEqual(code, 2, (cmd, out, err))
+            self.assertIn("python matches ", err)
+            self.assertIn("Python_3", err)
+            self.assertIn("python~3.11", err)
+            self.assertIn("give one", err)
+            self.assertTrue(os.path.isdir(folder))
 
     def test_install_other_version_is_not_redundant(self):
         self.docset()
@@ -5734,6 +5941,16 @@ class SuggestTests(unittest.TestCase):
         # the user, 2026-11-17: code for the minimum must work there
         self.listed(row("Django", "django~5.2", "5.2", version="5.2"),
                     row("Django", "django~3.2", "3.2", version="3.2"))
+        self.write("requirements.txt", "django>=3.2\n")
+        r = self.suggest()
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertIn("available django~3.2  (requirements.txt)",
+                      r.stdout.splitlines())
+        self.assertNotIn("django~5.2", r.stdout)
+
+    def test_lower_bound_pins_the_minimum_older_listed_first(self):
+        self.listed(row("Django", "django~3.2", "3.2", version="3.2"),
+                    row("Django", "django~5.2", "5.2", version="5.2"))
         self.write("requirements.txt", "django>=3.2\n")
         r = self.suggest()
         self.assertEqual(r.returncode, 0, r.stderr)
