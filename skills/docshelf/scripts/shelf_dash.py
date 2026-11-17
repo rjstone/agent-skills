@@ -142,6 +142,24 @@ def _load_json(path):
     return data if isinstance(data, dict) else {}
 
 
+def docset_stamp(path: str) -> str:
+    """(size, mtime) of the files that change when a docset is updated: its
+    index and WAL, tarix archive and index and WAL, and Info.plist."""
+    res = os.path.join(path, "Contents", "Resources")
+    tarix_index = os.path.join(res, "tarixIndex.db")
+    index = os.path.join(path, *INDEX_REL)
+    parts = []
+    for f in (index, index + "-wal", os.path.join(res, "tarix.tgz"),
+              tarix_index, tarix_index + "-wal",
+              os.path.join(path, "Contents", "Info.plist")):
+        try:
+            st = os.stat(f)
+            parts.append("%d:%d" % (st.st_size, int(st.st_mtime)))
+        except OSError:
+            parts.append("-")
+    return "|".join(parts)
+
+
 class DashDocvol(Docvol):
     def __init__(self, path: str, source: str, cache_dir: str):
         self.path = os.path.abspath(path)
@@ -513,17 +531,7 @@ class DashDocvol(Docvol):
         return "%s:page:%s%s" % (self.name, page, "#" + anchor if anchor else "")
 
     def stamp(self) -> str:
-        parts = []
-        res = os.path.join(self.path, "Contents", "Resources")
-        tarix_index = os.path.join(res, "tarixIndex.db")
-        for f in (self.index_file, self.index_file + "-wal",
-                  os.path.join(res, "tarix.tgz"), tarix_index, tarix_index + "-wal"):
-            try:
-                st = os.stat(f)
-                parts.append("%d:%d" % (st.st_size, int(st.st_mtime)))
-            except OSError:
-                parts.append("-")
-        return "|".join(parts)
+        return docset_stamp(self.path)
 
 
 class _Conn:
@@ -735,18 +743,8 @@ def _scan(env):
             for f, s, d in _search_folders(env) if os.path.isdir(f)]
 
 
-def _docset_sig(path):
-    """Cheap change signature of one docset folder (mtimes of its parts)."""
-    sig = []
-    for rel in ("", "Contents/Info.plist", "Contents/Resources/docSet.dsidx"):
-        try:
-            sig.append(os.stat(os.path.join(path, rel)).st_mtime_ns)
-        except OSError:
-            sig.append(None)
-    return tuple(sig)
-
-
-# One result per process: (key, docvols). The key holds the cache folder, the
+# One result per process (the CLI and MCP server are single-threaded, so a
+# plain module global is safe): (key, docvols). The key holds the cache folder, the
 # folders and docsets found, and each docset's signature, so a different cfg
 # or a changed folder never reuses a stale result.
 _OPEN_MEMO: list = []
@@ -758,7 +756,7 @@ def _open_all(cfg, env):
     process the same discovery is opened once (`where` and `list` share it)."""
     scan = _scan(env)
     key = (cfg.cache_dir, tuple(
-        (f, s, tuple((p, _docset_sig(p)) for p in paths))
+        (f, s, tuple((p, docset_stamp(p)) for p in paths))
         for f, s, paths in scan))
     if _OPEN_MEMO and _OPEN_MEMO[0][0] == key:
         return list(_OPEN_MEMO[0][1])

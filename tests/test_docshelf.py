@@ -4832,6 +4832,60 @@ class DashReadOnlyTests(unittest.TestCase):
         self.assertIn("  %s [folder] (missing)" % gone, out)
         self.assertIn("  %s [folder] (found 0)" % self.docs, out)
 
+    def _count_opens(self, *cmds):
+        opened = []
+        real = shelf_dash.open_docset
+
+        def counting(path, *a, **k):
+            opened.append(os.path.basename(path))
+            return real(path, *a, **k)
+
+        with mock.patch.object(shelf_dash, "open_docset", counting):
+            for c in cmds:
+                self.assertEqual(self.main(c)[0], 0)
+        return opened
+
+    def test_memo_misses_when_wal_changes(self):
+        path = make_docset(self.docs, "Wal", [("a", "Function", "a.html")],
+                           {"a.html": "<h1>a</h1>"}, wal=True)
+        self.assertEqual(self._count_opens("list", "list"), ["Wal.docset"])
+        wal = os.path.join(path, "Contents", "Resources", "docSet.dsidx-wal")
+        self.assertTrue(os.path.isfile(wal))
+        with open(wal, "ab") as f:
+            f.write(b"\0" * 32)
+        self.assertEqual(self._count_opens("list"), ["Wal.docset"])
+
+    def test_memo_misses_when_tarix_index_replaced(self):
+        path = make_docset(self.docs, "Tx", [("os", "Module", "os.html")],
+                           {"os.html": "<h1>os</h1>"})
+        make_tarix(path, {"os.html": b"<h1>os</h1>"})
+        self.assertEqual(self._count_opens("list", "list"), ["Tx.docset"])
+        idx = os.path.join(path, "Contents", "Resources", "tarixIndex.db")
+        with open(idx, "ab") as f:
+            f.write(b"x")
+        self.assertEqual(self._count_opens("list"), ["Tx.docset"])
+
+    def test_memo_drops_removed_docset(self):
+        a = self.docset()
+        self.docset("Other", version="1")
+        self.assertIn("Other", self.main("list")[1])
+        shutil.rmtree(os.path.join(self.docs, "Other.docset"))
+        out = self.main("list")[1]
+        self.assertNotIn("Other", out)
+        self.assertIn("Python_3", out)
+
+    def test_memo_misses_when_docset_dirs_change(self):
+        self.docset()
+        self.assertEqual(self._count_opens("list", "list"), ["Python_3.docset"])
+        other = os.path.join(self.tmp, "more")
+        os.makedirs(other)
+        make_docset(other, "More", [("a", "Function", "a.html")],
+                    {"a.html": "<h1>a</h1>"})
+        with mock.patch.dict(os.environ, {
+                "DOCSHELF_DOCSET_DIRS": self.docs + os.pathsep + other}):
+            opened = self._count_opens("list")
+        self.assertIn("More.docset", opened)
+
 
 class DashCatalogTests(unittest.TestCase):
     """`sources` lists Dash/Zeal docset names (GitHub listings, Zeal's catalog
