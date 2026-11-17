@@ -116,7 +116,7 @@ class SkeletonTests(unittest.TestCase):
     def test_help_runs(self):
         r = run_cli("--help", env=self.env(), cwd=self.work)
         self.assertEqual(r.returncode, 0, r.stderr)
-        self.assertTrue(r.stdout.startswith("docshelf 0.2.0"), r.stdout)
+        self.assertTrue(r.stdout.startswith("docshelf 0.3.0"), r.stdout)
         self.assertIn("where", r.stdout)
 
     def test_no_command_exits_2(self):
@@ -1656,7 +1656,7 @@ class NetworkTests(unittest.TestCase):
 
 
 TOP_HELP_EXPECTED = """\
-docshelf 0.2.0: look up DevDocs documentation offline (stdlib only).
+docshelf 0.3.0: look up DevDocs documentation offline (stdlib only).
 This is the command reference; `<command> --help` adds only the options
 listed at the end. REF = <docvol>:<path>[#anchor], as search and fts print
 them; <docvol> is the name `list` prints.
