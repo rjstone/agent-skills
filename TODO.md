@@ -178,6 +178,10 @@ items are done.
         only one list fell back.
   - [ ] 6.13.24 An install that is "up to date" from 0.7.0 gains
         `entry_count` only at the next upstream release.
+  - [ ] 6.13.25 A docvol whose index can't be read (a corrupt DevDocs
+        `index.json` with `entry_count`, or a damaged docset index) stops
+        every search over all docvols; warn and skip it there instead (one
+        helper for every multi-docvol loop; `-d NAME` still exits 5).
 
 #### Reference: other docset and DevDocs readers (skimmed 2026-11-17)
 
