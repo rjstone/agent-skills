@@ -3,7 +3,12 @@ import fnmatch
 import json
 import os
 import re
+import sys
 from typing import Callable, Dict, List, NamedTuple, Optional, Tuple
+
+import shelf_backends
+import shelf_devdocs
+from shelf_core import Config
 
 try:
     import tomllib
@@ -335,3 +340,125 @@ def scan_project(root: str) -> Tuple[List[Finding], List[str]]:
         return findings, ["note: skipped %s: %s" % (root, e)]
     _walk(root, findings, notes)
     return findings, notes
+
+
+# Normalized dependency name -> DevDocs family (checked against the DevDocs
+# list in 2026-11). Names that equal a family need no entry; the identity
+# entries below are the common ones.
+ALIASES: Dict[str, str] = {
+    "react-dom": "react", "react-native-web": "react",
+    "react-native": "react_native", "react-router-dom": "react_router",
+    "react-router": "react_router", "react-bootstrap": "react_bootstrap",
+    "vue-router": "vue_router", "vue": "vue", "typescript": "typescript",
+    "next": "nextjs", "tanstack-react-query": "tanstack_query",
+    "postgres": "postgresql", "golang": "go", "httpd": "apache_http_server",
+    "qt6": "qt", "qt5": "qt", "make": "gnu_make", "eigen": "eigen3",
+    "jquery-ui": "jqueryui", "djangorestframework": "django_rest_framework",
+    "jinja2": "jinja", "scikit-learn": "scikit_learn", "sklearn": "scikit_learn",
+    "scikit-image": "scikit_image", "torch": "pytorch", "spring-boot": "spring_boot",
+    "numpy": "numpy", "pandas": "pandas", "django": "django", "flask": "flask",
+}
+
+
+class Suggestion(NamedTuple):
+    name: str  # docvol or slug to list
+    status: str  # "installed", "docset" or "available"
+    sources: List[str]
+    note: str  # "" or e.g. "no 3.9 docs; newest is 3.14"
+
+
+def _agrees(wanted: str, have: str) -> bool:
+    """Equal on as many of the first two numbers as both have."""
+    x, y = shelf_backends._major_minor(wanted), shelf_backends._major_minor(have)
+    n = min(len(x), len(y))
+    return x[:n] == y[:n]
+
+
+def _row_version(row: dict) -> str:
+    version = row.get("version")
+    if version:
+        return str(version)
+    slug = row["slug"]
+    return slug.split("~", 1)[1].replace("_", " ") if "~" in slug else ""
+
+
+def _suggest_for(finding: Finding, installed: list,
+                 manifest: Optional[List[dict]]) -> Optional[Suggestion]:
+    v = finding.version
+    for n in finding.names:
+        family = normalize(ALIASES.get(n, n))
+        have = [d for d in installed
+                if normalize(d.family) == family
+                or family in {normalize(a) for a in d.aliases}]
+        rows = [r for r in manifest or []
+                if normalize(r["slug"].split("~")[0]) == family
+                or normalize(str(r.get("alias") or "")) == family]
+        pools = ((have, lambda d: d.version), (rows, _row_version))
+        for pool, version_of in pools:  # installed beats available
+            found = next((c for c in pool
+                          if not v or _agrees(v, version_of(c))), None)
+            if found is not None:
+                return _make(found, "", finding.source)
+        for pool, version_of in pools:  # nothing agrees: the newest
+            if pool:
+                newest = version_of(pool[0])
+                note = ("no %s docs; newest is %s" % (v, newest) if newest
+                        else "no %s docs listed" % v)
+                return _make(pool[0], note, finding.source)
+    return None
+
+
+def _make(candidate, note: str, source: str) -> Suggestion:
+    if isinstance(candidate, dict):
+        return Suggestion(candidate["slug"], "available", [source], note)
+    return Suggestion(candidate.name,
+                      "docset" if candidate.read_only else "installed",
+                      [source], note)
+
+
+def match(findings: List[Finding], installed: list,
+          manifest: Optional[List[dict]]) -> Tuple[List[Suggestion], int]:
+    """Suggestions (first found first, one per name, sources merged) and the
+    number of distinct library names that matched no docvol."""
+    out: Dict[str, Suggestion] = {}
+    unmatched = set()
+    for f in findings:
+        s = _suggest_for(f, installed, manifest)
+        if s is None:
+            if f.kind == "lib":
+                unmatched.add(f.names)
+            continue
+        if s.name in out:
+            old = out[s.name]
+            merged = old.sources + [x for x in s.sources if x not in old.sources]
+            out[s.name] = old._replace(sources=merged)
+        else:
+            out[s.name] = s
+    return list(out.values()), len(unmatched)
+
+
+def cmd_suggest(cfg: Config, args) -> int:
+    root = (os.path.dirname(os.path.abspath(cfg.project_file))
+            if cfg.project_file else os.getcwd())
+    findings, notes = scan_project(root)
+    manifest = shelf_devdocs.cached_manifest(cfg)
+    if manifest is None:
+        notes.append("note: no DevDocs list cached; run sources (network) "
+                     "to find more")
+    suggestions, unmatched = match(
+        findings, shelf_backends.installed_docvols(cfg), manifest)
+    names = [s.name for s in suggestions]
+    for note in notes:
+        print(note, file=sys.stderr)
+    if args.json:
+        print(json.dumps({
+            "suggestions": [s._asdict() for s in suggestions],
+            "docvols": names, "unmatched": unmatched, "notes": notes}, indent=2))
+        return 0
+    for s in suggestions:
+        print("%-9s %s  (%s)%s" % (s.status, s.name, ", ".join(s.sources),
+                                   "  " + s.note if s.note else ""))
+    print('"docvols": %s' % json.dumps(names))
+    if unmatched:
+        print("%d dependencies matched no docvol" % unmatched)
+    return 0

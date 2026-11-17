@@ -271,6 +271,15 @@ def fetch(url: str, dest: Optional[str] = None) -> bytes:
         raise NetError(url, str(getattr(e, "reason", e)))
 
 
+def cached_manifest(cfg: Config) -> Optional[List[dict]]:
+    """The cached DevDocs list at any age; None when missing or unreadable.
+    Never fetches."""
+    try:
+        return _manifest_rows(_load(os.path.join(devdocs_dir(cfg), "docs.json")))
+    except (OSError, ValueError):
+        return None
+
+
 def get_manifest(cfg: Config, refresh: bool = False) -> List[dict]:
     """The DevDocs documentation list, cached in <cache>/devdocs/docs.json for 24 h.
     If it cannot be fetched, a cached copy (any age) is used with a note."""

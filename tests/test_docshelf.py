@@ -2156,6 +2156,9 @@ Notes (format: references/notes.md in the skill folder):
 Get and manage docvols (references/getting-docvols.md):
   list                           docvols, versions, source (devdocs, zeal,
                                  dash) and "also as" redundancy flags
+  suggest                        docvols for the project's build files
+                                 and version files, then a "docvols"
+                                 list to paste (no network)
   sources QUERY...               documentations DevDocs offers, with sizes;
                                  docsets Dash or Zeal could download
   install [NAME...] [--force]    download one (NAME without a version = the
@@ -2411,7 +2414,7 @@ class McpTests(unittest.TestCase):
         by_name = {t["name"]: t for t in tools}
         self.assertEqual(sorted(by_name), ["fts", "install", "list", "notes",
                                            "remove", "search", "show", "sources",
-                                           "toc", "types"])
+                                           "suggest", "toc", "types"])
         q = by_name["search"]["inputSchema"]
         self.assertEqual(q["properties"]["query"]["type"], "array")
         self.assertEqual(q["properties"]["query"]["items"], {"type": "string"})
@@ -4743,6 +4746,144 @@ class SuggestScanTests(unittest.TestCase):
     def test_normalize(self):
         self.assertEqual(shelf_suggest.normalize("Foo__Bar.baz-Q"),
                          "foo-bar-baz-q")
+
+
+class SuggestTests(unittest.TestCase):
+    def setUp(self):
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        self.tmp = os.path.realpath(tmp.name)
+        self.cache = os.path.join(self.tmp, "cache")
+        self.proj = os.path.join(self.tmp, "proj")
+        os.makedirs(self.proj)
+        self.env = {"DOCSHELF_CACHE_DIR": self.cache}
+
+    def write(self, name, text, folder=None):
+        with open(os.path.join(folder or self.proj, name), "w") as f:
+            f.write(text)
+
+    def installed(self, slug, name="X", **kw):
+        make_devdocs(self.cache, slug, name=name, release="1",
+                     entries=[("e", "Function", "p#e")], pages={"p": "<h1>e</h1>"},
+                     **kw)
+
+    def listed(self, *rows):
+        """Rows appended to docs.json, in the order given (newest first)."""
+        path = os.path.join(self.cache, "devdocs", "docs.json")
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        data = []
+        if os.path.isfile(path):
+            with open(path, encoding="utf-8") as f:
+                data = json.load(f)
+        with open(path, "w", encoding="utf-8") as f:
+            json.dump(data + list(rows), f)
+
+    def suggest(self, *args, cwd=None, env=None):
+        return run_cli("suggest", *args, cwd=cwd or self.proj,
+                       env=dict(self.env, **(env or {})))
+
+    def test_installed_and_available(self):
+        self.installed("python~3.12", "Python")
+        self.listed(row("Python", "python~3.14", "3.14.0", version="3.14"),
+                    row("CMake", "cmake~3.30", "3.30", version="3.30"))
+        # DevDocs lists newest first: python~3.14 before the installed 3.12
+        path = os.path.join(self.cache, "devdocs", "docs.json")
+        with open(path, encoding="utf-8") as f:
+            rows = json.load(f)
+        rows.sort(key=lambda r: r["slug"] != "python~3.14")
+        with open(path, "w", encoding="utf-8") as f:
+            json.dump(rows, f)
+        self.write(".python-version", "3.12.4\n")
+        self.write("CMakeLists.txt", "find_package(Foo)\n")
+        r = self.suggest()
+        self.assertEqual(r.returncode, 0, r.stderr)
+        lines = r.stdout.splitlines()
+        self.assertIn("installed python~3.12  (.python-version)", lines)
+        self.assertIn("available cmake~3.30  (CMakeLists.txt)", lines)
+        self.assertIn('"docvols": ["python~3.12", "cmake~3.30"]', lines)
+
+    def test_version_without_docs_takes_newest_with_note(self):
+        self.listed(row("Python", "python~3.14", "3.14.0", version="3.14"))
+        self.write(".python-version", "3.9\n")
+        r = self.suggest()
+        line = next(x for x in r.stdout.splitlines() if "python~3.14" in x)
+        self.assertIn("no 3.9 docs; newest is 3.14", line)
+
+    def test_alias_and_scoped_names(self):
+        self.listed(row("React", "react", "18"), row("Node.js", "node", "22"))
+        self.write("package.json", json.dumps({"dependencies": {
+            "react-dom": "^18", "@types/node": "^22"}}))
+        r = self.suggest()
+        lines = r.stdout.splitlines()
+        self.assertEqual(sum("available react " in x for x in lines), 1, lines)
+        self.assertEqual(sum("available node " in x for x in lines), 1, lines)
+        self.assertIn("(package.json)", " ".join(lines))
+
+    def test_docset_status(self):
+        docs = os.path.join(self.tmp, "docsets")
+        os.makedirs(docs)
+        make_docset(docs, "Flask", [("fb", "Function", "p.html")],
+                    {"p.html": "<h1>x</h1>"})
+        self.write("requirements.txt", "flask\n")
+        r = self.suggest(env={"DOCSHELF_DOCSET_DIRS": docs})
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertIn("docset    Flask  (requirements.txt)", r.stdout)
+
+    def test_unmatched_count(self):
+        self.listed(row("Flask", "flask", "3"))
+        self.write("requirements.txt", "flask\nleft-pad-xyz\n")
+        r = self.suggest()
+        self.assertIn("1 dependencies matched no docvol", r.stdout)
+
+    def test_nothing_cached(self):
+        self.write("go.mod", "module x\n\ngo 1.22\n")
+        r = self.suggest()
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertIn("sources", r.stderr)
+        self.assertIn('"docvols": []', r.stdout)
+
+    def test_nonnumeric_version(self):
+        self.listed(row("Node.js", "node", "26"),
+                    row("Node.js", "node~20_lts", "20", version="20 LTS"))
+        self.write(".nvmrc", "lts/iron\n")
+        r = self.suggest()
+        line = next(x for x in r.stdout.splitlines() if x.startswith("available"))
+        self.assertEqual(line, "available node  (.nvmrc)")
+
+    def test_json(self):
+        self.listed(row("Flask", "flask", "3"))
+        self.write("requirements.txt", "flask\n")
+        data = json.loads(self.suggest("--json").stdout)
+        self.assertEqual(sorted(data), ["docvols", "notes", "suggestions",
+                                        "unmatched"])
+        self.assertEqual(data["docvols"], ["flask"])
+        self.assertEqual(data["suggestions"][0], {
+            "name": "flask", "status": "available",
+            "sources": ["requirements.txt"], "note": ""})
+
+    def test_uses_project_root(self):
+        self.listed(row("Flask", "flask", "3"))
+        self.write("requirements.txt", "flask\n")
+        self.write(".docshelf.json", "{}")
+        sub = os.path.join(self.proj, "sub")
+        os.makedirs(sub)
+        r = self.suggest(cwd=sub)
+        self.assertIn('"docvols": ["flask"]', r.stdout)
+
+    def test_mcp_tool(self):
+        import shelf_mcp
+        self.assertIn("suggest", [t["name"] for t in shelf_mcp.tool_schemas()])
+        self.listed(row("Flask", "flask", "3"))
+        self.write("requirements.txt", "flask\n")
+        env = dict(clean_env(), **self.env)
+        call = {"jsonrpc": "2.0", "id": 1, "method": "tools/call",
+                "params": {"name": "suggest", "arguments": {}}}
+        r = subprocess.run([sys.executable, SCRIPT, "--mcp"],
+                           input=json.dumps(call) + "\n", capture_output=True,
+                           text=True, env=env, cwd=self.proj, timeout=30)
+        result = json.loads(r.stdout.splitlines()[0])["result"]
+        self.assertFalse(result.get("isError"), result)
+        self.assertIn('"docvols": ["flask"]', result["content"][0]["text"])
 
 
 if __name__ == "__main__":
