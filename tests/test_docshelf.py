@@ -1793,9 +1793,11 @@ TOP_HELP_EXPECTED = "docshelf " + shelf_core.VERSION + """\
 : look up DevDocs documentation offline (stdlib only).
 This is the command reference; `<command> --help` adds only the options
 listed at the end. REF = <docvol>:<path>[#anchor], as search and fts print
-them; <docvol> is the name `list` prints.
-A docvol is a DevDocs documentation plus docshelf's own metadata, indexes
-and notes.
+them; <docvol> is the name `list` prints. A Dash/Zeal docset's REFs read
+<Name>:<id> (an entry) and <Name>:page:<path>[#anchor] (a page).
+A docvol is a DevDocs documentation or a read-only Dash/Zeal docset on disk,
+plus docshelf's own metadata, indexes and notes. -d NAME takes a docvol or
+a family name (all its docvols, with a note).
 
 Look up (usual order):
   search QUERY... [-d NAME]      entries whose names contain all the words,
@@ -1817,11 +1819,17 @@ Notes (format: references/notes.md in the skill folder):
                                  then "ok"
 
 Get and manage docvols (references/getting-docvols.md):
-  list                           installed docvols and their versions
-  sources QUERY...               documentations DevDocs offers, with sizes
-  install NAME...                download one (NAME without a version = the
-                                 newest); update [NAME...]; remove NAME
-  where                          cache, notes folder and project file
+  list                           docvols, versions, source (devdocs, zeal,
+                                 dash) and "also as" redundancy flags
+  sources QUERY...               documentations DevDocs offers, with sizes;
+                                 docsets Dash or Zeal could download
+  install NAME... [--force]      download one (NAME without a version = the
+                                 newest); refuses documentation already on
+                                 disk as a docset unless --force; update
+                                 [NAME...]; remove NAME (DevDocs docvols
+                                 only: Dash or Zeal manages docsets)
+  where                          cache, notes folder, project file, docset
+                                 folders and Dash/Zeal apps found
   index-text DOCVOL              build the fts index now
 
 Only if you need these, see `<command> --help`:

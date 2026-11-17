@@ -7,7 +7,7 @@ from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from typing import Dict, Iterator, List, Optional, Tuple
 
-VERSION = "0.3.0"
+VERSION = "0.4.0"
 PROJECT_FILE = ".docshelf.json"
 
 

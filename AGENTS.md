@@ -195,9 +195,10 @@ metadata:
 - `opencode-api` - opencode v2 server HTTP API: the published OpenAPI spec
   cached in `references/openapi.json`, searched with `scripts/api_lookup.py`
   (too large to read whole); calls via `opencode api` or Basic auth.
-- `docshelf` - DevDocs documentation offline: `search`, `show`, `fts`,
-  per-docvol notes, and `sources` / `install` / `update` fetching from
-  devdocs.io (the only network use; `remove` is local), plus a `--mcp` stdio server mode. Stdlib only
+- `docshelf` - DevDocs documentation and read-only Dash/Zeal docsets
+  offline: `search`, `show`, `fts`, per-docvol notes, and `sources` /
+  `install` / `update` fetching from devdocs.io (`sources` also reads the
+  Dash/Zeal catalogs; `remove` is local, and docsets are never changed), plus a `--mcp` stdio server mode. Stdlib only
   (`scripts/docshelf.py` and `shelf_*.py`). Cache `DOCSHELF_CACHE_DIR`,
   notes `DOCSHELF_NOTES_DIR`, project file `.docshelf.json`
   (`"docvols"` list). Its frontmatter has `metadata.credits`. A docvol is

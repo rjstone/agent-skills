@@ -22,11 +22,6 @@
       template instead of hand-editing each.
 - [ ] `opencode-build` `ERRATA.md`: record the doc mistakes already seen
       (verify each against the installed `@opencode/plugin` types).
-- [ ] `docshelf`: a read-only Dash/Zeal backend for docsets the user
-      already has (from `skill/dash-docset` before it is archived). It
-      downloads nothing and may be preferred over downloading the same
-      documentation from DevDocs. Same CLI and MCP interface,
-      equivalent search and FTS (the user, 2026-11-16).
 - [ ] `docshelf`: skim other docset and DevDocs readers for ideas (list
       gathered 2026-11; the user wants to look through them later).
       Read Zeal's folder, no network:
@@ -78,9 +73,6 @@
     names; `initialize` has no "instructions"; `"id": null` treated as a
     request; batch arrays rejected while 2025-03-26 is advertised;
     `_parser_defaults` reads argparse private attributes
-  - backend interface before the Dash backend: add `display_name` to the
-    Docvol base; a core installed-docvols aggregator; move href resolution
-    into a backend hook; `shelf_lookup` imports `_warn` from the backend
   - tests: expected "skipping" warning leaks to test stderr; no tests for
     `name=`-only anchors, CRLF notes, no-command help exit 2
   - `show` reads the notes file twice via private `_read_notes`
