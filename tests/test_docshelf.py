@@ -164,6 +164,40 @@ def make_docset(root: str, name: str, entries: List[Tuple[str, str, str]],
     return ds
 
 
+def make_tarix(docset: str, files: Dict[str, bytes]) -> None:
+    """Move the docset's Documents/ files into Contents/Resources/tarix.tgz
+    (a zlib full flush before every tar record) and write tarixIndex.db."""
+    import tarfile
+    import zlib
+    res = os.path.join(docset, "Contents", "Resources")
+    shutil.rmtree(os.path.join(res, "Documents"), ignore_errors=True)
+    name = os.path.basename(docset)
+    comp = zlib.compressobj(9, zlib.DEFLATED, -zlib.MAX_WBITS)
+    out = bytearray(b"\x1f\x8b\x08\x00\x00\x00\x00\x00\x00\x03")  # gzip header
+    rows = []
+    for rel, data in files.items():
+        buf = io.BytesIO()
+        with tarfile.open(fileobj=buf, mode="w:", format=tarfile.USTAR_FORMAT) as tar:
+            info = tarfile.TarInfo("%s/Contents/Resources/Documents/%s" % (name, rel))
+            info.size = len(data)
+            tar.addfile(info, io.BytesIO(data))
+        record = buf.getvalue()[:-1024]  # drop the end-of-archive blocks
+        out += comp.flush(zlib.Z_FULL_FLUSH)
+        rows.append(("%s/Contents/Resources/Documents/%s" % (name, rel),
+                     "%d %d %d" % (0, len(out), len(record) // 512)))
+        out += comp.compress(record)
+    out += comp.flush(zlib.Z_FINISH)
+    with open(os.path.join(res, "tarix.tgz"), "wb") as f:
+        f.write(bytes(out))
+    con = sqlite3.connect(os.path.join(res, "tarixIndex.db"))
+    try:
+        con.execute("CREATE TABLE tarindex (path TEXT PRIMARY KEY COLLATE NOCASE, hash TEXT)")
+        con.executemany("INSERT INTO tarindex VALUES (?, ?)", rows)
+        con.commit()
+    finally:
+        con.close()
+
+
 class SkeletonTests(unittest.TestCase):
     def setUp(self):
         tmp = tempfile.TemporaryDirectory()
@@ -2839,6 +2873,47 @@ class DashReaderTests(unittest.TestCase):
         lines = err.getvalue().strip().splitlines()
         self.assertEqual(len(lines), 1)
         self.assertTrue(lines[0].startswith("warning: skipping"))
+
+
+class DashTarixTests(unittest.TestCase):
+    def setUp(self):
+        self.tmp = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, self.tmp, ignore_errors=True)
+        path = make_docset(self.tmp, "Lib", [("os", "Module", "os.html")],
+                           {"os.html": "<h1>os</h1>"})
+        self.files = {"os.html": b"<h1>os</h1>", "sub/a.html": b"<p>a</p>"}
+        make_tarix(path, self.files)
+        self.path = path
+        self.dv = shelf_dash.DashDocvol(path, "dash", os.path.join(self.tmp, "cache"))
+
+    def test_page_read_from_tarix(self):
+        self.assertFalse(os.path.exists(os.path.join(
+            self.path, "Contents", "Resources", "Documents")))
+        self.assertEqual(self.dv.page_html("os.html"), "<h1>os</h1>")
+        self.assertEqual(self.dv.page_html("sub/a.html"), "<p>a</p>")
+
+    def test_tarix_missing_page_exit_5(self):
+        for page in ("nope.html", "../tarixIndex.db"):
+            with self.assertRaises(CLIError) as cm:
+                self.dv.page_html(page)
+            self.assertEqual(cm.exception.code, 5)
+
+    def test_tarix_link_resolves(self):
+        self.assertEqual(self.dv.resolve_href("os.html", "SUB/a.html#x"),
+                         "Lib:page:SUB/a.html#x")
+        self.assertIsNone(self.dv.resolve_href("os.html", "nope.html"))
+
+    def test_corrupt_tarix_entry_exit_7(self):
+        con = sqlite3.connect(os.path.join(
+            self.path, "Contents", "Resources", "tarixIndex.db"))
+        try:
+            con.execute("UPDATE tarindex SET hash = '0 0 999999999'")
+            con.commit()
+        finally:
+            con.close()
+        with self.assertRaises(CLIError) as cm:
+            self.dv.page_html("os.html")
+        self.assertEqual(cm.exception.code, 7)
 
 
 if __name__ == "__main__":

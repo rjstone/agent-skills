@@ -1,12 +1,16 @@
 """docshelf Dash backend: read-only access to Dash/Zeal docsets."""
 import hashlib
+import io
 import json
 import os
 import pathlib
 import plistlib
+import posixpath
 import re
 import shutil
 import sqlite3
+import tarfile
+import zlib
 from typing import List, Optional, Tuple
 from urllib.parse import unquote
 
@@ -14,6 +18,15 @@ from shelf_core import CLIError, Docvol, Entry, resolve_doc_path, warn
 
 INDEX_REL = ("Contents", "Resources", "docSet.dsidx")
 DOCS_REL = ("Contents", "Resources", "Documents")
+# Tarix docsets (Dash's compact storage; read by Zeal's tarixarchive.cpp):
+# Contents/Resources/tarix.tgz is a normal .tgz written with a zlib full flush
+# before every tar record, and tarixIndex.db is SQLite with
+# tarindex(path TEXT PRIMARY KEY COLLATE NOCASE, hash TEXT), where path starts
+# "<Name>.docset/" and hash is "<block> <offset> <length>": the compressed
+# byte offset of a flush point and the record size in 512-byte blocks. Pages
+# are read one at a time without unpacking. (Kapeli serves the index as
+# <archive>.tgz.tarix: a .tgz holding that SQLite file.)
+TARIX_MAX_RECORD = 64 * 1024 * 1024
 _FAMILY_VERSION = re.compile(r"[_-]\d+(\.\d+)*$")
 
 
@@ -163,8 +176,72 @@ class DashDocvol(Docvol):
             raise CLIError("no page %r in %s" % (page, self.name), 5)
         return full
 
+    def _tarix_rel(self, page: str) -> str:
+        """Archive-relative path of page; CLIError 5 if it escapes Documents/."""
+        rel = posixpath.normpath(page.replace("\\", "/")).lstrip("/")
+        if rel == ".." or rel.startswith("../") or rel == ".":
+            raise CLIError("no page %r in %s" % (page, self.name), 5)
+        return "Contents/Resources/Documents/" + rel
+
+    def _tarix_row(self, rel: str) -> Optional[str]:
+        """The index hash for rel, or None when there is no archive or no
+        such entry. The index is opened per lookup and closed again."""
+        res = os.path.join(self.path, "Contents", "Resources")
+        idx = os.path.join(res, "tarixIndex.db")
+        if not (os.path.isfile(os.path.join(res, "tarix.tgz")) and os.path.isfile(idx)):
+            return None
+        try:
+            with _Conn(_open_ro(idx)) as con:
+                row = con.execute("SELECT path FROM tarindex WHERE path LIKE "
+                                  "'%.docset/%' LIMIT 1").fetchone()
+                if not row:
+                    return None
+                prefix = row[0][:row[0].index(".docset/") + len(".docset/")]
+                row = con.execute("SELECT hash FROM tarindex WHERE path = ?",
+                                  (prefix + rel,)).fetchone()
+        except (sqlite3.Error, ValueError) as e:
+            raise CLIError("tarix index error for %s: %s" % (rel, e), 7)
+        return str(row[0]) if row and row[0] else None
+
+    def _read_tarix(self, rel: str, hash_: str) -> bytes:
+        try:
+            _block, offset, blocks = (int(x) for x in hash_.split())
+        except ValueError:
+            raise CLIError("bad tarix index entry for %s" % rel, 7)
+        want = blocks * 512
+        if offset < 0 or blocks < 1 or want > TARIX_MAX_RECORD:
+            raise CLIError("bad tarix index entry for %s" % rel, 7)
+        out = bytearray()
+        try:
+            with open(os.path.join(self.path, "Contents", "Resources", "tarix.tgz"), "rb") as f:
+                f.seek(offset)
+                z = zlib.decompressobj(-zlib.MAX_WBITS)
+                buf = b""
+                while len(out) < want and not z.eof:
+                    if not buf:
+                        buf = f.read(1 << 16)
+                        if not buf:
+                            break
+                    out += z.decompress(buf, want - len(out))
+                    buf = z.unconsumed_tail
+            with tarfile.open(fileobj=io.BytesIO(bytes(out[:want])), mode="r:") as tar:
+                member = tar.next()
+                if member is None or not member.isfile():
+                    raise CLIError("no file record for %s in the archive" % rel, 7)
+                return tar.extractfile(member).read()
+        except (OSError, zlib.error, tarfile.TarError) as e:
+            raise CLIError("cannot read %s from the docset's archive: %s" % (rel, e), 7)
+
     def page_html(self, page: str) -> str:
-        with open(self._doc_file(page), "rb") as f:
+        try:
+            path = self._doc_file(page)
+        except CLIError:
+            rel = self._tarix_rel(page)  # refuses a path that escapes Documents/
+            hash_ = self._tarix_row(rel)
+            if hash_ is None:
+                raise
+            return self._read_tarix(rel, hash_).decode("utf-8", errors="replace")
+        with open(path, "rb") as f:
             return f.read().decode("utf-8", errors="replace")
 
     def resolve_href(self, page: str, href: str) -> Optional[str]:
@@ -172,7 +249,11 @@ class DashDocvol(Docvol):
         try:
             self._doc_file(target)
         except CLIError:
-            return None
+            try:
+                if self._tarix_row(self._tarix_rel(target)) is None:
+                    return None
+            except CLIError:
+                return None
         return self.make_ref(target, frag)
 
     def resolve(self, rest: str) -> Tuple[str, Optional[str], Optional[Entry]]:
