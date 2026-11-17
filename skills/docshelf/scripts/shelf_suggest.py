@@ -180,6 +180,9 @@ def parse_requirements(text: str) -> List[Finding]:
     return out
 
 
+_CMAKE_BRACKET = re.compile(r"#\[(=*)\[")
+
+
 def _cmake_code(text: str) -> str:
     """text without CMake comments: '#' to the end of the line, and
     '#[[ ... ]]' / '#[=[ ... ]=]' bracket comments (to the end of the file
@@ -197,9 +200,9 @@ def _cmake_code(text: str) -> str:
         elif c == '"':
             quoted = True
         elif c == "#":
-            m = re.match(r"#\[(=*)\[", text[i:])
+            m = _CMAKE_BRACKET.match(text, i)
             if m:
-                end = text.find("]%s]" % m.group(1), i + m.end())
+                end = text.find("]%s]" % m.group(1), m.end())
                 i = n if end < 0 else end + len(m.group(1)) + 2
             else:
                 end = text.find("\n", i)

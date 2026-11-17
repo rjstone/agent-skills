@@ -280,8 +280,9 @@ def _add_param(parser, p: Param):
             kwargs["nargs"] = p.nargs
         if p.repeat:
             kwargs["action"] = "append"
-        if param_default(p) is not None:
-            kwargs["default"] = param_default(p)
+        default = param_default(p)
+        if default is not None:
+            kwargs["default"] = default
     parser.add_argument(*p.flags, **kwargs)
 
 

@@ -2512,14 +2512,35 @@ class NetworkTests(unittest.TestCase):
 
     def test_unwritable_cache_stops_after_the_first_name(self):
         self.write_manifest(self.rows)
-        for slug in ("node", "python~3.14"):  # folders that can't be made
-            with open(os.path.join(self.root, slug), "w") as f:
-                f.write("a file")
-        code, out, err = self.main("install", "node", "python~3.14")
+        real = os.makedirs
+
+        def deny(path, *a, **k):
+            if os.path.basename(str(path)) in ("node", "python~3.14", "bash"):
+                raise PermissionError(13, "Permission denied", str(path))
+            return real(path, *a, **k)
+        with mock.patch.object(os, "makedirs", deny):
+            code, out, err = self.main("install", "node", "python~3.14", "bash")
         self.assertEqual(code, 2)
         self.assertEqual(err.count("DOCSHELF_CACHE_DIR"), 1, err)
-        self.assertIn("node", err)
-        self.assertNotIn("python~3.14", err)
+        self.assertIn("not tried: python~3.14, bash", err)
+        self.assertNotIn("installed", out)
+
+    def test_full_or_read_only_disk_stops_too(self):
+        import errno
+        for no in (errno.ENOSPC, errno.EROFS):
+            err_ = OSError(no, os.strerror(no))
+            self.assertIsInstance(shelf_devdocs._cache_error("x", err_),
+                                  shelf_devdocs.CacheError)
+
+    def test_a_stray_file_at_one_slug_fails_only_that_name(self):
+        self.write_manifest(self.rows)
+        with open(os.path.join(self.root, "node"), "w") as f:
+            f.write("a file")
+        code, out, err = self.main("install", "node", "python~3.14")
+        self.assertEqual(code, 2)
+        self.assertIn("node:", err)
+        self.assertNotIn("not tried", err)
+        self.assertIn("installed python~3.14", out)
 
     def test_per_name_exit_2_does_not_stop_the_loop(self):
         self.write_manifest([row("Evil", "../x", "1")] + self.rows)
@@ -2785,8 +2806,7 @@ class HelpTests(unittest.TestCase):
                   P(("--s",), "h")):
             shelf_cli._add_param(parser, p)
         got = vars(parser.parse_args([]))
-        self.assertEqual(got, {"f": shelf_cli.param_default(P(("--f",), "h", kind="flag")),
-                               "n": 3, "s": None})
+        self.assertEqual(got, {"f": False, "n": 3, "s": None})
 
     def test_skill_md_mentions_no_dash_docvol(self):
         with open(os.path.join(SKILL, "SKILL.md"), encoding="utf-8") as f:
@@ -6357,6 +6377,12 @@ class SuggestScanTests(unittest.TestCase):
         self.assertEqual(self.libs(findings),
                          [("kept",), ("kept2",), ("kept3",)])
 
+    def test_cmake_escaped_quote_keeps_the_hash_in_the_string(self):
+        self.write("CMakeLists.txt",
+                   'set(X "a\\"#b")\nfind_package(Kept)\n')
+        findings, _ = self.scan()
+        self.assertEqual(self.libs(findings), [("kept",)])
+
     def test_ruby_version_with_and_without_prefix(self):
         self.write(".ruby-version", "ruby-3.3.1\n")
         findings, _ = self.scan()
@@ -6978,7 +7004,7 @@ class DocsetStampTests(unittest.TestCase):
             shelf_dash._open_all(cfg, env)
             self.assertNotEqual(memo[0][0], first)
 
-    def test_fts_and_repeats_caches_stable_on_a_second_run(self):
+    def test_fts_is_built_once_across_repeated_loads(self):
         env = {"HOME": self.tmp, "USERPROFILE": self.tmp,
                "DOCSHELF_DOCSET_DIRS": self.docs, "DOCSHELF_CACHE_DIR": self.cache,
                "DOCSHELF_NOTES_DIR": os.path.join(self.tmp, "notes")}

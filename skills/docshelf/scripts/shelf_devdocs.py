@@ -1,4 +1,5 @@
 """docshelf DevDocs backend: docvols on disk, byte-span page index."""
+import errno
 import http.client
 import json
 import os
@@ -271,9 +272,19 @@ class CacheError(CLIError):
     a loop over names stops at the first."""
 
 
-def _write_error(path: str, e: OSError) -> CLIError:
-    return CacheError("cannot write %s: %s (check free disk space and that "
-                      "DOCSHELF_CACHE_DIR is a writable folder)" % (path, e), 2)
+def _cache_error(path: str, e: OSError) -> CLIError:
+    """Exit 2 for a failed write. A CacheError (the loop over names stops)
+    only for errors that repeat for every name: no permission, a read-only
+    or full disk; anything else (a stray file at one slug) is per name."""
+    hint = ("(check free disk space and that DOCSHELF_CACHE_DIR is a "
+            "writable folder)")
+    msg = "cannot write %s: %s %s" % (path, e, hint)
+    if isinstance(e, PermissionError) or e.errno in (errno.EROFS, errno.ENOSPC):
+        return CacheError(msg, 2)
+    return CLIError(msg, 2)
+
+
+_write_error = _cache_error
 
 
 def fetch(url: str, dest: Optional[str] = None) -> bytes:
@@ -482,8 +493,7 @@ def install(cfg: Config, row: dict) -> str:
     try:
         os.makedirs(folder, exist_ok=True)
     except OSError as e:
-        raise CacheError("cannot create %s: %s (set DOCSHELF_CACHE_DIR to a "
-                         "writable folder)" % (folder, e), 2)
+        raise _cache_error(folder, e)
     names = ("index.json", "db.json", "meta.json")
     tmps = {}
     pindex = None
@@ -652,7 +662,8 @@ def _each(items, action, label=str) -> int:
     code once all items have run; a CacheError stops the loop, as it would
     repeat for every item."""
     failures = []
-    for item in items:
+    items = list(items)
+    for pos, item in enumerate(items):
         try:
             line = action(item)
         except Redundant as e:
@@ -665,6 +676,10 @@ def _each(items, action, label=str) -> int:
                 e = CLIError("%s: %s" % (name, e), e.code)
             failures.append(e)
             if stop:
+                rest = [label(i) for i in items[pos + 1:]]
+                if rest:
+                    failures.append(CLIError("not tried: " + ", ".join(rest),
+                                             e.code))
                 break
             continue
         if line:

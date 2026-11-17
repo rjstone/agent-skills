@@ -15,7 +15,9 @@ downloaded. Lookups work offline; only the commands below use the network.
   the slug for another version. Prints `installed`, `updated` or
   `up to date`. A failed name does not stop the rest: each failure is
   printed and the exit code is the first failure's (5 when DevDocs answers
-  404, i.e. no such documentation; 7 for other network errors).
+  404, i.e. no such documentation; 7 for other network errors). An
+  unwritable cache (no permission, read-only or full disk) stops at the
+  first name (exit 2) and lists the names not tried.
 - `update [NAME...]` fetches the DevDocs list fresh (not the 24-hour copy)
   and re-downloads documentations whose DevDocs timestamp is newer; with
   no names, every installed docvol. One that DevDocs no longer lists is
