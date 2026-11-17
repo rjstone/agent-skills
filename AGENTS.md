@@ -293,6 +293,9 @@ metadata:
 - **Notes:** when a session finds a new fact, quirk or workaround, write it
   here (or in `CLAUDE.md` if Claude-only) before the session ends. Mark the
   user's decisions with who and when, e.g. "(the user, 2026-11-08)".
+- **Subagents:** when launching a subagent, say in chat which model and
+  reasoning effort it runs with ("default" when no effort is set)
+  (the user, 2026-11-17).
 - **Plans:** finished plans go in `docs/plans/YYYY-MM-<topic>.md`.
   "Archiving the plan" means: once the work is done, copy the working plan
   there, remove the original, commit and push. Work done with the
