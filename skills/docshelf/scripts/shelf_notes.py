@@ -173,7 +173,7 @@ def heading_refs(blocks) -> List[Tuple[str, Optional[str]]]:
     return out
 
 
-HEADINGS_FORMAT = 3  # bump when what headings.json holds changes (3: footers)
+HEADINGS_FORMAT = 4  # bump when what headings.json holds changes (3: footers, 4: headers)
 
 
 def docvol_headings(ds) -> Dict[str, List[List[Optional[str]]]]:

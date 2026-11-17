@@ -31,15 +31,17 @@ DOCS_REL = ("Contents", "Resources", "Documents")
 # <archive>.tgz.tarix: a .tgz holding that SQLite file.)
 TARIX_MAX_RECORD = 64 * 1024 * 1024
 # A repeated footer is a run of trailing blocks that most pages end with
-# exactly (copyright, links to the same few pages, a generator line). Only an
-# exact repeat counts, so real docs are never guessed away. It is kept on one
-# page (the docset's index page, else the first entry's page) and left out of
-# every other page, for show, the full-text index and the headings index.
-FOOTER_SAMPLE = 40      # pages sampled, evenly spaced
-FOOTER_MIN_PAGES = 5    # fewer pages: no footer detection
-FOOTER_SHARE = 0.6      # share of sampled pages that must end with it
-FOOTER_MAX_BLOCKS = 30
-FOOTER_FORMAT = 1       # bump when footer.json's contents change
+# exactly (copyright, links to the same few pages, a generator line); a
+# repeated header is the same at the start of pages ("Skip to main content",
+# navigation). Only an exact repeat counts, so real docs are never guessed
+# away. Both are kept on one page (the docset's index page, else the first
+# entry's page) and left out of every other page, for show, the full-text
+# index and the headings index.
+REPEAT_SAMPLE = 40      # pages sampled, evenly spaced
+REPEAT_MIN_PAGES = 5    # fewer pages: no detection
+REPEAT_SHARE = 0.6      # share of sampled pages that must start/end with it
+REPEAT_MAX_BLOCKS = 30
+REPEAT_FORMAT = 2       # bump when repeats.json's contents change (2: header)
 _FAMILY_VERSION = re.compile(r"[_-](\d+(?:\.\d+)*)$")
 _SQLITE_MAGIC = b"SQLite format 3\x00"
 
@@ -145,7 +147,7 @@ class DashDocvol(Docvol):
         self.index_file = os.path.join(self.path, *INDEX_REL)
         self._entries: Optional[List[Entry]] = None
         self._pages: Optional[List[str]] = None
-        self._footer: Optional[Tuple[List[str], Optional[str]]] = None
+        self._repeats: Optional[Tuple[List[str], List[str], Optional[str]]] = None
         self._count: Optional[int] = None
         self._copied = False
         # Discovery reads no rows (counting or copying a big index on every
@@ -359,60 +361,78 @@ class DashDocvol(Docvol):
             return None
         return entry_location(value)[0] if isinstance(value, str) and value else None
 
-    def detect_footer(self) -> Tuple[List[str], Optional[str]]:
-        """(footer block texts, the page that keeps it); ([], None) if none."""
+    def detect_repeats(self) -> Tuple[List[str], List[str], Optional[str]]:
+        """(header block texts, footer block texts, the page that keeps
+        them); ([], [], None) if neither repeats."""
         pages = self.pages()
-        if len(pages) < FOOTER_MIN_PAGES:
-            return [], None
-        step = max(1, len(pages) // FOOTER_SAMPLE)
-        counts: dict = {}
+        if len(pages) < REPEAT_MIN_PAGES:
+            return [], [], None
+        step = max(1, len(pages) // REPEAT_SAMPLE)
+        heads: dict = {}
+        tails: dict = {}
         sampled = 0
-        for page in pages[::step][:FOOTER_SAMPLE]:
+        for page in pages[::step][:REPEAT_SAMPLE]:
             try:
                 texts = [b.text for b in super().page_blocks(page)]
             except (CLIError, OSError, ValueError):
                 continue
             sampled += 1
-            for k in range(1, min(FOOTER_MAX_BLOCKS, len(texts) - 1) + 1):
+            # at most len - 1 blocks: a whole page is never a header or footer
+            for k in range(1, min(REPEAT_MAX_BLOCKS, len(texts) - 1) + 1):
+                key = tuple(texts[:k])
+                heads[key] = heads.get(key, 0) + 1
                 key = tuple(texts[-k:])
-                counts[key] = counts.get(key, 0) + 1
-        if sampled < FOOTER_MIN_PAGES:
-            return [], None
-        need = max(FOOTER_MIN_PAGES, FOOTER_SHARE * sampled)
-        best = max((k for k, c in counts.items() if c >= need), key=len, default=())
-        if not best:
-            return [], None
+                tails[key] = tails.get(key, 0) + 1
+        if sampled < REPEAT_MIN_PAGES:
+            return [], [], None
+        need = max(REPEAT_MIN_PAGES, REPEAT_SHARE * sampled)
+        header = max((k for k, c in heads.items() if c >= need), key=len, default=())
+        footer = max((k for k, c in tails.items() if c >= need), key=len, default=())
+        if not header and not footer:
+            return [], [], None
         index = self._index_page()
-        return list(best), (index if index in pages else pages[0])
+        return list(header), list(footer), (index if index in pages else pages[0])
 
-    def footer_info(self) -> Tuple[List[str], Optional[str]]:
-        """detect_footer, cached in <data_dir>/footer.json."""
-        if self._footer is not None:
-            return self._footer
-        stamp = "%s|footer%d" % (self.stamp(), FOOTER_FORMAT)
-        cache = os.path.join(self.data_dir(), "footer.json")
+    def repeats_info(self) -> Tuple[List[str], List[str], Optional[str]]:
+        """detect_repeats, cached in <data_dir>/repeats.json."""
+        if self._repeats is not None:
+            return self._repeats
+        stamp = "%s|repeats%d" % (self.stamp(), REPEAT_FORMAT)
+        cache = os.path.join(self.data_dir(), "repeats.json")
         data = _load_json(cache)
-        if data.get("stamp") == stamp and isinstance(data.get("footer"), list):
-            self._footer = (data["footer"], data.get("keep"))
-            return self._footer
-        footer, keep = self.detect_footer()
+        if data.get("stamp") == stamp and isinstance(data.get("header"), list) \
+                and isinstance(data.get("footer"), list):
+            self._repeats = (data["header"], data["footer"], data.get("keep"))
+            return self._repeats
+        header, footer, keep = self.detect_repeats()
         try:
-            _write_json(cache, {"stamp": stamp, "footer": footer, "keep": keep})
+            _write_json(cache, {"stamp": stamp, "header": header,
+                                "footer": footer, "keep": keep})
         except OSError as e:
             warn("cannot write %s: %s" % (cache, e))
-        self._footer = (footer, keep)
-        return self._footer
+        self._repeats = (header, footer, keep)
+        return self._repeats
 
     def page_blocks(self, page: str, link=None):
-        """The page's blocks without the docset's repeated footer (kept on
-        one page)."""
+        """The page's blocks without the docset's repeated header and footer
+        (both kept on one page). A page is never emptied: the footer goes
+        only when blocks remain, the header only when blocks remain after
+        both."""
         blocks = super().page_blocks(page, link)
-        footer, keep = self.footer_info()
-        n = len(footer)
-        if n and page != keep and len(blocks) > n \
-                and [b.text for b in blocks[-n:]] == footer:
-            return blocks[:-n]
-        return blocks
+        header, footer, keep = self.repeats_info()
+        if page == keep or not (header or footer):
+            return blocks
+        # Compare the plain text: link=... appends " [REF]" to link text.
+        plain = blocks if link is None else super().page_blocks(page)
+        texts = [b.text for b in plain] if len(plain) == len(blocks) \
+            else [b.text for b in blocks]
+        start, end = 0, len(blocks)
+        nf, nh = len(footer), len(header)
+        if nf and end > nf and texts[-nf:] == footer:
+            end -= nf
+        if nh and end > nh and texts[:nh] == header:
+            start = nh
+        return blocks[start:end]
 
     def resolve_href(self, page: str, href: str) -> Optional[str]:
         target, frag = resolve_doc_path(page, href)

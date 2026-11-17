@@ -3158,13 +3158,21 @@ class DashFooterTests(unittest.TestCase):
                     "DOCSHELF_CACHE_DIR": os.path.join(self.tmp, "cache"),
                     "DOCSHELF_NOTES_DIR": os.path.join(self.tmp, "notes")}
 
-    def build(self, count, footers=None):
-        """count pages p1..pN, each with unique body text then a footer."""
+    HEAD = "<p>Skip to main content</p><p>Menu</p>"
+
+    def build(self, count, footers=None, headers=None, extra=None):
+        """count pages p1..pN, each with a header, unique body text, then a
+        footer; extra maps more page names to their whole HTML."""
         pages, entries = {}, []
         for i in range(1, count + 1):
             foot = footers(i) if footers else self.FOOT
-            pages["p%d.html" % i] = "<h1>Page%d</h1><p>Body%d text.</p>%s" % (i, i, foot)
+            head = headers(i) if headers else ""
+            pages["p%d.html" % i] = "%s<h1>Page%d</h1><p>Body%d text.</p>%s" % (
+                head, i, i, foot)
             entries.append(("item%d" % i, "Function", "p%d.html" % i))
+        for page, html in (extra or {}).items():
+            pages[page] = html
+            entries.append((page, "Guide", page))
         make_docset(self.docs, "Lib", entries, pages)
 
     def cli(self, *args):
@@ -3195,6 +3203,44 @@ class DashFooterTests(unittest.TestCase):
     def test_too_few_pages_no_detection(self):
         self.build(4)
         self.assertIn("Licensed under", self.show("p2.html"))
+
+    def test_repeated_header_left_out_but_kept_once(self):
+        self.build(6, footers=lambda i: "", headers=lambda i: self.HEAD)
+        p2 = self.show("p2.html")
+        self.assertNotIn("Skip to main content", p2)
+        self.assertNotIn("Menu", p2)
+        self.assertIn("Body2 text.", p2)
+        self.assertEqual(p2.splitlines()[0], "# Page2")  # the page's own title
+        r = self.cli("show", "Lib:2", "--full")  # an entry: no wrong "(page: ...)"
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertNotIn("(page:", r.stdout)
+        self.assertNotIn("Skip to main content", r.stdout)
+        keeper = self.show("p1.html")
+        self.assertIn("Skip to main content", keeper)
+        self.assertIn("Menu", keeper)
+        r = self.cli("fts", "Skip to main content", "-d", "Lib")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertEqual(r.stdout.count("Lib:"), 1, r.stdout)
+
+    def test_no_header_when_first_blocks_differ(self):
+        self.build(6, headers=lambda i: "<p>Starts differently %d.</p>" % i)
+        for i in (1, 2, 5):
+            self.assertIn("Starts differently %d." % i, self.show("p%d.html" % i))
+
+    def test_header_and_footer_both_left_out(self):
+        self.build(6, headers=lambda i: self.HEAD)
+        p3 = self.show("p3.html")
+        for gone in ("Skip to main content", "Menu", "Licensed under"):
+            self.assertNotIn(gone, p3)
+        self.assertIn("# Page3", p3)
+        self.assertIn("Body3 text.", p3)
+
+    def test_page_of_only_header_and_footer_is_not_emptied(self):
+        self.build(6, headers=lambda i: self.HEAD,
+                   extra={"bare.html": self.HEAD + self.FOOT})
+        bare = self.show("bare.html")
+        self.assertIn("Skip to main content", bare)
+        self.assertIn("Menu", bare)
 
 
 class DashReadOnlyTests(unittest.TestCase):
