@@ -74,6 +74,7 @@ items are done.
 - [ ] 6.4 Docset reading (index, tarix)
   - [ ] 6.4.1 WAL stamps use whole-second mtimes; the stamp test only
         checks for "-".
+        The discovery memo key inherits the whole-second mtime.
   - [ ] 6.4.2 Containment tests cover `..` only (no absolute or backslash
         paths).
   - [ ] 6.4.4 Tarix: no tests for symlink or directory members or a
@@ -163,6 +164,20 @@ items are done.
   - [ ] 6.13.16 A permanent `tools/list` regression test.
   - [ ] 6.13.17 `param_defaults` restates `_add_param`'s default rule; share
         a helper.
+  - [ ] 6.13.18 A live temp older than one hour can be swept by a
+        concurrent process (a long fts build or install).
+  - [ ] 6.13.19 Tests: the sweep swallowing errors; the notes writer leaving
+        no `*.tmp`; `sources NAME` printing the catalog note.
+  - [ ] 6.13.20 The fts "once per query" test depends on
+        `_match_terms.cache_clear()`.
+  - [ ] 6.13.21 The `ids` term is useless for `printf(3)` / `vector<int>`
+        tokens.
+  - [ ] 6.13.22 The "skipped N malformed entries" note prints once per
+        catalog label (twice per command).
+  - [ ] 6.13.23 "the docset lists came from Zeal's catalog" overstates when
+        only one list fell back.
+  - [ ] 6.13.24 An install that is "up to date" from 0.7.0 gains
+        `entry_count` only at the next upstream release.
 
 #### Reference: other docset and DevDocs readers (skimmed 2026-11-17)
 

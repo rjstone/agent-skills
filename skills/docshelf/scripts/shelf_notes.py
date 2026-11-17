@@ -10,7 +10,8 @@ from typing import Dict, Iterable, List, Optional, Tuple
 import shelf_backends
 import shelf_dash
 import shelf_devdocs
-from shelf_core import CLIError, Config, make_temp, pick_docvol, short_name, warn
+from shelf_core import (CLIError, Config, make_temp, pick_docvol, short_name,
+                        umask_mode, warn)
 
 NOTES_GENERAL_MAX = 50
 NOTES_SECTION_MAX = 100
@@ -204,6 +205,8 @@ def headings_index(ds) -> Tuple[Dict[str, List[List[Optional[str]]]], int]:
     """(docvol_headings, number of pages that could not be read), cached in
     <data dir>/headings.json under ds.stamp(), HEADINGS_FORMAT and shelf_dash.REPEAT_FORMAT
     (rebuilt when any changes)."""
+    # REPEAT_FORMAT is in the stamp on purpose: DevDocs headings caches
+    # rebuild once on the 0.7.1 upgrade too.
     stamp = "%s|headings%d|repeats%d" % (ds.stamp(), HEADINGS_FORMAT,
                                          shelf_dash.REPEAT_FORMAT)
     cache = os.path.join(ds.data_dir(), "headings.json")
@@ -372,9 +375,7 @@ def delete_section(text: str, heading: str) -> str:
 
 
 def _new_file_mode() -> int:
-    umask = os.umask(0)
-    os.umask(umask)
-    return 0o666 & ~umask
+    return umask_mode()
 
 
 def _write_notes(path, text):
@@ -397,7 +398,7 @@ def _write_notes(path, text):
         raise CLIError("cannot write %s: %s (set DOCSHELF_NOTES_DIR to a "
                        "writable folder)" % (path, e), 2)
     try:
-        os.chmod(tmp, mode)  # mkstemp makes it 0600; keep the file's mode
+        os.chmod(tmp, mode)  # keep the existing file's mode
         with os.fdopen(fd, "w", encoding="utf-8", newline="") as f:
             f.write(text)
         os.replace(tmp, path)

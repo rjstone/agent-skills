@@ -22,15 +22,16 @@ STALE_TMP_SECONDS = 3600
 
 
 def sweep_stale_tmp(folder: str, max_age: float = STALE_TMP_SECONDS) -> None:
-    """Remove '*.tmp' files in folder older than max_age seconds (leftovers
-    of a killed run); nothing else is touched. Errors are ignored."""
+    """Remove '*.tmp', '*.tmp-journal' and '*.tmp-wal' files in folder older
+    than max_age seconds (leftovers of a killed run, SQLite's included);
+    nothing else is touched. Errors are ignored."""
     try:
         names = os.listdir(folder)
     except OSError:
         return
     now = time.time()
     for n in names:
-        if not n.endswith(".tmp"):
+        if not n.endswith((".tmp", ".tmp-journal", ".tmp-wal")):
             continue
         p = os.path.join(folder, n)
         try:
@@ -38,6 +39,15 @@ def sweep_stale_tmp(folder: str, max_age: float = STALE_TMP_SECONDS) -> None:
                 os.remove(p)
         except OSError:
             pass
+
+
+def umask_mode() -> int:
+    """The mode open() gives a new file: 0o666 minus the umask. Reading the
+    umask means setting it and restoring it, which is safe here: docshelf is
+    single-threaded."""
+    mask = os.umask(0)
+    os.umask(mask)
+    return 0o666 & ~mask
 
 
 def make_temp(folder: str, prefix: str = "", sweep: bool = True):
@@ -48,12 +58,11 @@ def make_temp(folder: str, prefix: str = "", sweep: bool = True):
         sweep_stale_tmp(folder)
     fd, tmp = tempfile.mkstemp(dir=folder, prefix=prefix, suffix=".tmp")
     try:
-        mask = os.umask(0)
-        os.umask(mask)
+        mode = umask_mode()
         if hasattr(os, "fchmod"):
-            os.fchmod(fd, 0o666 & ~mask)
+            os.fchmod(fd, mode)
         else:
-            os.chmod(tmp, 0o666 & ~mask)
+            os.chmod(tmp, mode)
     except OSError:
         pass
     return fd, tmp

@@ -17,7 +17,7 @@ import shelf_dash
 import shelf_notes
 from shelf_render import (_print_lines, _page_title_line, page_title,
                           section_headings, section_lines, unquote_all)
-from shelf_core import (CLIError, make_temp, Config, cap_lines, pick_docvol, rank,
+from shelf_core import (CLIError, Config, cap_lines, make_temp, pick_docvol, rank,
                         same_family_note, select_docvols, short_name, warn)
 
 FUZZY_SHOWN = 0  # fuzzy hits shown when exact, prefix or substring hits exist
@@ -302,6 +302,8 @@ def fts_path(ds) -> str:
 
 
 def fts_stamp(ds) -> str:
+    # REPEAT_FORMAT is in the stamp on purpose (the indexed text follows the
+    # repeats): DevDocs indexes rebuild once on the 0.7.1 upgrade too.
     return "%s|fts%d|repeats%d" % (ds.stamp(), FTS_FORMAT, shelf_dash.REPEAT_FORMAT)
 
 
