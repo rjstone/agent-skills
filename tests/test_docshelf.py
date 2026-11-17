@@ -1463,7 +1463,7 @@ class FtsTests(unittest.TestCase):
         lines = r.stdout.splitlines()
         self.assertTrue(lines[0].startswith("py:"))
         self.assertTrue(lines[1].startswith("    "))
-        self.assertIn("more hits cut", lines[2])
+        self.assertEqual(len(lines), 2)  # the cut line does not fit the cap
 
     def test_max_lines_must_be_positive(self):
         r = self.cli("fts", "gather", "-d", "py", "--max-lines", "0")
@@ -1564,6 +1564,30 @@ class FtsTests(unittest.TestCase):
                     contextlib.redirect_stderr(io.StringIO()):
                 shelf_cli.main(["fts", "word", "-d", "py"] + argv)
             self.assertEqual(seen[-1], want)
+
+
+class FtsMaxLinesTests(unittest.TestCase):
+    def setUp(self):
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        self.tmp = os.path.realpath(tmp.name)
+        self.cache = os.path.join(self.tmp, "cache")
+        self.env = {"HOME": self.tmp, "USERPROFILE": self.tmp,
+                    "DOCSHELF_CACHE_DIR": self.cache,
+                    "DOCSHELF_NOTES_DIR": os.path.join(self.tmp, "notes")}
+        make_devdocs(self.cache, "many", name="Many", release="1",
+                     entries=[("p%d" % i, "Guide", "p%d" % i) for i in range(8)],
+                     pages={"p%d" % i: "<h1>P%d</h1><p>zebra zebra %d</p>" % (i, i)
+                            for i in range(8)})
+
+    def test_max_lines_never_exceeded(self):
+        for n in (1, 2, 3):
+            r = run_cli("fts", "zebra", "-d", "many", "--max-lines", str(n),
+                        env=self.env, cwd=self.tmp)
+            self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+            lines = r.stdout.splitlines()
+            self.assertTrue(1 <= len(lines) <= n, (n, r.stdout))
+            self.assertTrue(lines[0].startswith("many:"), r.stdout)
 
 
 class FakeNet:

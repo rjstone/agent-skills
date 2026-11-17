@@ -488,10 +488,14 @@ def cmd_fts(cfg: Config, args: argparse.Namespace) -> int:
         return 0
     room = (max(1, (args.max_lines - 1) // 2)
             if len(hits) * 2 > args.max_lines else len(hits))
+    lines = []
     for h in hits[:room]:
-        print(h["ref"])
-        print("    " + h["snippet"])
+        lines.append(h["ref"])
+        lines.append("    " + h["snippet"])
     if len(hits) > room:
-        print("... more hits cut; add words (e.g. the function name), -d, or "
-              "raise --max-lines")
+        lines.append("... more hits cut; add words (e.g. the function name), "
+                     "-d, or raise --max-lines")
+    # a cap too small for one hit plus the cut line still holds: REF line first
+    for line in lines[:max(1, args.max_lines)]:
+        print(line)
     return 0
