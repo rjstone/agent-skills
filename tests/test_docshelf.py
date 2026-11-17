@@ -2093,6 +2093,97 @@ class NetworkTests(unittest.TestCase):
         self.assertIn("python~3.14", err)
         self.assertTrue(out.startswith("up to date node ("), out)
 
+    def test_reinstall_with_missing_db_reinstalls(self):
+        self.main("install", "python~3.14")
+        folder = os.path.join(self.root, "python~3.14")
+        os.remove(os.path.join(folder, "db.json"))
+        code, out, err = self.main("install", "python~3.14")
+        self.assertEqual(code, 0, err)
+        self.assertTrue(out.startswith("updated python~3.14"), out)
+        self.assertTrue(os.path.isfile(os.path.join(folder, "db.json")))
+
+    def test_reinstall_with_missing_index_reinstalls(self):
+        self.main("install", "python~3.14")
+        folder = os.path.join(self.root, "python~3.14")
+        os.remove(os.path.join(folder, "index.json"))
+        self.assertTrue(self.main("install", "python~3.14")[1].startswith("updated"))
+        self.assertTrue(os.path.isfile(os.path.join(folder, "index.json")))
+
+    def test_install_builds_page_index_once(self):
+        with mock.patch.object(shelf_devdocs, "build_page_index",
+                               wraps=shelf_devdocs.build_page_index) as spy:
+            self.assertEqual(self.main("install", "python~3.14")[0], 0)
+        self.assertEqual(spy.call_count, 1)
+        pages = os.path.join(self.root, "python~3.14", ".docshelf", "pages.json")
+        with open(pages, encoding="utf-8") as f:
+            self.assertEqual(set(json.load(f)["pages"]), {"intro", "api"})
+
+    def test_install_stores_entry_count(self):
+        self.main("install", "python~3.14")
+        self.assertEqual(self.meta("python~3.14")["entry_count"], 2)
+
+    def test_list_uses_stored_entry_count_without_index(self):
+        self.main("install", "python~3.14")
+        with mock.patch.object(shelf_devdocs.DevDocsDocvol, "entries",
+                               side_effect=AssertionError("index read")):
+            code, out, err = self.main("list")
+        self.assertEqual((code, err), (0, ""))
+        self.assertIn("2", out)
+        self.assertIn("python~3.14", out)
+
+    def test_old_install_without_entry_count_still_counts(self):
+        self.main("install", "python~3.14")
+        path = os.path.join(self.root, "python~3.14", "meta.json")
+        meta = self.meta("python~3.14")
+        del meta["entry_count"]
+        with open(path, "w", encoding="utf-8") as f:
+            json.dump(meta, f)
+        d = shelf_devdocs.DevDocsDocvol(os.path.join(self.root, "python~3.14"))
+        self.assertEqual(d.entry_count, 2)
+        self.assertNotIn("entry_count", self.meta("python~3.14"))  # no write
+
+    def test_installed_files_get_umask_permissions(self):
+        old = os.umask(0o022)
+        self.addCleanup(os.umask, old)
+        self.main("install", "python~3.14")
+        folder = os.path.join(self.root, "python~3.14")
+        for rel in ("index.json", "db.json", "meta.json",
+                    os.path.join(".docshelf", "pages.json")):
+            mode = stat.S_IMODE(os.stat(os.path.join(folder, rel)).st_mode)
+            self.assertEqual(mode, 0o644, rel)
+        self.assertEqual(stat.S_IMODE(os.stat(
+            os.path.join(self.root, "docs.json")).st_mode), 0o644)
+
+    def test_install_sweeps_only_old_tmp_files(self):
+        self.main("install", "python~3.14")
+        folder = os.path.join(self.root, "python~3.14")
+        old, fresh, other = (os.path.join(folder, n) for n in
+                             ("db.json.old.tmp", "db.json.new.tmp", "keep.txt"))
+        for p in (old, fresh, other):
+            with open(p, "w") as f:
+                f.write("x")
+        t = time.time() - 2 * 3600
+        os.utime(old, (t, t))
+        os.utime(other, (t, t))
+        newer = [dict(r, mtime=1800000000) if r["slug"] == "python~3.14" else r
+                 for r in self.rows]
+        self.net.pages.update(self.docs_pages(newer))
+        self.write_manifest(newer)
+        self.assertEqual(self.main("install", "python~3.14")[0], 0)
+        self.assertFalse(os.path.exists(old))
+        self.assertTrue(os.path.exists(fresh))
+        self.assertTrue(os.path.exists(other))
+
+    def test_other_cache_writers_use_umask_permissions(self):
+        old = os.umask(0o027)
+        self.addCleanup(os.umask, old)
+        path = os.path.join(self.tmp, "w", "x.json")
+        shelf_dash._write_json(path, {"a": 1})
+        self.assertEqual(stat.S_IMODE(os.stat(path).st_mode), 0o640)
+        fd, tmp = shelf_core.make_temp(os.path.dirname(path))
+        os.close(fd)
+        self.assertEqual(stat.S_IMODE(os.stat(tmp).st_mode), 0o640)
+
     def test_install_failure_leaves_nothing(self):
         url = "%s/python~3.15/db.json" % shelf_devdocs.DOCUMENTS_BASE
         self.net.pages[url] = shelf_devdocs.NetError(url, "connection reset")

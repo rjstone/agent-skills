@@ -5,12 +5,11 @@ import os
 import re
 import stat
 import sys
-import tempfile
 from typing import Dict, Iterable, List, Optional, Tuple
 
 import shelf_backends
 import shelf_devdocs
-from shelf_core import CLIError, Config, pick_docvol, short_name, warn
+from shelf_core import CLIError, Config, make_temp, pick_docvol, short_name, warn
 
 NOTES_GENERAL_MAX = 50
 NOTES_SECTION_MAX = 100
@@ -227,7 +226,7 @@ def headings_index(ds) -> Tuple[Dict[str, List[List[Optional[str]]]], int]:
             heads[page] = [list(r) for r in refs]
     try:
         os.makedirs(ds.data_dir(), exist_ok=True)
-        fd, tmp = tempfile.mkstemp(dir=ds.data_dir(), suffix=".tmp")
+        fd, tmp = make_temp(ds.data_dir())
         try:
             with os.fdopen(fd, "w", encoding="utf-8") as f:
                 json.dump({"stamp": stamp, "headings": heads, "skipped": skipped},
@@ -391,7 +390,7 @@ def _write_notes(path, text):
         raise CLIError("cannot read %s: %s; not written" % (path, e), 2)
     try:
         os.makedirs(d, exist_ok=True)
-        fd, tmp = tempfile.mkstemp(dir=d, suffix=".tmp")
+        fd, tmp = make_temp(d, sweep=False)
     except OSError as e:
         raise CLIError("cannot write %s: %s (set DOCSHELF_NOTES_DIR to a "
                        "writable folder)" % (path, e), 2)

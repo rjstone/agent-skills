@@ -5,7 +5,6 @@ import os
 import re
 import shutil
 import sys
-import tempfile
 import time
 import urllib.error
 import urllib.request
@@ -13,7 +12,8 @@ from datetime import datetime, timezone
 from typing import Dict, List, Optional, Tuple
 from urllib.parse import urlsplit
 
-from shelf_core import VERSION, CLIError, warn, Config, Docvol, Entry, pick_docvol
+from shelf_core import (VERSION, CLIError, warn, Config, Docvol, Entry, make_temp,
+                        pick_docvol, sweep_stale_tmp)
 
 DERIVED = ".docshelf"
 MANIFEST_URL = "https://devdocs.io/docs.json"
@@ -124,7 +124,11 @@ class DevDocsDocvol(Docvol):
         self.db_path = os.path.join(folder, "db.json")
         self._entries: Optional[List[Entry]] = None
         self._index: Optional[Dict[str, Tuple[int, int]]] = None
-        self.entry_count = len(self.entries())
+        count = meta.get("entry_count")
+        if isinstance(count, int) and not isinstance(count, bool) and count >= 0:
+            self.entry_count = count  # stored at install: index.json stays unread
+        else:  # an install from before entry_count: count the index
+            self.entry_count = len(self.entries())
 
     def data_dir(self) -> str:
         return os.path.join(self.folder, DERIVED)
@@ -171,21 +175,31 @@ class DevDocsDocvol(Docvol):
             except ValueError as e:
                 raise CLIError("docvol %s: damaged db.json (%s); reinstall with: "
                                "docshelf.py install %s" % (self.name, e, self.name), 5)
-            try:
-                os.makedirs(self.data_dir(), exist_ok=True)
-                fd, tmp = tempfile.mkstemp(dir=self.data_dir(), suffix=".tmp")
-                try:
-                    with os.fdopen(fd, "w", encoding="utf-8") as f:
-                        json.dump({"db_size": size, "db_mtime": mtime,
-                                   "pages": {k: list(v) for k, v in index.items()}}, f)
-                    os.replace(tmp, cache)
-                except BaseException:
-                    _discard(tmp)
-                    raise
-            except OSError as e:
-                _warn("cannot write %s: %s" % (cache, e))
+            self._write_page_index(index, size, mtime)
         self._index, self._idx_stat = index, (size, mtime)
         return index
+
+    def _write_page_index(self, index, size, mtime) -> None:
+        cache = os.path.join(self.data_dir(), "pages.json")
+        try:
+            os.makedirs(self.data_dir(), exist_ok=True)
+            fd, tmp = make_temp(self.data_dir())
+            try:
+                with os.fdopen(fd, "w", encoding="utf-8") as f:
+                    json.dump({"db_size": size, "db_mtime": mtime,
+                               "pages": {k: list(v) for k, v in index.items()}}, f)
+                os.replace(tmp, cache)
+            except BaseException:
+                _discard(tmp)
+                raise
+        except OSError as e:
+            _warn("cannot write %s: %s" % (cache, e))
+
+    def store_page_index(self, index) -> None:
+        """Keep an index built elsewhere (install) for this db.json."""
+        size, mtime = self._db_stat()
+        self._write_page_index(index, size, mtime)
+        self._index, self._idx_stat = index, (size, mtime)
 
     def pages(self) -> List[str]:
         return list(self.page_index())
@@ -312,7 +326,7 @@ def get_manifest(cfg: Config, refresh: bool = False) -> List[dict]:
         return rows
     try:
         os.makedirs(devdocs_dir(cfg), exist_ok=True)
-        fd, tmp = tempfile.mkstemp(dir=devdocs_dir(cfg), suffix=".tmp")
+        fd, tmp = make_temp(devdocs_dir(cfg))
         try:
             with os.fdopen(fd, "w", encoding="utf-8") as f:
                 json.dump(rows, f, ensure_ascii=False)
@@ -419,7 +433,9 @@ def install(cfg: Config, row: dict) -> str:
     try:
         old = _load(meta_path)
         status = "updated"
-        if int(old.get("mtime") or 0) >= int(row.get("mtime") or 0):
+        if (int(old.get("mtime") or 0) >= int(row.get("mtime") or 0)
+                and os.path.isfile(os.path.join(folder, "index.json"))
+                and os.path.isfile(os.path.join(folder, "db.json"))):
             return "up to date"
     except (OSError, ValueError, AttributeError, TypeError):
         pass
@@ -431,10 +447,11 @@ def install(cfg: Config, row: dict) -> str:
                        "writable folder)" % (folder, e), 2)
     names = ("index.json", "db.json", "meta.json")
     tmps = {}
+    pindex = None
     try:
+        sweep_stale_tmp(folder)
         for n in names:
-            fd, tmps[n] = tempfile.mkstemp(dir=folder, prefix=n + ".",
-                                           suffix=".tmp")
+            fd, tmps[n] = make_temp(folder, prefix=n + ".", sweep=False)
             os.close(fd)
         for n in names[:2]:
             try:
@@ -448,7 +465,7 @@ def install(cfg: Config, row: dict) -> str:
             if not isinstance(idx, dict) or not isinstance(
                     idx.get("entries"), list):
                 raise ValueError("no entries list")
-            build_page_index(tmps["db.json"])
+            pindex = build_page_index(tmps["db.json"])
         except (ValueError, AttributeError, UnicodeDecodeError) as e:
             raise NetError("%s/%s/" % (DOCUMENTS_BASE, slug),
                            "unexpected content: %s" % e)
@@ -456,7 +473,8 @@ def install(cfg: Config, row: dict) -> str:
                 "release": str(row.get("release") or ""),
                 "mtime": int(row.get("mtime") or 0),
                 "installedAt": _utc_now(), "alias": row.get("alias") or None,
-                "version": str(row.get("version") or "")}
+                "version": str(row.get("version") or ""),
+                "entry_count": len(idx["entries"])}
         with open(tmps["meta.json"], "w", encoding="utf-8") as f:
             json.dump(meta, f, ensure_ascii=False)
         os.replace(tmps["index.json"], os.path.join(folder, "index.json"))
@@ -471,7 +489,7 @@ def install(cfg: Config, row: dict) -> str:
             except OSError:
                 pass
         raise
-    DevDocsDocvol(folder).page_index()
+    DevDocsDocvol(folder).store_page_index(pindex)
     return status
 
 

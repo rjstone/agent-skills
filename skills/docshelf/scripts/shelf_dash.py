@@ -11,14 +11,13 @@ import shutil
 import sqlite3
 import sys
 import tarfile
-import tempfile
 import time
 import zlib
 from datetime import datetime
 from typing import List, NamedTuple, Optional, Tuple
 from urllib.parse import unquote, urlsplit
 
-from shelf_core import CLIError, Docvol, Entry, resolve_doc_path, warn
+from shelf_core import CLIError, Docvol, Entry, make_temp, resolve_doc_path, warn
 
 INDEX_REL = ("Contents", "Resources", "docSet.dsidx")
 DOCS_REL = ("Contents", "Resources", "Documents")
@@ -65,7 +64,7 @@ def _write_json(path: str, data) -> None:
     """Write data to path atomically (temp file + os.replace)."""
     folder = os.path.dirname(path)
     os.makedirs(folder, exist_ok=True)
-    fd, tmp = tempfile.mkstemp(dir=folder, suffix=".tmp")
+    fd, tmp = make_temp(folder)
     try:
         with os.fdopen(fd, "w", encoding="utf-8") as f:
             json.dump(data, f, ensure_ascii=False)
@@ -205,7 +204,7 @@ class DashDocvol(Docvol):
         try:
             for suffix in ("", "-wal"):
                 if os.path.exists(path + suffix):
-                    fd, tmp = tempfile.mkstemp(dir=dest_dir, suffix=".tmp")
+                    fd, tmp = make_temp(dest_dir)
                     os.close(fd)
                     moves.append((tmp, dest + suffix))
                     shutil.copyfile(path + suffix, tmp)
@@ -824,7 +823,7 @@ def _write_catalog(cfg, key: str, data) -> None:
     path = _catalog_path(cfg, key)
     try:
         os.makedirs(os.path.dirname(path), exist_ok=True)
-        fd, tmp = tempfile.mkstemp(dir=os.path.dirname(path), suffix=".tmp")
+        fd, tmp = make_temp(os.path.dirname(path))
         try:
             with os.fdopen(fd, "w", encoding="utf-8") as f:
                 json.dump(data, f, ensure_ascii=False)

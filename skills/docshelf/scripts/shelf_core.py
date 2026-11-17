@@ -3,6 +3,8 @@ import json
 import os
 import re
 import sys
+import tempfile
+import time
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from typing import Dict, Iterator, List, Optional, Tuple
@@ -14,6 +16,47 @@ PROJECT_FILE = ".docshelf.json"
 
 def warn(msg: str) -> None:
     print("warning: " + msg, file=sys.stderr)
+
+
+STALE_TMP_SECONDS = 3600
+
+
+def sweep_stale_tmp(folder: str, max_age: float = STALE_TMP_SECONDS) -> None:
+    """Remove '*.tmp' files in folder older than max_age seconds (leftovers
+    of a killed run); nothing else is touched. Errors are ignored."""
+    try:
+        names = os.listdir(folder)
+    except OSError:
+        return
+    now = time.time()
+    for n in names:
+        if not n.endswith(".tmp"):
+            continue
+        p = os.path.join(folder, n)
+        try:
+            if os.path.isfile(p) and now - os.path.getmtime(p) > max_age:
+                os.remove(p)
+        except OSError:
+            pass
+
+
+def make_temp(folder: str, prefix: str = "", sweep: bool = True):
+    """tempfile.mkstemp(dir=folder, suffix='.tmp') with the permissions
+    open() would give (0o666 minus the umask), not mkstemp's 0600. With
+    sweep, old '*.tmp' files in folder are removed first. Returns (fd, path)."""
+    if sweep:
+        sweep_stale_tmp(folder)
+    fd, tmp = tempfile.mkstemp(dir=folder, prefix=prefix, suffix=".tmp")
+    try:
+        mask = os.umask(0)
+        os.umask(mask)
+        if hasattr(os, "fchmod"):
+            os.fchmod(fd, 0o666 & ~mask)
+        else:
+            os.chmod(tmp, 0o666 & ~mask)
+    except OSError:
+        pass
+    return fd, tmp
 
 
 class CLIError(Exception):

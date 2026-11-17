@@ -8,7 +8,6 @@ import pathlib
 import re
 import sqlite3
 import sys
-import tempfile
 import time
 from typing import Dict, List, Optional, Tuple
 
@@ -16,7 +15,7 @@ import shelf_backends
 import shelf_notes
 from shelf_render import (_print_lines, _page_title_line, page_title,
                           section_headings, section_lines, unquote_all)
-from shelf_core import (CLIError, Config, cap_lines, pick_docvol, rank,
+from shelf_core import (CLIError, make_temp, Config, cap_lines, pick_docvol, rank,
                         same_family_note, select_docvols, short_name, warn)
 
 FUZZY_SHOWN = 0  # fuzzy hits shown when exact, prefix or substring hits exist
@@ -357,7 +356,7 @@ def build_fts(cfg, ds) -> int:
     db = fts_path(ds)
     try:
         os.makedirs(os.path.dirname(db), exist_ok=True)
-        fd, tmp = tempfile.mkstemp(dir=os.path.dirname(db), suffix=".tmp")
+        fd, tmp = make_temp(os.path.dirname(db))
         os.close(fd)  # sqlite opens it itself; the name is unique per build
     except OSError as e:
         raise CLIError("cannot write the index for %s in %s: %s (set "
