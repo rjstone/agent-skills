@@ -173,23 +173,35 @@ def heading_refs(blocks) -> List[Tuple[str, Optional[str]]]:
     return out
 
 
+HEADINGS_FORMAT = 2  # bump when what headings.json holds changes
+
+
 def docvol_headings(ds) -> Dict[str, List[List[Optional[str]]]]:
-    """{page: [[heading, anchor], ...]} for the whole docvol, cached in
-    <data dir>/headings.json under ds.stamp() (rebuilt when it changes)."""
-    stamp = ds.stamp()
+    """{page: [[heading, anchor], ...]} for the whole docvol."""
+    return headings_index(ds)[0]
+
+
+def headings_index(ds) -> Tuple[Dict[str, List[List[Optional[str]]]], int]:
+    """(docvol_headings, number of pages that could not be read), cached in
+    <data dir>/headings.json under ds.stamp() and HEADINGS_FORMAT (rebuilt
+    when either changes)."""
+    stamp = "%s|headings%d" % (ds.stamp(), HEADINGS_FORMAT)
     cache = os.path.join(ds.data_dir(), "headings.json")
     try:
         with open(cache, encoding="utf-8") as f:
             data = json.load(f)
-        if data.get("stamp") == stamp and isinstance(data.get("headings"), dict):
-            return data["headings"]
+        if data.get("stamp") == stamp and isinstance(data.get("headings"), dict) \
+                and isinstance(data.get("skipped"), int):
+            return data["headings"], data["skipped"]
     except (OSError, ValueError, AttributeError):
         pass
     heads: Dict[str, List[List[Optional[str]]]] = {}
+    skipped = 0
     for page in ds.pages():
         try:
             blocks = html_to_text(ds.page_html(page))
         except (OSError, ValueError, CLIError):
+            skipped += 1
             continue
         refs = heading_refs(blocks)
         if refs:
@@ -199,14 +211,15 @@ def docvol_headings(ds) -> Dict[str, List[List[Optional[str]]]]:
         fd, tmp = tempfile.mkstemp(dir=ds.data_dir(), suffix=".tmp")
         try:
             with os.fdopen(fd, "w", encoding="utf-8") as f:
-                json.dump({"stamp": stamp, "headings": heads}, f, ensure_ascii=False)
+                json.dump({"stamp": stamp, "headings": heads, "skipped": skipped},
+                          f, ensure_ascii=False)
             os.replace(tmp, cache)
         except BaseException:
             shelf_devdocs._discard(tmp)
             raise
     except OSError as e:
         shelf_devdocs._warn("cannot write %s: %s" % (cache, e))
-    return heads
+    return heads, skipped
 
 
 def notes_matches(text, entries, page_headings=()) -> List[str]:
@@ -266,14 +279,21 @@ def cmd_notes(cfg: Config, args) -> int:
     entries = [e for d in docvols if d.family == family for e in d.entries()]
     names = {e.name.lower() for e in entries}
     page_headings = []
+    skipped = 0
     for d in docvols:
         if d.family == family:
-            for page, rows in docvol_headings(d).items():
+            heads, bad = headings_index(d)
+            skipped += bad
+            for page, rows in heads.items():
                 page_headings += [(h, d.make_ref(page, a)) for h, a in rows]
     warns = check_notes(text, names, {h for h, _r in page_headings})
     print("notes file present: %s" % path)
     for line in notes_matches(text, entries, page_headings):
         print(line)
+    if skipped:
+        print("note: %d page%s could not be read; %s headings are not checked"
+              % (skipped, "" if skipped == 1 else "s",
+                 "its" if skipped == 1 else "their"))
     for w in warns:
         print("warning: " + w)
     if not warns:

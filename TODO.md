@@ -66,16 +66,6 @@
   - tests: expected "skipping" warning leaks to test stderr; no tests for
     `name=`-only anchors, CRLF notes, no-command help exit 2
   - `show` reads the notes file twice via private `_read_notes`
-- [ ] `docshelf`: from the Haiku trials with the earlier prompts (2026-11-16):
-  - strip a footer repeated on every page (LÖVE's licence line), as the
-    earlier skill's footer detection did.
-  - `search` can't find function names in section-indexed docvols
-    (DuckDB); consider matching in-page headings.
-  - `-d NAME` for a docvol that isn't installed exits 4 "unknown docvol";
-    when NAME is in DevDocs' list, say "not installed: install NAME".
-  - notes headings cache: no format-version key (an old-format cache would
-    be reused); `notes --check` skips pages that fail to render without
-    saying how many; the `--grep X` -> `--grep=X` rewrite ignores `--`.
 
 ## Automation
 

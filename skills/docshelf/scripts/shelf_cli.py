@@ -66,11 +66,12 @@ COMMANDS: List[Command] = [
     Command("where", "Show the cache, notes and project file in use.",
             cmd_where, [], mcp=False),
     Command("list", "List installed docvols.", cmd_list, []),
-    Command("search", "Search entry names (exact, prefix, substring, fuzzy).",
+    Command("search", "Search entry names, then headings inside pages (exact, prefix, "
+            "substring; fuzzy for entries only).",
             shelf_lookup.cmd_search, [
-        Param(("query",), "Words to find in entry names.", nargs="+"),
+        Param(("query",), "Words to find in entry names or page headings.", nargs="+"),
         Param(("-d", "--docvol"), "Docvol to search (repeatable).", repeat=True),
-        Param(("--type",), "Only entries of this type.", rare=True),
+        Param(("--type",), "Only entries of this type (no headings).", rare=True),
         Param(("--all",), "Search every installed docvol.", kind="flag", rare=True),
         Param(("--max-lines",), "Output line cap.", kind="posint", rare=True,
               default=40),
@@ -146,11 +147,13 @@ A docvol is a DevDocs documentation plus docshelf's own metadata, indexes
 and notes.
 
 Look up (usual order):
-  search QUERY... [-d NAME]      entries whose names contain all the words;
-                                 prints one REF per entry, best first
+  search QUERY... [-d NAME]      entries whose names contain all the words,
+                                 and headings inside pages when no entry
+                                 name is an exact match; one REF per hit,
+                                 best first
   show REF                       that entry's section (max 150 lines) plus
                                  your notes for it
-  show REF --grep TEXT           only lines containing TEXT, with their
+  show REF --grep=TEXT           only lines containing TEXT, with their
                                  heading, table header row, and a matching
                                  term's definition (repeatable; plain text,
                                  not a pattern, case-insensitive)
@@ -237,9 +240,12 @@ def build_parser() -> argparse.ArgumentParser:
 
 def _join_grep_values(argv: List[str]) -> List[str]:
     """`--grep X` -> `--grep=X`, so a value starting with '-' (`--grep --keep`)
-    isn't read as an option. A trailing bare --grep stays for argparse."""
+    isn't read as an option. A trailing bare --grep stays for argparse, and
+    everything after `--` is positional, so it is left as it is."""
     out, i = [], 0
     while i < len(argv):
+        if argv[i] == "--":
+            return out + argv[i:]
         if argv[i] == "--grep" and i + 1 < len(argv):
             out.append("--grep=" + argv[i + 1])
             i += 2
@@ -268,10 +274,14 @@ def main(argv: Optional[List[str]] = None) -> int:
     for stream in (sys.stdout, sys.stderr):  # Windows pipes default to cp1252
         if hasattr(stream, "reconfigure"):
             stream.reconfigure(encoding="utf-8", errors="replace")
+    cfg = None
     try:
-        return args._command.func(shelf_core.load_config(), args)
+        cfg = shelf_core.load_config()
+        return args._command.func(cfg, args)
     except CLIError as e:
-        print(str(e), file=sys.stderr)
+        msg = (e.docvol and cfg and shelf_devdocs.not_installed_message(
+            cfg, e.docvol, lambda slug: "docshelf.py install " + slug))
+        print(msg or str(e), file=sys.stderr)
         return e.code
     except (OSError, sqlite3.Error, ValueError) as e:
         print("error: %s: %s" % (type(e).__name__, e), file=sys.stderr)

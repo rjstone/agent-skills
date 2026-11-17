@@ -116,7 +116,7 @@ class SkeletonTests(unittest.TestCase):
     def test_help_runs(self):
         r = run_cli("--help", env=self.env(), cwd=self.work)
         self.assertEqual(r.returncode, 0, r.stderr)
-        self.assertTrue(r.stdout.startswith("docshelf 0.1.0"), r.stdout)
+        self.assertTrue(r.stdout.startswith("docshelf %s" % shelf_core.VERSION), r.stdout)
         self.assertIn("where", r.stdout)
 
     def test_no_command_exits_2(self):
@@ -565,7 +565,7 @@ class SearchTests(unittest.TestCase):
         self.add("alpha", [("date_sub", "Function", "date#sub")])
         r = self.cli("search", "enemy", "arrow", "-d", "alpha")
         self.assertTrue(r.stdout.startswith(
-            "no matches for 'enemy arrow' (entry names only"), r.stdout)
+            "no matches for 'enemy arrow' (entry names and page headings"), r.stdout)
         self.assertEqual(len(r.stdout.splitlines()), 1)
 
     def test_docvol_name_is_case_insensitive(self):
@@ -647,7 +647,8 @@ class SearchTests(unittest.TestCase):
         r = self.cli("search", "slp", "-d", "alpha")
         self.assertTrue(r.stdout.startswith("no exact, prefix or substring matches"))
         r = self.cli("search", "qqq", "-d", "alpha")
-        self.assertTrue(r.stdout.startswith("no matches for 'qqq' (entry names only"))
+        self.assertTrue(r.stdout.startswith(
+            "no matches for 'qqq' (entry names and page headings"), r.stdout)
         self.assertEqual(out[0].split("  ")[:2], ["beta:c", "Guide"])
         self.assertTrue(out[1].startswith("alpha:b  "))
 
@@ -1654,8 +1655,8 @@ class NetworkTests(unittest.TestCase):
         self.assertEqual(self.main("remove", "python")[0], 5)
 
 
-TOP_HELP_EXPECTED = """\
-docshelf 0.1.0: look up DevDocs documentation offline (stdlib only).
+TOP_HELP_EXPECTED = "docshelf " + shelf_core.VERSION + """\
+: look up DevDocs documentation offline (stdlib only).
 This is the command reference; `<command> --help` adds only the options
 listed at the end. REF = <docvol>:<path>[#anchor], as search and fts print
 them; <docvol> is the name `list` prints.
@@ -1663,11 +1664,13 @@ A docvol is a DevDocs documentation plus docshelf's own metadata, indexes
 and notes.
 
 Look up (usual order):
-  search QUERY... [-d NAME]      entries whose names contain all the words;
-                                 prints one REF per entry, best first
+  search QUERY... [-d NAME]      entries whose names contain all the words,
+                                 and headings inside pages when no entry
+                                 name is an exact match; one REF per hit,
+                                 best first
   show REF                       that entry's section (max 150 lines) plus
                                  your notes for it
-  show REF --grep TEXT           only lines containing TEXT, with their
+  show REF --grep=TEXT           only lines containing TEXT, with their
                                  heading, table header row, and a matching
                                  term's definition (repeatable; plain text,
                                  not a pattern, case-insensitive)
@@ -1801,6 +1804,14 @@ class McpTests(unittest.TestCase):
         self.assertEqual(q["properties"]["docvols"]["type"], "array")
         self.assertEqual(sorted(by_name["notes"]["inputSchema"]["properties"]),
                          ["check", "docvol"])
+
+    def test_not_installed_docvol_names_the_install_tool(self):
+        add_listed_only(self.cache, "duckdb", "DuckDB")
+        r = self.call("search", {"query": ["x"], "docvols": ["duckdb"]})
+        self.assertTrue(r["isError"])
+        self.assertIn("docvol 'duckdb' is not installed; DevDocs has it: run "
+                      "the `install` tool with names [\"duckdb\"]",
+                      r["content"][0]["text"])
 
     def test_search_matches_cli(self):
         r = self.call("search", {"query": ["frobnicate"], "docvols": ["alpha"]})
@@ -2188,6 +2199,39 @@ class NotesPageHeadingTests(unittest.TestCase):
         with open(os.path.join(self.notes, "duckdb.md"), "w", encoding="utf-8") as f:
             f.write(text)
 
+    def test_old_format_headings_cache_is_rebuilt(self):
+        ds = shelf_devdocs.DevDocsDocvol(self.folder)
+        os.makedirs(ds.data_dir(), exist_ok=True)
+        with open(os.path.join(ds.data_dir(), "headings.json"), "w") as f:
+            json.dump({"stamp": ds.stamp(),
+                       "headings": {"sql/utility": [["bogus", None]]}}, f)
+        self.write_notes("## count_if\nNon-zero counts as true.\n")
+        r = self.cli("notes", "duckdb", "--check")
+        self.assertEqual(r.stdout.splitlines()[-1], "ok", r.stdout)
+
+    def test_check_says_how_many_pages_it_could_not_read(self):
+        self.write_notes("## count_if\nNon-zero counts as true.\n")
+        real = shelf_devdocs.DevDocsDocvol.page_html
+
+        def page_html(ds, page):
+            if page == "sql/other":
+                raise ValueError("broken page")
+            return real(ds, page)
+        out = io.StringIO()
+        with mock.patch.object(shelf_devdocs.DevDocsDocvol, "page_html", page_html), \
+                mock.patch.dict(os.environ, self.env), \
+                contextlib.redirect_stdout(out):
+            code = shelf_cli.main(["notes", "duckdb", "--check"])
+        self.assertEqual(code, 0, out.getvalue())
+        self.assertIn("note: 1 page could not be read; its headings are not "
+                      "checked", out.getvalue().splitlines())
+
+    def test_grep_rewrite_stops_at_double_dash(self):
+        self.assertEqual(
+            shelf_cli._join_grep_values(
+                ["show", "R", "--grep", "a", "--", "--grep", "b"]),
+            ["show", "R", "--grep=a", "--", "--grep", "b"])
+
     def test_check_accepts_page_heading_and_lists_its_ref(self):
         self.write_notes("## count_if\nNon-zero counts as true.\n")
         r = self.cli("notes", "duckdb", "--check")
@@ -2238,8 +2282,9 @@ class NotesPageHeadingTests(unittest.TestCase):
         cache = os.path.join(self.folder, shelf_devdocs.DERIVED, "headings.json")
         self.assertTrue(os.path.isfile(cache))
         with open(cache, encoding="utf-8") as f:
-            self.assertEqual(json.load(f)["stamp"],
-                             shelf_devdocs.DevDocsDocvol(self.folder).stamp())
+            self.assertEqual(json.load(f)["stamp"], "%s|headings%d" % (
+                shelf_devdocs.DevDocsDocvol(self.folder).stamp(),
+                shelf_notes.HEADINGS_FORMAT))
         with open(os.path.join(self.folder, "db.json"), encoding="utf-8") as f:
             pages = json.load(f)
         pages["sql/other"] = self.OTHER + "<h3 id='sumx'>sum(x)</h3><p>Adds.</p>"
@@ -2256,6 +2301,151 @@ class NotesPageHeadingTests(unittest.TestCase):
         self.assertEqual(shelf_notes.heading_refs(blocks),
                          [("A", "a"), ("no_id(x)", "a"), ("Bare", None)])
         self.assertTrue(shelf_ds.pages())
+
+
+class SearchHeadingTests(unittest.TestCase):
+    """search falls back to headings inside pages when no entry name matches
+    (DuckDB indexes whole sections, so function names are only headings)."""
+    UTIL, OTHER = NotesPageHeadingTests.UTIL, NotesPageHeadingTests.OTHER
+
+    def setUp(self):
+        NotesPageHeadingTests.setUp(self)
+
+    def cli(self, *args):
+        return run_cli(*args, env=self.env, cwd=self.tmp)
+
+    def test_entry_miss_lists_matching_page_headings(self):
+        r = self.cli("search", "count_if", "-d", "duckdb")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        out = r.stdout.splitlines()
+        self.assertIn("headings inside pages", out[0])
+        self.assertIn("duckdb:sql/utility#count_ifx  (heading)  count_if(x)", out)
+        self.assertNotIn("typeof", r.stdout)
+
+    def test_entry_hit_skips_headings(self):
+        r = self.cli("search", "misc", "-d", "duckdb")
+        self.assertIn("duckdb:sql/other#misc  Section  Misc", r.stdout.splitlines())
+        self.assertNotIn("(heading)", r.stdout)
+
+    def test_type_filter_skips_headings(self):
+        r = self.cli("search", "count_if", "-d", "duckdb", "--type", "Section")
+        self.assertNotIn("(heading)", r.stdout)
+        self.assertTrue(r.stdout.startswith(
+            "no matches for 'count_if' (entry names only"), r.stdout)
+
+    def add_beta(self):
+        page = ("<h2 id='regex'>Regular Expressions</h2>"
+                "<h3 id='using-rx'>Using rx_extract</h3><p>u</p>"
+                "<h4 id='rx_extracts'>rx_extract(s)</h4><p>e</p>"
+                "<h4 id='rx_extract_alls'>rx_extract_all(s)</h4><p>a</p>")
+        make_devdocs(self.cache, "beta", name="Beta", release="1",
+                     entries=[("Using rx_extract", "Section", "re#using-rx"),
+                              ("Regular Expressions", "Section", "re#regex")],
+                     pages={"re": page})
+
+    def test_substring_entry_hit_still_adds_exact_headings_first(self):
+        self.add_beta()
+        r = self.cli("search", "rx_extract", "-d", "beta")
+        self.assertEqual(r.stdout.splitlines(), [
+            "beta:re#rx_extracts  (heading)  rx_extract(s)",
+            "beta:re#using-rx  Section  Using rx_extract"])
+
+    def test_entry_hit_leaves_out_prefix_headings(self):
+        self.add_beta()
+        r = self.cli("search", "regular", "-d", "beta")
+        self.assertEqual(r.stdout.splitlines(),
+                         ["beta:re#regex  Section  Regular Expressions"])
+
+    def test_json_marks_heading_hits(self):
+        r = self.cli("search", "typeof", "-d", "duckdb", "--json")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertEqual(json.loads(r.stdout), [
+            {"ref": "duckdb:sql/utility#typeofx", "docvol": "duckdb",
+             "type": "(heading)", "name": "typeof(x)", "rank": 0}])
+
+
+class AttributionTests(unittest.TestCase):
+    """DevDocs ends every page with a licence notice and the upstream URL
+    (div._attribution); docshelf leaves it out of what it renders."""
+    ATTR = ('<div class="_attribution">\n  <p class="_attribution-p">\n'
+            '    &copy; 2006&ndash;2020 Team<br>Licensed under the Zlib License.<br>\n'
+            '    <a href="https://example.org/wiki/f" class="_attribution-link">'
+            'https://example.org/wiki/f</a>\n  </p>\n</div>\n')
+
+    def setUp(self):
+        SearchTests.setUp(self)
+
+    def cli(self, *args):
+        return run_cli(*args, env=self.env, cwd=self.tmp)
+
+    def add(self, page):
+        make_devdocs(self.cache, "lib", name="Lib", release="1",
+                     entries=[("f", "Function", "f")], pages={"f": page})
+
+    def test_show_leaves_out_trailing_attribution(self):
+        self.add("<h1>f</h1><p>Does f.</p>" + self.ATTR)
+        r = self.cli("show", "lib:f")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertIn("Does f.", r.stdout)
+        self.assertNotIn("Licensed", r.stdout)
+        self.assertNotIn("example.org", r.stdout)
+
+    def test_fts_does_not_index_attribution(self):
+        self.add("<h1>f</h1><p>Does f.</p>" + self.ATTR)
+        r = self.cli("fts", "Licensed", "-d", "lib")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertNotIn("lib:f", r.stdout)
+
+    def test_attribution_class_mid_page_is_kept(self):
+        self.add("<h1>f</h1>" + self.ATTR + "<p>Does f.</p>")
+        r = self.cli("show", "lib:f")
+        self.assertIn("Licensed", r.stdout)
+
+
+def add_listed_only(cache, slug, name):
+    """Add a row to the cached DevDocs list without installing it."""
+    path = os.path.join(cache, "devdocs", "docs.json")
+    rows = []
+    if os.path.isfile(path):
+        with open(path, encoding="utf-8") as f:
+            rows = json.load(f)
+    rows.append({"name": name, "slug": slug, "type": slug.split("~")[0],
+                 "version": "", "release": "1", "mtime": 1700000000,
+                 "db_size": 1, "attribution": "", "alias": None, "links": {}})
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    with open(path, "w", encoding="utf-8") as f:
+        json.dump(rows, f)
+
+
+class InstallHintTests(unittest.TestCase):
+    """A docvol name that DevDocs lists but isn't installed says how to
+    install it (from the cached list; never the network)."""
+
+    def setUp(self):
+        SearchTests.setUp(self)
+        make_devdocs(self.cache, "alpha", name="Alpha", release="1",
+                     entries=[("x", "Function", "x")], pages={"x": "<p>t</p>"})
+        add_listed_only(self.cache, "duckdb", "DuckDB")
+
+    def cli(self, *args):
+        return run_cli(*args, env=self.env, cwd=self.tmp)
+
+    def test_scope_name_listed_by_devdocs_says_install(self):
+        r = self.cli("search", "x", "-d", "DuckDB")
+        self.assertEqual(r.returncode, 4)
+        self.assertEqual(r.stderr.strip(), "docvol 'DuckDB' is not installed; "
+                         "DevDocs has it: docshelf.py install duckdb")
+
+    def test_ref_docvol_listed_by_devdocs_says_install(self):
+        r = self.cli("show", "duckdb:a")
+        self.assertEqual(r.returncode, 5)
+        self.assertIn("docshelf.py install duckdb", r.stderr)
+
+    def test_name_devdocs_does_not_list_keeps_unknown_message(self):
+        r = self.cli("search", "x", "-d", "nope")
+        self.assertEqual(r.returncode, 4)
+        self.assertIn("unknown docvol 'nope'", r.stderr)
+        self.assertNotIn("install", r.stderr)
 
 
 class GrepDashValueTests(unittest.TestCase):

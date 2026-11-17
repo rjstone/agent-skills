@@ -20,6 +20,10 @@ MANIFEST_URL = "https://devdocs.io/docs.json"
 DOCUMENTS_BASE = "https://documents.devdocs.io"
 # Unambiguous on purpose: a server can filter or rate-limit by it.
 USER_AGENT = "docshelf/" + VERSION
+# DevDocs ends every page with a licence notice and the upstream URL; it is
+# the same on every page but the URL, so it is left out of what we render.
+_ATTRIBUTION = re.compile(
+    r'<div class="_attribution">(?:(?!<div).)*?</div>\s*\Z', re.S)
 MANIFEST_MAX_AGE = 86400
 NET_TIMEOUT = 60
 SLUG_RE = re.compile(r"^[a-z0-9][a-z0-9._~+-]*$", re.IGNORECASE)
@@ -189,7 +193,7 @@ class DevDocsDocvol(Docvol):
         span = self.page_index().get(page)
         if span is None:
             raise CLIError("no page %r in %s" % (page, self.name), 5)
-        return read_span(self.db_path, span)
+        return _ATTRIBUTION.sub("", read_span(self.db_path, span))
 
     def resolve(self, rest: str) -> Tuple[str, Optional[str], Optional[Entry]]:
         page, _, anchor = rest.partition("#")
@@ -311,6 +315,17 @@ def get_manifest(cfg: Config, refresh: bool = False) -> List[dict]:
                        "DOCSHELF_CACHE_DIR to a writable folder)"
                        % (devdocs_dir(cfg), e), 2)
     return rows
+
+
+def not_installed_message(cfg: Config, name: str, how) -> Optional[str]:
+    """For a docvol name that isn't installed: when the cached DevDocs list
+    (any age; never the network) has it, say so and how(slug) installs it."""
+    try:
+        row = resolve_install(_manifest_rows(_load(
+            os.path.join(devdocs_dir(cfg), "docs.json"))), name)
+    except (OSError, ValueError, CLIError):
+        return None
+    return "docvol %r is not installed; DevDocs has it: %s" % (name, how(row["slug"]))
 
 
 def _manifest_rows(data) -> List[dict]:
