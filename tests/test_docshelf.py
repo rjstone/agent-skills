@@ -38,45 +38,51 @@ import shelf_lookup  # noqa: E402
 import shelf_notes  # noqa: E402
 import shelf_render  # noqa: E402
 
-LEAKY_ENV = ("DOCSHELF_CACHE_DIR", "DOCSHELF_NOTES_DIR", "APPDATA",
-             "LOCALAPPDATA", "OLDPWD")
-
-
-# Variables that point discovery at real docset folders or a real Zeal/Dash
-# install; the test run replaces them with an empty temp folder (below).
-LOCATION_ENV = ("HOME", "USERPROFILE", "ProgramFiles", "ProgramFiles(x86)",
-                "DASHT_DOCSETS_DIR", "DOCSHELF_DOCSET_DIRS")
 _EMPTY = tempfile.mkdtemp(prefix="docshelf-empty-")
 atexit.register(shutil.rmtree, _EMPTY, ignore_errors=True)
-LEAKY_ENV = LEAKY_ENV + LOCATION_ENV[2:]
+
+# Variables removed for every test: they would leak the real cache or notes,
+# or point discovery at real docset folders or a real Zeal/Dash install. Every
+# XDG_* variable goes too. HOME, USERPROFILE and PATH are replaced by an empty
+# folder instead, and DOCSHELF_NO_SYSTEM_APPS=1 (a test hook of shelf_dash)
+# skips the fixed app paths (/Applications, /var/lib/flatpak) and the registry.
+LEAKY_ENV = ("DOCSHELF_CACHE_DIR", "DOCSHELF_NOTES_DIR", "APPDATA", "LOCALAPPDATA",
+             "OLDPWD", "ProgramFiles", "ProgramFiles(x86)", "DASHT_DOCSETS_DIR",
+             "DOCSHELF_DOCSET_DIRS")
+ISOLATED_ENV = {"PATH": _EMPTY, "HOME": _EMPTY, "USERPROFILE": _EMPTY,
+                "DOCSHELF_NO_SYSTEM_APPS": "1"}
 
 
 def clean_env():
-    """os.environ without variables that would leak the real cache or notes,
-    and with PATH and the home folder pointing at an empty folder so a real
-    Zeal or Dash install is never found."""
+    """os.environ without the LEAKY_ENV and XDG_* variables, plus
+    ISOLATED_ENV: a real Zeal or Dash install is never found."""
     env = {k: v for k, v in os.environ.items()
            if k not in LEAKY_ENV and not k.startswith("XDG_")}
-    env.update({"PATH": _EMPTY, "HOME": _EMPTY, "USERPROFILE": _EMPTY})
+    env.update(ISOLATED_ENV)
     return env
 
 
-_MODULE_ENV = None
+_MODULE_PATCHES: list = []
 
 
 def setUpModule():
-    """In-process tests patch os.environ and discovery reads it: same
-    isolation as clean_env, undone afterwards (other test modules need PATH)."""
-    global _MODULE_ENV
-    _MODULE_ENV = mock.patch.dict(os.environ)
-    _MODULE_ENV.start()
-    os.environ.update({"PATH": _EMPTY, "HOME": _EMPTY, "USERPROFILE": _EMPTY})
-    for k in LEAKY_ENV:
-        os.environ.pop(k, None)
+    """In-process tests read os.environ and shelf_dash's system locations:
+    same isolation as clean_env, plus no fixed app paths and no registry,
+    undone afterwards (other test modules need PATH)."""
+    _MODULE_PATCHES[:] = [
+        mock.patch.dict(os.environ),
+        mock.patch.object(shelf_dash, "SYSTEM_APP_PATHS", ()),
+        mock.patch.object(shelf_dash, "_zeal_registry_path", lambda: None)]
+    for p in _MODULE_PATCHES:
+        p.start()
+    for k in [k for k in os.environ if k in LEAKY_ENV or k.startswith("XDG_")]:
+        del os.environ[k]
+    os.environ.update(ISOLATED_ENV)
 
 
 def tearDownModule():
-    _MODULE_ENV.stop()
+    for p in reversed(_MODULE_PATCHES):
+        p.stop()
 
 
 def run_cli(*args, env=None, cwd=None, script=SCRIPT):
@@ -3397,6 +3403,48 @@ class DashCatalogTests(unittest.TestCase):
         self.assertIn("api.github.com", str(e))
         self.assertIn("assets/allowlist.txt", str(e))
         self.assertNotIn("(devdocs.io", str(e))
+
+
+class EnvIsolationTests(unittest.TestCase):
+    """In-process tests never see the developer's real docsets or apps."""
+
+    def test_module_setup_drops_xdg_and_system_apps(self):
+        self.assertEqual([k for k in os.environ if k.startswith("XDG_")], [])
+        self.assertEqual(shelf_dash.SYSTEM_APP_PATHS, ())
+        self.assertIsNone(shelf_dash._zeal_registry_path())
+
+    def test_probe_in_process_list(self):
+        """Run in a child below with XDG_DATA_HOME set in its parent env."""
+        with tempfile.TemporaryDirectory() as cache:
+            with mock.patch.dict(os.environ, {"DOCSHELF_CACHE_DIR": cache}):
+                out = io.StringIO()
+                with contextlib.redirect_stdout(out):
+                    self.assertEqual(shelf_cli.main(["list"]), 0)
+        self.assertNotIn("Leaky", out.getvalue())
+
+    def test_parent_xdg_data_home_is_ignored(self):
+        with tempfile.TemporaryDirectory() as data:
+            make_docset(os.path.join(data, "Zeal", "Zeal", "docsets"), "Leaky",
+                        [("x", "Function", "x.html")], {"x.html": "<p>x</p>"})
+            env = dict(os.environ, XDG_DATA_HOME=data)
+            r = subprocess.run(
+                [sys.executable, "-m", "unittest",
+                 "test_docshelf.EnvIsolationTests.test_probe_in_process_list"],
+                capture_output=True, text=True, env=env,
+                cwd=os.path.dirname(os.path.abspath(__file__)))
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertIn("Ran 1 test", r.stderr)
+        self.assertNotIn("skipped", r.stderr)
+
+    def test_no_system_apps_hook(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            app = os.path.join(tmp, "Zeal.app")
+            os.makedirs(app)
+            with mock.patch.object(shelf_dash, "SYSTEM_APP_PATHS", (("Zeal", app),)):
+                self.assertEqual(shelf_dash.viewer_apps({"PATH": _EMPTY}),
+                                 [("Zeal", app)])
+                self.assertEqual(shelf_dash.viewer_apps(
+                    {"PATH": _EMPTY, "DOCSHELF_NO_SYSTEM_APPS": "1"}), [])
 
 
 if __name__ == "__main__":

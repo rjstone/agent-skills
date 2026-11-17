@@ -410,7 +410,34 @@ def open_docset(path: str, source: str, cache_dir: str) -> Optional[DashDocvol]:
 # Dash (macOS): ~/Library/Application Support/Dash/DocSets/<Name>/<Name>.docset.
 # Dash for Windows (Store package): %LOCALAPPDATA%\Packages\<Kapeli.Dash_...>,
 # docsets somewhere below it.
-# Every location comes from the env mapping given, never from the process.
+# Every location comes from the env mapping given, never from the process,
+# except the fixed system paths below and the Windows registry.
+
+# Fixed app locations no variable controls: (app, path).
+SYSTEM_APP_PATHS: Tuple[Tuple[str, str], ...] = (
+    ("Dash", "/Applications/Dash.app"),
+    ("Dash", "/Applications/Setapp/Dash.app"),
+    ("Zeal", "/Applications/Zeal.app"),
+    ("Zeal", "/var/lib/flatpak/app/org.zealdocs.Zeal"),
+)
+
+
+def _no_system(env) -> bool:
+    # Test hook: DOCSHELF_NO_SYSTEM_APPS=1 skips SYSTEM_APP_PATHS and the
+    # registry, so tests never find a real Dash or Zeal install.
+    return env.get("DOCSHELF_NO_SYSTEM_APPS") == "1"
+
+
+def _zeal_registry_path() -> Optional[str]:
+    """Zeal's docsets folder from the Windows registry, if set."""
+    if sys.platform != "win32":
+        return None
+    try:
+        import winreg
+        with winreg.OpenKey(winreg.HKEY_CURRENT_USER, r"Software\Zeal\Zeal\docsets") as k:
+            return str(winreg.QueryValueEx(k, "path")[0])
+    except OSError:
+        return None
 
 
 def _home(env) -> str:
@@ -449,13 +476,8 @@ def _zeal_custom_paths(env, apps=()) -> List[str]:
             out.append(data.get("docsets.path") or (data.get("docsets") or {}).get("path"))
         except (OSError, ValueError, AttributeError, plistlib.InvalidFileException):
             pass
-    if sys.platform == "win32":
-        try:
-            import winreg
-            with winreg.OpenKey(winreg.HKEY_CURRENT_USER, r"Software\Zeal\Zeal\docsets") as k:
-                out.append(str(winreg.QueryValueEx(k, "path")[0]))
-        except OSError:
-            pass
+    if not _no_system(env):
+        out.append(_zeal_registry_path())
     for app, where in apps:  # portable Zeal: zeal.ini beside zeal.exe
         if app == "Zeal" and where.lower().endswith(".exe"):
             app_dir = os.path.dirname(where)
@@ -480,14 +502,10 @@ def _dash_windows_packages(env) -> List[str]:
 def viewer_apps(env) -> List[Tuple[str, str]]:
     """Installed Dash or Zeal apps: (app, where found)."""
     home = _home(env)
-    checks = [("Dash", p) for p in (
-        "/Applications/Dash.app", "/Applications/Setapp/Dash.app",
-        _join(home, "Applications", "Dash.app"))]
+    checks = [] if _no_system(env) else list(SYSTEM_APP_PATHS)
+    checks += [("Dash", _join(home, "Applications", "Dash.app"))]
     checks += [("Dash", p) for p in _dash_windows_packages(env)]
-    checks += [("Zeal", p) for p in (
-        "/Applications/Zeal.app",
-        _join(home, ".var", "app", "org.zealdocs.Zeal"),
-        "/var/lib/flatpak/app/org.zealdocs.Zeal")]
+    checks += [("Zeal", _join(home, ".var", "app", "org.zealdocs.Zeal"))]
     for var in ("ProgramFiles", "ProgramFiles(x86)", "LOCALAPPDATA"):
         if env.get(var):
             sub = ("Programs", "Zeal") if var == "LOCALAPPDATA" else ("Zeal",)
