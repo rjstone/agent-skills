@@ -18,6 +18,18 @@ from shelf_core import CLIError
 
 PROTOCOLS = ("2025-06-18", "2025-03-26", "2024-11-05")
 
+# Sent in the initialize result: how a client's model should use the tools.
+INSTRUCTIONS = (
+    "Offline DevDocs and Dash/Zeal reference. Call `search` with a name; it "
+    "prints REFs (docvol:path#anchor); pass one to `show` to read it. When "
+    "names don't match, `fts` searches the words in page text (include the "
+    "function name). `toc` lists a long page's headings; `show` a REF from "
+    "it, or pass `grep` to `show` to see only matching lines. Narrow "
+    "searches with `docvols`; `suggest` proposes a project's docvols. Run "
+    "`list` to see what is installed; `sources` finds documentation to "
+    "`install`. Record lessons with `notes`."
+)
+
 # One-line fixes that replace a "references/X.md" (or assets/) pointer in an
 # error message: a client has no skill folder to open.
 HINTS = {
@@ -37,17 +49,8 @@ _POINTER = re.compile(
     r"(?: in the skill folder)?(?: \([^)]*\))?")
 
 
-def explain(message: str) -> str:
-    def fix(m):
-        return HINTS.get(m.group(1), m.group(0))
-    return _POINTER.sub(fix, message)
-
-
 def _dest(p: shelf_cli.Param) -> str:
-    if not p.flags[0].startswith("-"):
-        return p.flags[0]
-    long = [f for f in p.flags if f.startswith("--")] or list(p.flags)
-    return long[0].lstrip("-").replace("-", "_")
+    return shelf_cli.param_dest(p)
 
 
 def _prop_name(p: shelf_cli.Param) -> str:
@@ -63,6 +66,86 @@ def _tool_params(c: shelf_cli.Command) -> List[shelf_cli.Param]:
     if c.name == "notes":  # read-only over MCP: no --path
         return [p for p in c.params if p.flags[0] != "--path"]
     return c.params
+
+
+def _first_positional(c: shelf_cli.Command) -> Optional[shelf_cli.Param]:
+    return next((p for p in _tool_params(c) if _positional(p)), None)
+
+
+def _flag_names() -> Dict[str, str]:
+    """CLI flag -> tool argument name, from the COMMANDS table."""
+    names: Dict[str, str] = {}
+    for c in _mcp_commands():
+        for p in _tool_params(c):
+            for f in p.flags:
+                if f.startswith("-"):
+                    names[f] = _prop_name(p)
+    return names
+
+
+_QUOTED = re.compile(r"""(?<!\w)'[^'\n]*'(?!\w)|"[^"\n]*\"""")
+
+
+def explain(message: str) -> str:
+    """Rewrite an error message for a tool caller: the replacement for each
+    `docshelf.py <cmd>`, bare `<cmd> PLACEHOLDER` phrase or CLI flag is the
+    tool or argument name, so nothing points at a command line."""
+    def fix(m):
+        return HINTS.get(m.group(1), m.group(0))
+    message = _POINTER.sub(fix, message)
+    # docshelf quotes user input ('x' or "x"); only the text around it is ours
+    out, pos = [], 0
+    for q in _QUOTED.finditer(message):
+        out.append(_rewrite(message[pos:q.start()]))
+        out.append(q.group(0))
+        pos = q.end()
+    out.append(_rewrite(message[pos:]))
+    return "".join(out)
+
+
+def _rewrite(message: str) -> str:
+    cmds = {c.name: c for c in _mcp_commands()}
+    alt = "|".join(re.escape(n) for n in sorted(cmds, key=len, reverse=True))
+    flags = _flag_names()
+
+    def flag_name(flag: str) -> str:
+        return flags.get(flag) or flag.lstrip("-").replace("-", "_")
+
+    def program(m):  # docshelf.py install alpha
+        tool = "the `%s` tool" % m.group(1)
+        arg, pos = m.group(2), _first_positional(cmds[m.group(1)])
+        if not arg:
+            return tool
+        if arg.isupper():  # a placeholder such as QUERY
+            return tool
+        if pos is None:
+            return "%s %s" % (tool, arg)
+        many = pos.nargs in ("+", "*") or pos.repeat
+        return "%s with %s %s" % (tool, _prop_name(pos),
+                                  json.dumps([arg] if many else arg))
+
+    message = re.sub(r"docshelf\.py (%s)(?: ([^\s)]+))?" % alt, program, message)
+
+    def needs(m):  # install needs NAME
+        pos = _first_positional(cmds[m.group(1)])
+        return "the `%s` tool needs %s" % (
+            m.group(1), "`%s`" % _prop_name(pos) if pos else "an argument")
+
+    message = re.sub(r"\b(%s) needs [A-Z]{2,}\b" % alt, needs, message)
+
+    def with_flag(m):  # install --force alpha
+        rest = m.group(3)
+        if rest and rest in re.split(r"[\s(),;:]+", message[:m.start()]):
+            rest = None  # a value already named earlier in the message
+        return "the `%s` tool with `%s`%s" % (
+            m.group(1), flag_name(m.group(2)), " " + rest if rest else "")
+
+    message = re.sub(r"\b(%s) (--[a-z][\w-]*)(?: ([^\s)-][^\s)]*))?" % alt,
+                     with_flag, message)
+    message = re.sub(r"\b(%s) [A-Z]{2,}(?:\.\.\.)?\b" % alt,
+                     lambda m: "the `%s` tool" % m.group(1), message)
+    return re.sub(r"(?<![\w-])(-d|--[a-z][\w-]*)(?![\w-])(?: [A-Z]{2,}\b)?",
+                  lambda m: "`%s`" % flag_name(m.group(1)), message)
 
 
 def _mcp_commands() -> List[shelf_cli.Command]:
@@ -102,10 +185,9 @@ def tool_schemas() -> List[dict]:
 
 
 def _parser_defaults(c: shelf_cli.Command) -> dict:
-    """Every dest the command's argparse parser defines, with its default, so
-    tools and the command line cannot drift apart."""
-    sub = shelf_cli.build_parser()._subparsers._group_actions[0].choices[c.name]
-    return {a.dest: a.default for a in sub._actions if a.dest != "help"}
+    """Every dest the command defines, with its default, so tools and the
+    command line cannot drift apart (tests compare with argparse)."""
+    return shelf_cli.param_defaults(c)
 
 
 def _build_namespace(c: shelf_cli.Command, arguments: dict) -> argparse.Namespace:
@@ -201,8 +283,14 @@ def _error(id_: Any, code: int, message: str) -> dict:
 def handle(msg: Any) -> Optional[dict]:
     """Reply to one decoded message, or None (a notification)."""
     if not isinstance(msg, dict) or not isinstance(msg.get("method"), str):
-        return _error(msg.get("id") if isinstance(msg, dict) else None,
+        id_ = msg.get("id") if isinstance(msg, dict) else None
+        return _error(id_ if isinstance(id_, (str, int))
+                      and not isinstance(id_, bool) else None,
                       -32600, "invalid request")
+    if "id" in msg and (isinstance(msg["id"], bool)
+                        or not isinstance(msg["id"], (str, int))):
+        # MCP forbids a null id; JSON-RPC ids are strings or integers here
+        return _error(None, -32600, "invalid request")
     if "id" not in msg:
         return None
     id_, method = msg["id"], msg["method"]
@@ -214,7 +302,8 @@ def handle(msg: Any) -> Optional[dict]:
         return {"jsonrpc": "2.0", "id": id_, "result": {
             "protocolVersion": want if want in PROTOCOLS else PROTOCOLS[0],
             "capabilities": {"tools": {}},
-            "serverInfo": {"name": "docshelf", "version": shelf_core.VERSION}}}
+            "serverInfo": {"name": "docshelf", "version": shelf_core.VERSION},
+            "instructions": INSTRUCTIONS}}
     if method == "ping":
         return {"jsonrpc": "2.0", "id": id_, "result": {}}
     if method == "tools/list":
@@ -228,6 +317,15 @@ def handle(msg: Any) -> Optional[dict]:
     return _error(id_, -32601, "method not found: %s" % method)
 
 
+def handle_batch(msgs: list) -> Any:
+    """Reply to a JSON-RPC batch: the non-null replies in order as an array,
+    None when every message was a notification, one error for `[]`."""
+    if not msgs:
+        return _error(None, -32600, "invalid request")
+    replies = [r for r in map(handle, msgs) if r is not None]
+    return replies or None
+
+
 def serve(inp: TextIO, out: TextIO) -> int:
     for line in inp:
         line = line.strip()
@@ -238,7 +336,7 @@ def serve(inp: TextIO, out: TextIO) -> int:
         except ValueError:
             reply = _error(None, -32700, "parse error")
         else:
-            reply = handle(msg)
+            reply = handle_batch(msg) if isinstance(msg, list) else handle(msg)
         if reply is not None:
             out.write(json.dumps(reply, ensure_ascii=False) + "\n")
             out.flush()

@@ -284,6 +284,24 @@ def _add_param(parser, p: Param):
     parser.add_argument(*p.flags, **kwargs)
 
 
+def param_dest(p: Param) -> str:
+    """The attribute name argparse gives the parameter."""
+    if not p.flags[0].startswith("-"):
+        return p.flags[0]
+    long = [f for f in p.flags if f.startswith("--")] or list(p.flags)
+    return long[0].lstrip("-").replace("-", "_")
+
+
+def param_defaults(c: Command) -> dict:
+    """dest -> default for each of the command's parameters, as _add_param
+    gives them to argparse (flags False, others `default` or None)."""
+    out = {}
+    for p in c.params:
+        d = False if p.kind == "flag" else p.default
+        out[param_dest(p)] = list(d) if isinstance(d, list) else d
+    return out
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = _Parser(prog="docshelf", add_help=False,
                      description="Offline, version-pinned DevDocs documentation.")
