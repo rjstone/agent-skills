@@ -2515,6 +2515,33 @@ class SearchHeadingTests(unittest.TestCase):
              "type": "(heading)", "name": "typeof(x)", "rank": 0}])
 
 
+class ClosedPipeTests(unittest.TestCase):
+    """Output piped into a reader that stops early (`show REF | head`) ends
+    quietly, without an error message."""
+
+    def test_closed_stdout_is_quiet(self):
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        cache = os.path.join(tmp.name, "cache")
+        body = "".join("<p>line %d %s</p>" % (i, "x" * 60) for i in range(20000))
+        make_devdocs(cache, "big", name="Big", release="1",
+                     entries=[("big", "Guide", "big")], pages={"big": body})
+        env = clean_env()
+        env.update({"DOCSHELF_CACHE_DIR": cache,
+                    "DOCSHELF_NOTES_DIR": os.path.join(tmp.name, "notes")})
+        p = subprocess.Popen([sys.executable, SCRIPT, "show", "big:big",
+                              "--max-lines", "100000"],
+                             stdout=subprocess.PIPE, stderr=subprocess.PIPE, env=env)
+        p.stdout.readline()
+        p.stdout.close()  # what `head -1` does
+        err = p.stderr.read().decode("utf-8", "replace")
+        p.stderr.close()
+        p.wait(timeout=60)
+        self.assertNotIn("BrokenPipe", err)
+        self.assertNotIn("Traceback", err)
+        self.assertEqual(err, "")
+
+
 class AttributionTests(unittest.TestCase):
     """DevDocs ends every page with a licence notice and the upstream URL
     (div._attribution); docshelf leaves it out of what it renders."""
@@ -3335,6 +3362,13 @@ class DashReadOnlyTests(unittest.TestCase):
             code = shelf_cli.main(list(argv))
         return code, out.getvalue(), err.getvalue()
 
+    def test_bare_update_with_only_docsets_says_so(self):
+        self.docset()
+        code, out, _err = self.main("update")
+        self.assertEqual(code, 0)
+        self.assertEqual(out.strip(), "no DevDocs docvols to update (Dash/Zeal "
+                         "docsets are updated in Dash or Zeal)")
+
     def snapshot(self, folder):
         found = []
         for dirpath, _, files in os.walk(folder):
@@ -3479,6 +3513,23 @@ class DashCatalogTests(unittest.TestCase):
         self.assertIn("Python_3  (Dash/Zeal: download in the app, official)", out)
         self.assertIn("Zeal's catalog", err)
         self.assertIn(shelf_dash.ZEAL_CATALOG_URL, self.net.fetched)
+
+    def test_zeal_catalog_fetched_once_per_run_on_refresh(self):
+        self.zeal_install()
+        for u in (shelf_dash.FEEDS_LIST_URL, shelf_dash.CONTRIB_LIST_URL):
+            self.net.pages[u] = shelf_devdocs.NetError(u, "blocked")
+        code, out, _err = self.main("sources", "python", "--refresh")
+        self.assertEqual(code, 0)
+        self.assertIn("Python_3  (Dash/Zeal: download in the app, official)", out)
+        self.assertEqual(self.net.fetched.count(shelf_dash.ZEAL_CATALOG_URL), 1)
+
+    def test_failing_zeal_catalog_fetched_once_per_run(self):
+        self.zeal_install()
+        for u in (shelf_dash.FEEDS_LIST_URL, shelf_dash.CONTRIB_LIST_URL,
+                  shelf_dash.ZEAL_CATALOG_URL):
+            self.net.pages[u] = shelf_devdocs.NetError(u, "blocked")
+        self.main("sources", "python")
+        self.assertEqual(self.net.fetched.count(shelf_dash.ZEAL_CATALOG_URL), 1)
 
     def test_catalog_failure_keeps_devdocs_part(self):
         self.zeal_install()

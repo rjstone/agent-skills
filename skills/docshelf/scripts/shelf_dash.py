@@ -871,10 +871,12 @@ def _cached_or_fetched(cfg, key: str, url: str, refresh: bool, slim):
     return data
 
 
-def label_names(cfg, label: str, refresh: bool = False) -> List[Tuple[str, str, str]]:
+def label_names(cfg, label: str, refresh: bool = False,
+                zeal: Optional[dict] = None) -> List[Tuple[str, str, str]]:
     """(name, version, title) of each docset of one kind: from GitHub (names
     only), from Zeal's catalog only when GitHub fails. CLIError(7) when both
-    fail."""
+    fail. zeal: a dict shared by the calls of one run, so Zeal's catalog is
+    fetched (or found unreachable) at most once per run."""
     key, url, kind, suffix, source_id = DOCSET_LISTS[label]
     try:
         names = _cached_or_fetched(cfg, key, url, refresh,
@@ -884,8 +886,7 @@ def label_names(cfg, label: str, refresh: bool = False) -> List[Tuple[str, str, 
         if getattr(first, "code", 7) != 7:
             raise
         try:
-            cat = _cached_or_fetched(cfg, _ZEAL_KEY, ZEAL_CATALOG_URL, refresh,
-                                     _slim_catalog)
+            cat = _zeal_once(cfg, refresh, zeal if zeal is not None else {})
             out = [(str(e["name"]), _first_version(e), str(e.get("title") or ""))
                    for e in cat if isinstance(e, dict) and e.get("sourceId") == source_id]
         except _SOURCE_ERRORS as e:
@@ -896,11 +897,27 @@ def label_names(cfg, label: str, refresh: bool = False) -> List[Tuple[str, str, 
         return out
 
 
+def _zeal_once(cfg, refresh: bool, memo: dict):
+    """Zeal's catalog, fetched or read at most once per memo; a failure is
+    remembered and raised again rather than retried."""
+    if "error" in memo:
+        raise memo["error"]
+    if "catalog" not in memo:
+        try:
+            memo["catalog"] = _cached_or_fetched(cfg, _ZEAL_KEY, ZEAL_CATALOG_URL,
+                                                 refresh, _slim_catalog)
+        except _SOURCE_ERRORS as e:
+            memo["error"] = e
+            raise
+    return memo["catalog"]
+
+
 def catalog_names(cfg, refresh: bool = False) -> List[Tuple[str, str, str, str]]:
     """(name, version, title, label) of every official and user-contributed
     docset; raises CLIError(7) when a kind cannot be loaded at all."""
+    zeal: dict = {}
     return [(n, v, t, label) for label in DOCSET_LISTS
-            for n, v, t in label_names(cfg, label, refresh)]
+            for n, v, t in label_names(cfg, label, refresh, zeal)]
 
 
 def cached_catalog_match(cfg, name: str) -> Optional[str]:

@@ -487,9 +487,10 @@ def _print_catalog_hits(cfg, args, words) -> None:
     norm = [shelf_dash._norm(w) for w in words]
     here = {shelf_dash._norm(d.name): d.name
             for d in shelf_dash.installed_docsets(cfg)}
+    zeal: dict = {}  # Zeal's catalog at most once per run
     for label in shelf_dash.DOCSET_LISTS:
         try:
-            names = shelf_dash.label_names(cfg, label, args.refresh)
+            names = shelf_dash.label_names(cfg, label, args.refresh, zeal)
         except CLIError as e:
             print("note: the Dash/Zeal %s list could not be loaded (%s)"
                   % (label, e), file=sys.stderr)
@@ -554,7 +555,11 @@ def cmd_update(cfg, args) -> int:
     else:
         targets = [d for d in have if not d.read_only]
     if not targets:
-        print("no docvols installed (install NAME; sources QUERY finds names)")
+        if have:
+            print("no DevDocs docvols to update (Dash/Zeal docsets are updated "
+                  "in Dash or Zeal)")
+        else:
+            print("no docvols installed (install NAME; sources QUERY finds names)")
         return 0
     rows = get_manifest(cfg, refresh=True)
     by_slug = {}

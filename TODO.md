@@ -40,9 +40,6 @@
       `@madhan-g-p/devdocs-mcp-server` (npm). Non-MCP: dasht, and Zeal's
       `zeal python:pprint` (opens the GUI). These are also candidates for
       `references/dash-zeal.md`'s "check for an existing MCP server first".
-- [ ] `docshelf`: piping output into `head` (`show REF | head`) prints
-      `error: BrokenPipeError` from the CLI's catch-all handler; exit
-      quietly on a closed stdout instead.
 - [ ] `docshelf`: agent trials as dash-docset ran them (no-skill baseline,
       Haiku, the opencode model set, CLI vs `--mcp`): fine-tuning after v1
       (the user, 2026-11-16).
@@ -94,12 +91,11 @@
     don't invalidate the fts/headings indexes (bump `FTS_FORMAT` and
     `HEADINGS_FORMAT` by hand); no tests for its cache reuse, stamp
     rebuild, plist keeper page or write-failure warning
-  - a bare `update` with only docsets prints "no docvols installed" (say
-    no DevDocs docvols); lazy `import shelf_backends` in 3 functions; no
+  - lazy `import shelf_backends` in 3 functions; no
     test for remove/update with a family name matching both kinds; `list`
     repeats "also as" per pair
-  - Zeal catalog fetched and noted once per label when both lists fall
-    back; one malformed `versions` entry discards the whole catalog with an
+  - the "came from Zeal's catalog" note prints once per list when both
+    fall back (the catalog itself is fetched once); one malformed `versions` entry discards the whole catalog with an
     unclear note; unused loop variables in `cached_catalog_match`; no tests
     for catalog cache expiry, malformed JSON or the MCP text of the new
     NetError; a stale GitHub cache isn't reused when a refetch fails

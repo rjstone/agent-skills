@@ -1,5 +1,6 @@
 """docshelf command line: the command table, parser and main()."""
 import argparse
+import os
 import sqlite3
 import sys
 import textwrap
@@ -273,6 +274,19 @@ def _join_grep_values(argv: List[str]) -> List[str]:
     return out
 
 
+def _closed_stdout() -> int:
+    """The reader of our output went away (`show REF | head`): end quietly.
+    stdout is pointed at the null device so the flush at exit can't raise
+    the same error again."""
+    try:
+        devnull = os.open(os.devnull, os.O_WRONLY)
+        os.dup2(devnull, sys.stdout.fileno())
+        os.close(devnull)
+    except (OSError, ValueError, AttributeError):
+        pass  # not a real file (tests); nothing left to flush
+    return 0
+
+
 def main(argv: Optional[List[str]] = None) -> int:
     parser = build_parser()
     argv = list(sys.argv[1:] if argv is None else argv)
@@ -301,6 +315,8 @@ def main(argv: Optional[List[str]] = None) -> int:
             cfg, e.docvol, lambda slug: "docshelf.py install " + slug))
         print(msg or str(e), file=sys.stderr)
         return e.code
+    except BrokenPipeError:
+        return _closed_stdout()
     except (OSError, sqlite3.Error, ValueError) as e:
         print("error: %s: %s" % (type(e).__name__, e), file=sys.stderr)
         return 2
