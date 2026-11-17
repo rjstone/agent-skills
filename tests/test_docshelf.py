@@ -1919,6 +1919,8 @@ Notes (format: references/notes.md in the skill folder):
   notes DOCVOL --path            the notes file to edit
   notes DOCVOL --check           after editing: which REFs show each section,
                                  then "ok"
+  notes DOCVOL --set HEADING --text TEXT   write a section (--delete HEADING
+                                 removes it), then the --check report
 
 Get and manage docvols (references/getting-docvols.md):
   list                           docvols, versions, source (devdocs, zeal,
@@ -2187,7 +2189,17 @@ class McpTests(unittest.TestCase):
         self.assertEqual(q["properties"]["all"]["type"], "boolean")
         self.assertEqual(q["properties"]["docvols"]["type"], "array")
         self.assertEqual(sorted(by_name["notes"]["inputSchema"]["properties"]),
-                         ["check", "docvol"])
+                         ["check", "delete", "docvol", "set", "text"])
+
+    def test_set_over_mcp(self):
+        r = self.call("notes", {"docvol": "alpha", "set": "frobnicate",
+                                "text": "Prefer frob2."})
+        self.assertFalse(r.get("isError"), r)
+        path = os.path.join(self.tmp, "notes", "alpha.md")
+        with open(path, encoding="utf-8") as f:
+            self.assertEqual(f.read(), "## frobnicate\nPrefer frob2.\n")
+        r = self.call("notes", {"docvol": "alpha", "delete": "nope"})
+        self.assertTrue(r["isError"])
 
     def test_not_installed_docvol_names_the_install_tool(self):
         add_listed_only(self.cache, "duckdb", "DuckDB")
@@ -2548,6 +2560,108 @@ class FinalReviewTests(unittest.TestCase):
                            capture_output=True, env={**clean_env(), **env})
         self.assertEqual(r.returncode, 0, r.stderr)
         self.assertIn("a \u2192 b".encode("utf-8"), r.stdout)
+
+
+class NotesWriteTests(unittest.TestCase):
+    def setUp(self):
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        self.tmp = os.path.realpath(tmp.name)
+        self.cache = os.path.join(self.tmp, "cache")
+        self.notes = os.path.join(self.tmp, "notes")
+        self.env = {"HOME": self.tmp, "USERPROFILE": self.tmp,
+                    "DOCSHELF_CACHE_DIR": self.cache,
+                    "DOCSHELF_NOTES_DIR": self.notes}
+        make_devdocs(self.cache, "python~3.13", name="Python", release="1",
+                     entries=[("asyncio.gather", "Function", "a#asyncio.gather"),
+                              ("Guide", "Guide", "guide")],
+                     pages={"a": "<h2 id='asyncio.gather'>asyncio.gather</h2><p>x</p>",
+                            "guide": "<h1>Guide</h1><p>Text.</p>"})
+        self.file = os.path.join(self.notes, "python.md")
+
+    def cli(self, *args):
+        return run_cli(*args, env=self.env, cwd=self.tmp)
+
+    def put(self, text):
+        os.makedirs(self.notes, exist_ok=True)
+        with open(self.file, "w", encoding="utf-8", newline="\n") as f:
+            f.write(text)
+
+    def read(self):
+        with open(self.file, encoding="utf-8", newline="") as f:
+            return f.read()
+
+    def test_set_adds_section_creates_file(self):
+        r = self.cli("notes", "python", "--set", "asyncio.gather", "--text", "Use TaskGroup.")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertEqual(self.read(), "## asyncio.gather\nUse TaskGroup.\n")
+        self.assertIn("wrote " + self.file, r.stdout)
+        self.assertIn("ok", r.stdout)
+        r = self.cli("notes", "python", "--set", "Guide", "--text", "a\nb")
+        self.assertEqual(self.read(), "## asyncio.gather\nUse TaskGroup.\n\n## Guide\na\nb\n")
+
+    def test_set_replaces_existing_section(self):
+        src = "intro\n\n## a\nold\nmore\n\n## b\nkeep\n\n## c\nkeep2\n"
+        self.put(src)
+        r = self.cli("notes", "python", "--set", "b", "--text", "new")
+        self.assertEqual(r.returncode, 1, r.stderr)  # --check: 'b' matches no entry
+        self.assertEqual(self.read(),
+                         "intro\n\n## a\nold\nmore\n\n## b\nnew\n\n## c\nkeep2\n")
+        self.cli("notes", "python", "--set", "General", "--text", "hi")
+        self.assertEqual(self.read(),
+                         "hi\n\n## a\nold\nmore\n\n## b\nnew\n\n## c\nkeep2\n")
+
+    def test_set_general_creates_at_top(self):
+        self.put("## a\nx\n")
+        self.cli("notes", "python", "--set", "General", "--text", "g")
+        self.assertEqual(self.read(), "## General\ng\n\n## a\nx\n")
+        self.cli("notes", "python", "--set", "General", "--text", "g2")
+        self.assertEqual(self.read(), "## General\ng2\n\n## a\nx\n")
+
+    def test_set_typed_heading(self):
+        self.put("## open\nplain\n\n## open (Function)\nfn\n")
+        self.cli("notes", "python", "--set", "open (Function)", "--text", "fn2")
+        self.assertEqual(self.read(), "## open\nplain\n\n## open (Function)\nfn2\n")
+        self.cli("notes", "python", "--set", "open (Class)", "--text", "c")
+        self.assertTrue(self.read().endswith("\n\n## open (Class)\nc\n"))
+
+    def test_delete_section(self):
+        self.put("## a\n1\n\n## b\n2\n\n## c\n3\n")
+        r = self.cli("notes", "python", "--delete", "b")
+        self.assertEqual(r.returncode, 1, r.stderr)  # --check: 'a', 'c' match no entry
+        self.assertEqual(self.read(), "## a\n1\n\n## c\n3\n")
+        self.cli("notes", "python", "--delete", "c")
+        self.assertEqual(self.read(), "## a\n1\n")
+
+    def test_delete_missing_exit_5(self):
+        self.put("## a\n1\n")
+        r = self.cli("notes", "python", "--delete", "zzz")
+        self.assertEqual(r.returncode, 5)
+        self.assertEqual(self.read(), "## a\n1\n")
+
+    def test_set_text_with_heading_line_refused(self):
+        self.put("## a\n1\n")
+        r = self.cli("notes", "python", "--set", "b", "--text", "x\n## c\ny")
+        self.assertEqual(r.returncode, 2)
+        self.assertEqual(self.read(), "## a\n1\n")
+
+    def test_flag_combinations_exit_2(self):
+        for args in (["--set", "a"], ["--text", "a"],
+                     ["--set", "a", "--text", "b", "--delete", "a"]):
+            self.assertEqual(self.cli("notes", "python", *args).returncode, 2, args)
+
+    def test_set_over_limit_refused_file_unchanged(self):
+        self.put("## a\n1\n")
+        r = self.cli("notes", "python", "--set", "b",
+                     "--text", "\n".join("l%d" % i for i in range(150)))
+        self.assertEqual(r.returncode, 2)
+        self.assertIn("limit", r.stderr)
+        self.assertEqual(self.read(), "## a\n1\n")
+
+    def test_crlf_text_and_file_stay_lf(self):
+        self.put("## a\n1\n")
+        self.cli("notes", "python", "--set", "b", "--text", "x\r\ny")
+        self.assertEqual(self.read(), "## a\n1\n\n## b\nx\ny\n")
 
 
 class NotesPageHeadingTests(unittest.TestCase):

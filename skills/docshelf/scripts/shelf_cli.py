@@ -142,13 +142,17 @@ COMMANDS: List[Command] = [
             shelf_devdocs.cmd_remove, [
         Param(("name",), "Docvol name."),
     ]),
-    Command("notes", "Find, print or check a docvol's notes file.",
+    Command("notes", "Find, print, check or write a docvol's notes file.",
             shelf_notes.cmd_notes, [
         Param(("docvol",), "Docvol name or family (python for python~3.13)."),
         Param(("--path",), "Print the notes file path (creates its folder).",
               kind="flag"),
         Param(("--check",), "List which REFs show each section; warn on "
               "oversized notes and headings matching no entry.", kind="flag"),
+        Param(("--set",), "Write the section with this heading (exact text "
+              "after '## '; General for the general notes); needs --text."),
+        Param(("--text",), "Body of the section for --set (no '## ' lines)."),
+        Param(("--delete",), "Delete the section with this heading."),
     ]),
 ]
 
@@ -194,6 +198,8 @@ Notes (format: references/notes.md in the skill folder):
   notes DOCVOL --path            the notes file to edit
   notes DOCVOL --check           after editing: which REFs show each section,
                                  then "ok"
+  notes DOCVOL --set HEADING --text TEXT   write a section (--delete HEADING
+                                 removes it), then the --check report
 
 Get and manage docvols (references/getting-docvols.md):
   list                           docvols, versions, source (devdocs, zeal,

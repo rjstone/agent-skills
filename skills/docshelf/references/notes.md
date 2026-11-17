@@ -23,3 +23,14 @@ heading it lists the REF of that heading), and warns about oversized notes
 and headings that match no entry or page heading. On a size warning,
 suggest to the user turning the heavy section into its own minimal skill
 built around the tasks it covers.
+
+Writing without a file tool (and over MCP, where the `notes` tool takes
+`set`, `text` and `delete`): `notes DOCVOL --set HEADING --text TEXT`
+replaces the section named HEADING (or appends it), and `notes DOCVOL
+--delete HEADING` removes it. HEADING is the exact text after `## `, case
+and any ` (Type)` included; `General` is the general notes. TEXT is the
+body and must not contain a line starting `## `. Agents may write notes
+without asking. A write that would break a size limit is refused and
+leaves the file unchanged; otherwise it prints `wrote <path>` and the
+`--check` report (exit 1 if that report has warnings, 5 when `--delete`
+finds no such section).
