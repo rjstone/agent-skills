@@ -2330,6 +2330,44 @@ class SearchHeadingTests(unittest.TestCase):
              "type": "(heading)", "name": "typeof(x)", "rank": 0}])
 
 
+class AttributionTests(unittest.TestCase):
+    """DevDocs ends every page with a licence notice and the upstream URL
+    (div._attribution); docshelf leaves it out of what it renders."""
+    ATTR = ('<div class="_attribution">\n  <p class="_attribution-p">\n'
+            '    &copy; 2006&ndash;2020 Team<br>Licensed under the Zlib License.<br>\n'
+            '    <a href="https://example.org/wiki/f" class="_attribution-link">'
+            'https://example.org/wiki/f</a>\n  </p>\n</div>\n')
+
+    def setUp(self):
+        SearchTests.setUp(self)
+
+    def cli(self, *args):
+        return run_cli(*args, env=self.env, cwd=self.tmp)
+
+    def add(self, page):
+        make_devdocs(self.cache, "lib", name="Lib", release="1",
+                     entries=[("f", "Function", "f")], pages={"f": page})
+
+    def test_show_leaves_out_trailing_attribution(self):
+        self.add("<h1>f</h1><p>Does f.</p>" + self.ATTR)
+        r = self.cli("show", "lib:f")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertIn("Does f.", r.stdout)
+        self.assertNotIn("Licensed", r.stdout)
+        self.assertNotIn("example.org", r.stdout)
+
+    def test_fts_does_not_index_attribution(self):
+        self.add("<h1>f</h1><p>Does f.</p>" + self.ATTR)
+        r = self.cli("fts", "Licensed", "-d", "lib")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertNotIn("lib:f", r.stdout)
+
+    def test_attribution_class_mid_page_is_kept(self):
+        self.add("<h1>f</h1>" + self.ATTR + "<p>Does f.</p>")
+        r = self.cli("show", "lib:f")
+        self.assertIn("Licensed", r.stdout)
+
+
 def add_listed_only(cache, slug, name):
     """Add a row to the cached DevDocs list without installing it."""
     path = os.path.join(cache, "devdocs", "docs.json")
