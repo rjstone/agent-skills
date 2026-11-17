@@ -6,6 +6,7 @@ import sys
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from typing import Dict, Iterator, List, Optional, Tuple
+from urllib.parse import unquote
 
 VERSION = "0.6.0"
 PROJECT_FILE = ".docshelf.json"
@@ -272,10 +273,14 @@ class Docvol(ABC):
 
 def resolve_doc_path(page, href):
     """href resolved against the page's folder: '..' pops, a leading '/' is
-    the docvol root; returns (path, fragment or None)."""
+    the docvol root; a '?query' is dropped and each segment is
+    percent-decoded; returns (path, fragment or None). The fragment is
+    returned as written."""
     rel, _, frag = href.partition("#")
+    rel = rel.partition("?")[0]
     segments = [] if rel.startswith("/") else page.split("/")[:-1]
     for part in rel.split("/"):
+        part = unquote(part)
         if part in ("", "."):
             continue
         if part == "..":

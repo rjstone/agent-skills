@@ -461,6 +461,17 @@ class DevDocsDiskTests(unittest.TestCase):
         self.assertEqual(d2.page_html("guide"), "<p>hi</p>")
         self.assertTrue(os.path.isfile(os.path.join(derived, "pages.json")))
 
+    def test_link_with_query_or_percent_encoding_gets_ref(self):
+        self.make(entries=[("Guide", "Guide", "api/index")],
+                  pages={"api/index": "<p>x</p>", "api/other": "<p>y</p>",
+                         "api/my page": "<p>z</p>"})
+        d = shelf_devdocs.installed_docvols(self.cfg())[0]
+        self.assertEqual(d.resolve_href("api/index", "other?x=1#sec"),
+                         "vite:api/other#sec")
+        self.assertEqual(d.resolve_href("api/index", "my%20page"),
+                         "vite:api/my page")
+        self.assertIsNone(d.resolve_href("api/index", "nope?x=1"))
+
     def test_entries_and_resolve(self):
         self.make(entries=[("Guide", "Guide", "guide"),
                            ("Sec", "Guide", "guide#sec")],
@@ -3643,6 +3654,14 @@ class DashReaderTests(unittest.TestCase):
         self.assertEqual(dv.resolve_href("lib.html", "os.html#x"),
                          "Lib:page:os.html#x")
         self.assertIsNone(dv.resolve_href("lib.html", "nope.html"))
+
+    def test_link_with_query_or_percent_encoding_gets_ref(self):
+        dv = self.docvol("Q", pages={**self.PAGES, "my page.html": "<p>m</p>"})
+        self.assertEqual(dv.resolve_href("lib.html", "os.html?x=1#sec"),
+                         "Q:page:os.html#sec")
+        self.assertEqual(dv.resolve_href("lib.html", "my%20page.html"),
+                         "Q:page:my page.html")
+        self.assertIsNone(dv.resolve_href("lib.html", "nope.html?x=1"))
 
     def test_ztoken_form_reads_the_same(self):
         a = self.docvol("A")
