@@ -14,7 +14,7 @@ import tarfile
 import tempfile
 import time
 import zlib
-from typing import List, Optional, Tuple
+from typing import List, NamedTuple, Optional, Tuple
 from urllib.parse import unquote
 
 from shelf_core import CLIError, Docvol, Entry, resolve_doc_path, warn
@@ -32,16 +32,18 @@ DOCS_REL = ("Contents", "Resources", "Documents")
 TARIX_MAX_RECORD = 64 * 1024 * 1024
 # A repeated footer is a run of trailing blocks that most pages end with
 # exactly (copyright, links to the same few pages, a generator line); a
-# repeated header is the same at the start of pages ("Skip to main content",
-# navigation). Only an exact repeat counts, so real docs are never guessed
-# away. Both are kept on one page (the docset's index page, else the first
+# repeated header is the same near the start of pages ("Skip to main content",
+# navigation): at block 0, or at block 1 after one leading block that differs
+# per page (MDN pages start with their own <title> text), which is kept. Only
+# an exact repeat counts, so real docs are never guessed away. Both are kept on one page (the docset's index page, else the first
 # entry's page) and left out of every other page, for show, the full-text
 # index and the headings index.
 REPEAT_SAMPLE = 40      # pages sampled, evenly spaced
 REPEAT_MIN_PAGES = 5    # fewer pages: no detection
 REPEAT_SHARE = 0.6      # share of sampled pages that must start/end with it
 REPEAT_MAX_BLOCKS = 30
-REPEAT_FORMAT = 2       # bump when repeats.json's contents change (2: header)
+REPEAT_HEADER_STARTS = (0, 1)  # block indexes a header may start at
+REPEAT_FORMAT = 3       # bump when repeats.json changes (2: header, 3: start)
 _FAMILY_VERSION = re.compile(r"[_-](\d+(?:\.\d+)*)$")
 _SQLITE_MAGIC = b"SQLite format 3\x00"
 
@@ -89,6 +91,15 @@ def _open_ro(path: str) -> sqlite3.Connection:
     # reader of a WAL file still creates and writes its -shm file.
     uri = pathlib.Path(os.path.abspath(path)).as_uri() + "?mode=ro"
     return sqlite3.connect(uri, uri=True)
+
+
+class Repeats(NamedTuple):
+    """A docset's repeated header (at header_start) and footer block texts,
+    and the page that keeps them."""
+    header_start: int = 0
+    header: List[str] = []
+    footer: List[str] = []
+    keep: Optional[str] = None
 
 
 def _is_wal(path: str) -> bool:
@@ -157,7 +168,7 @@ class DashDocvol(Docvol):
         self.index_file = os.path.join(self.path, *INDEX_REL)
         self._entries: Optional[List[Entry]] = None
         self._pages: Optional[List[str]] = None
-        self._repeats: Optional[Tuple[List[str], List[str], Optional[str]]] = None
+        self._repeats: Optional[Repeats] = None
         self._count: Optional[int] = None
         self._copied: set = set()  # data_dir() subfolders copied this run
         # Discovery reads no rows (counting or copying a big index on every
@@ -369,12 +380,11 @@ class DashDocvol(Docvol):
             return None
         return entry_location(value)[0] if isinstance(value, str) and value else None
 
-    def detect_repeats(self) -> Tuple[List[str], List[str], Optional[str]]:
-        """(header block texts, footer block texts, the page that keeps
-        them); ([], [], None) if neither repeats."""
+    def detect_repeats(self) -> Repeats:
+        """The repeated header and footer; Repeats() if neither repeats."""
         pages = self.pages()
         if len(pages) < REPEAT_MIN_PAGES:
-            return [], [], None
+            return Repeats()
         step = max(1, len(pages) // REPEAT_SAMPLE)
         heads: dict = {}
         tails: dict = {}
@@ -385,23 +395,28 @@ class DashDocvol(Docvol):
             except (CLIError, OSError, ValueError):
                 continue
             sampled += 1
-            # at most len - 1 blocks: a whole page is never a header or footer
+            # a whole page is never a header or footer: one block is left
             for k in range(1, min(REPEAT_MAX_BLOCKS, len(texts) - 1) + 1):
-                key = tuple(texts[:k])
-                heads[key] = heads.get(key, 0) + 1
                 key = tuple(texts[-k:])
                 tails[key] = tails.get(key, 0) + 1
+            for start in REPEAT_HEADER_STARTS:
+                for k in range(1, min(REPEAT_MAX_BLOCKS, len(texts) - 1 - start) + 1):
+                    key = (start, tuple(texts[start:start + k]))
+                    heads[key] = heads.get(key, 0) + 1
         if sampled < REPEAT_MIN_PAGES:
-            return [], [], None
+            return Repeats()
         need = max(REPEAT_MIN_PAGES, REPEAT_SHARE * sampled)
-        header = max((k for k, c in heads.items() if c >= need), key=len, default=())
+        # the longest run; on a tie the earlier start
+        start, header = max((k for k, c in heads.items() if c >= need),
+                            key=lambda k: (len(k[1]), -k[0]), default=(0, ()))
         footer = max((k for k, c in tails.items() if c >= need), key=len, default=())
         if not header and not footer:
-            return [], [], None
+            return Repeats()
         index = self._index_page()
-        return list(header), list(footer), (index if index in pages else pages[0])
+        return Repeats(start if header else 0, list(header), list(footer),
+                       index if index in pages else pages[0])
 
-    def repeats_info(self) -> Tuple[List[str], List[str], Optional[str]]:
+    def repeats_info(self) -> Repeats:
         """detect_repeats, cached in <data_dir>/repeats.json."""
         if self._repeats is not None:
             return self._repeats
@@ -409,16 +424,17 @@ class DashDocvol(Docvol):
         cache = os.path.join(self.data_dir(), "repeats.json")
         data = _load_json(cache)
         if data.get("stamp") == stamp and isinstance(data.get("header"), list) \
-                and isinstance(data.get("footer"), list):
-            self._repeats = (data["header"], data["footer"], data.get("keep"))
+                and isinstance(data.get("footer"), list) \
+                and data.get("header_start") in REPEAT_HEADER_STARTS:
+            self._repeats = Repeats(data["header_start"], data["header"],
+                                    data["footer"], data.get("keep"))
             return self._repeats
-        header, footer, keep = self.detect_repeats()
+        found = self.detect_repeats()
         try:
-            _write_json(cache, {"stamp": stamp, "header": header,
-                                "footer": footer, "keep": keep})
+            _write_json(cache, dict(found._asdict(), stamp=stamp))
         except OSError as e:
             warn("cannot write %s: %s" % (cache, e))
-        self._repeats = (header, footer, keep)
+        self._repeats = found
         return self._repeats
 
     def page_blocks(self, page: str, link=None):
@@ -427,20 +443,21 @@ class DashDocvol(Docvol):
         only when blocks remain, the header only when blocks remain after
         both."""
         blocks = super().page_blocks(page, link)
-        header, footer, keep = self.repeats_info()
-        if page == keep or not (header or footer):
+        rep = self.repeats_info()
+        if page == rep.keep or not (rep.header or rep.footer):
             return blocks
         # Compare the plain text: link=... appends " [REF]" to link text.
         plain = blocks if link is None else super().page_blocks(page)
         texts = [b.text for b in plain] if len(plain) == len(blocks) \
             else [b.text for b in blocks]
-        start, end = 0, len(blocks)
-        nf, nh = len(footer), len(header)
-        if nf and end > nf and texts[-nf:] == footer:
+        end = len(blocks)
+        nf, nh, s0 = len(rep.footer), len(rep.header), rep.header_start
+        if nf and end > nf and texts[-nf:] == rep.footer:
             end -= nf
-        if nh and end > nh and texts[:nh] == header:
-            start = nh
-        return blocks[start:end]
+        if nh and end - nh > 0 and s0 + nh <= end \
+                and texts[s0:s0 + nh] == rep.header:
+            return blocks[:s0] + blocks[s0 + nh:end]
+        return blocks[:end]
 
     def resolve_href(self, page: str, href: str) -> Optional[str]:
         target, frag = resolve_doc_path(page, href)

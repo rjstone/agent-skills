@@ -91,9 +91,6 @@
     don't invalidate the fts/headings indexes (bump `FTS_FORMAT` and
     `HEADINGS_FORMAT` by hand); no tests for its cache reuse, stamp
     rebuild, plist keeper page or write-failure warning
-  - MDN-based docsets (e.g. HTTP) begin every page with its own `<title>`
-    text, so the repeated "Skip to main content" lines after it are not a
-    leading run and stay; decide whether to skip a per-page title block
   - a bare `update` with only docsets prints "no docvols installed" (say
     no DevDocs docvols); lazy `import shelf_backends` in 3 functions; no
     test for remove/update with a family name matching both kinds; `list`

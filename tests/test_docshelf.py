@@ -3269,6 +3269,25 @@ class DashFooterTests(unittest.TestCase):
         self.assertIn("# Page3", p3)
         self.assertIn("Body3 text.", p3)
 
+    def test_header_after_a_per_page_title_block(self):
+        skip = ('<ul><li><a href="#c">Skip to main content</a></li>'
+                '<li><a href="#s">Skip to search</a></li></ul>')
+        pages = {"p%d.html" % i: "<html><head><title>Title %d</title></head><body>"
+                 "%s<h1>H%d</h1><p>Body%d text.</p></body></html>" % (i, skip, i, i)
+                 for i in range(1, 7)}
+        make_docset(self.docs, "Lib", [("item%d" % i, "Function", "p%d.html" % i)
+                                       for i in range(1, 7)], pages)
+        p2 = self.show("p2.html")
+        self.assertNotIn("Skip to", p2)
+        self.assertEqual(p2.splitlines()[:2], ["Title 2", "# H2"])
+        self.assertIn("Body2 text.", p2)
+        keeper = self.show("p1.html")
+        self.assertIn("Skip to main content", keeper)
+        self.assertIn("Skip to search", keeper)
+        r = self.cli("fts", "Skip to search", "-d", "Lib")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertEqual(r.stdout.count("Lib:"), 1, r.stdout)
+
     def test_page_of_only_header_and_footer_is_not_emptied(self):
         self.build(6, headers=lambda i: self.HEAD,
                    extra={"bare.html": self.HEAD + self.FOOT})
