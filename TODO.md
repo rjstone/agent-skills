@@ -22,89 +22,161 @@
       template instead of hand-editing each.
 - [ ] `opencode-build` `ERRATA.md`: record the doc mistakes already seen
       (verify each against the installed `@opencode/plugin` types).
-- [ ] `docshelf`: skim other docset and DevDocs readers for ideas (list
-      gathered 2026-11; the user wants to look through them later).
-      Read Zeal's folder, no network:
-      https://github.com/andreas-mausch/docset-mcp (Rust, list/search/page),
-      https://github.com/keturn/ZDocsetMCP (Python, MIT, many tools incl.
-      cheat sheets, entries by type),
-      https://github.com/erno-szabados/zealmcp (Python, MIT, tiny).
-      Downloads docsets itself (via Zeal's catalog):
-      https://github.com/bbsvip/docset-mcp.
-      macOS / Dash only: https://github.com/Kapeli/dash-mcp-server,
-      https://github.com/codybrom/DocsetMCP,
-      https://github.com/joshuadanpeterson/enhanced-dash-mcp,
-      https://github.com/Robdel12/doc-fetcher-mcp,
-      https://github.com/nzrsky/appleref-mcp.
-      DevDocs-based: https://github.com/maxwhipw/devdocs-mcp,
-      `@madhan-g-p/devdocs-mcp-server` (npm). Non-MCP: dasht, and Zeal's
-      `zeal python:pprint` (opens the GUI). These are also candidates for
-      `references/dash-zeal.md`'s "check for an existing MCP server first".
-- [ ] `docshelf`: agent trials as dash-docset ran them (no-skill baseline,
-      Haiku, the opencode model set, CLI vs `--mcp`): fine-tuning after v1
+### docshelf
+
+Numbered so items can be referred to (e.g. "6.2.3"); renumber freely when
+items are done.
+
+#### 1. Features
+
+- [ ] 1.1 `toc REF`: a page's heading outline, one line per heading with its
+      REF, cheaper than `show` for picking a section (idea from
+      maxwhipw/devdocs-mcp).
+- [ ] 1.2 `types -d X`: entry types with counts (`search --type` exists);
+      answers "what's in here" and tells apart same-name hits (keturn/ZDocsetMCP,
+      nzrsky/appleref-mcp).
+- [ ] 1.3 `show --offset N`: continue where the 150-line cut happened
+      instead of rereading the start (devdocs-mcp).
+- [ ] 1.4 `install` with no names installs the project file's `"docvols"`
+      list (bbsvip/docset-mcp's install profiles).
+- [ ] 1.5 Suggest docvols from a project's dependency names
+      (`package.json`, `pyproject.toml`); a light version of
+      @madhan-g-p/devdocs-mcp-server's version pinning, without full
+      manifest parsing.
+- [ ] 1.6 Writing notes over MCP (the `notes` tool is read-only).
+
+#### 2. Dash/Zeal docsets
+
+- [ ] 2.1 Verify where Dash for Windows (Microsoft Store app) keeps docsets
+      on a real install, and pin the exact path in `shelf_dash.py` and
+      `references/dash-zeal.md` (marked unverified there; discovery searches
+      `%LOCALAPPDATA%\Packages\<Kapeli Dash package>\` up to 4 levels deep).
+- [ ] 2.2 Sturdier anchors: Dash's `//dash_ref_...` and `//apple_ref/...`
+      fragments, `name=` anchors (untested today), `<details>` blocks, with
+      the whole page as fallback (andreas-mausch/docset-mcp, ZDocsetMCP);
+      use docset-mcp's tested-docsets table as a regression list.
+- [ ] 2.3 (low priority) Some docsets' `Info.plist` has a full-text-search
+      flag (keys to verify; possibly `DashDocSetDefaultFTSEnabled` /
+      `DashDocSetFTSNotSupported`): do such docsets ship a text index `fts`
+      could use, and should "not supported" skip indexing? (the user,
+      2026-11-16)
+
+#### 3. Rendering
+
+- [ ] 3.1 Strip page chrome by tag only, never by class name (lesson from
+      Kapeli's Dash MCP server, where a table-of-contents class on `<body>`
+      emptied every page). `shelf_render.py` still skips by class
+      (`SKIP_CLASSES`), by ARIA role and by `hidden`: at least never skip
+      `html`, `body`, `main` or `article` that way, or drop class-based
+      skipping and rely on tags plus repeated header/footer stripping.
+
+#### 4. Full-text search
+
+- [ ] 4.1 Code names: index camelCase and identifier variants, and rewrite
+      word-salad queries into OR (docset-mcp's FTS prototype); today the
+      snippet for `return_exceptions` highlights only "return" (unicode61
+      splits on `_`).
+- [ ] 4.2 Cap index builds on huge docvols and mark the index partial
+      (bbsvip/docset-mcp).
+- [ ] 4.3 Query tokens that are only punctuation return no results.
+- [ ] 4.4 `--max-lines` below 3 prints one line too many.
+
+#### 5. Agents and docs
+
+- [ ] 5.1 Ship a ~10-line paste-in AGENTS.md / CLAUDE.md snippet that
+      teaches the lookup habit (devdocs-mcp's README does this).
+- [ ] 5.2 Agent trials as dash-docset ran them (no-skill baseline, Haiku,
+      the opencode model set, CLI vs `--mcp`), DevDocs and docsets
       (the user, 2026-11-16).
-- [ ] `docshelf`: verify where Dash for Windows (Microsoft Store app) keeps
-      docsets on a real install, and pin the exact path in `shelf_dash.py`
-      and `references/dash-zeal.md` (marked unverified there; discovery
-      searches `%LOCALAPPDATA%\Packages\<Kapeli Dash package>\` up to 4
-      levels deep).
-- [ ] `docshelf`: writing notes over MCP (v1's `notes` tool is read-only).
-- [ ] `docshelf` (low priority, with the Dash/Zeal backend): some docsets'
-      `Info.plist` has a full-text-search flag (keys to verify; possibly
-      `DashDocSetDefaultFTSEnabled` / `DashDocSetFTSNotSupported`). Find out
-      whether such docsets ship their own text index that `fts` could use
-      instead of building one, and whether "not supported" should skip
-      indexing (the user, 2026-11-16).
-- [ ] `docshelf`: deferred from the v1 reviews:
-  - link hrefs with `?query` or percent-encoding get no REF; `..` past the
-    docvol root clamps silently
-  - fts: punctuation-only query tokens zero the results; snippet highlights
-    only "return" for `return_exceptions` (unicode61 splits on `_`);
-    `--max-lines` < 3 overshoots by one line
-  - `sources` lists duplicate slugs (bun, vitest) twice; de-duplicate,
-    keeping the first row
-  - real `fetch()` untested (UA, redirects, error mapping): add a loopback
-    `http.server` test
-  - 404 from documents.devdocs.io still shows the allowlist hint
-  - same-mtime reinstall trusts `meta.json` without checking files exist;
-    page index built twice at install
-  - temp files from `mkstemp` are mode 0600, so cache files lose the umask
-    permissions (matters only for a cache shared between users); a process
-    killed mid-build leaves a random-named `*.tmp` behind, which nothing
-    cleans up
-  - every command parses each installed docvol's `index.json` for
-    `entry_count`; store the count in `meta.json` at install
-  - MCP: error text still says "(see: docshelf.py list)" and CLI flag
-    names; `initialize` has no "instructions"; `"id": null` treated as a
-    request; batch arrays rejected while 2025-03-26 is advertised;
-    `_parser_defaults` reads argparse private attributes
-  - tests: expected "skipping" warning leaks to test stderr; no tests for
-    `name=`-only anchors, CRLF notes, no-command help exit 2
-  - `show` reads the notes file twice via private `_read_notes`
-- [ ] `docshelf`: deferred from the Dash/Zeal backend (0.4.0) reviews:
-  - WAL stamp uses whole-second mtimes; the stamp test only checks for "-"
-  - containment tests cover `..` only (no absolute or backslash paths);
-    `resolve()` scans entries linearly per id
-  - plist and `_index_page` reads catch bare `Exception`
-  - tarix: no tests for symlink/dir members or a truncated archive; the
-    containment-before-lookup test isn't discriminating; `resolve_href`
-    turns exit-7 errors into None silently; the tarix index is opened and
-    its prefix probed per lookup (cache the prefix per docvol)
-  - `where` prints `[source]` only for existing folders; `where_lines` and
-    `installed_docvols` each open every docset
-  - `repeats.json` items not type-checked on read; `REPEAT_FORMAT` bumps
-    don't invalidate the fts/headings indexes (bump `FTS_FORMAT` and
-    `HEADINGS_FORMAT` by hand); no tests for its cache reuse, stamp
-    rebuild, plist keeper page or write-failure warning
-  - lazy `import shelf_backends` in 3 functions; no
-    test for remove/update with a family name matching both kinds; `list`
-    repeats "also as" per pair
-  - the "came from Zeal's catalog" note prints once per list when both
-    fall back (the catalog itself is fetched once); one malformed `versions` entry discards the whole catalog with an
-    unclear note; unused loop variables in `cached_catalog_match`; no tests
-    for catalog cache expiry, malformed JSON or the MCP text of the new
-    NetError; a stale GitHub cache isn't reused when a refetch fails
-  - the long first line of SKILL.md's body
+
+#### 6. Deferred review items
+
+- [ ] 6.1 Links and REFs
+  - [ ] 6.1.1 Link hrefs with `?query` or percent-encoding get no REF.
+  - [ ] 6.1.2 A link with `..` past the docvol root is clamped silently.
+  - [ ] 6.1.3 `resolve()` scans a docset's entries linearly per id.
+- [ ] 6.2 DevDocs install, update and sources
+  - [ ] 6.2.1 `sources` lists duplicate slugs (bun, vitest) twice; keep
+        the first row.
+  - [ ] 6.2.2 The real `fetch()` is untested (User-Agent, redirects, error
+        mapping): add a loopback `http.server` test.
+  - [ ] 6.2.3 A 404 from documents.devdocs.io still shows the allowlist
+        hint.
+  - [ ] 6.2.4 A same-mtime reinstall trusts `meta.json` without checking
+        the files exist; the page index is built twice at install.
+  - [ ] 6.2.5 Temp files from `mkstemp` are mode 0600, so cache files lose
+        the umask permissions (matters only for a shared cache); a process
+        killed mid-build leaves a stray `*.tmp`.
+  - [ ] 6.2.6 Every command parses each DevDocs docvol's `index.json` for
+        `entry_count`; store the count in `meta.json` at install.
+- [ ] 6.3 MCP
+  - [ ] 6.3.1 Error text still says "(see: docshelf.py list)" and uses CLI
+        flag names.
+  - [ ] 6.3.2 `initialize` sends no "instructions".
+  - [ ] 6.3.3 `"id": null` is treated as a request.
+  - [ ] 6.3.4 Batch arrays are rejected while 2025-03-26 is advertised.
+  - [ ] 6.3.5 `_parser_defaults` reads argparse's private attributes.
+- [ ] 6.4 Docset reading (index, tarix)
+  - [ ] 6.4.1 WAL stamps use whole-second mtimes; the stamp test only
+        checks for "-".
+  - [ ] 6.4.2 Containment tests cover `..` only (no absolute or backslash
+        paths).
+  - [ ] 6.4.3 The `Info.plist` and `_index_page` reads catch a bare
+        `Exception`.
+  - [ ] 6.4.4 Tarix: no tests for symlink or directory members or a
+        truncated archive; the containment-before-lookup test isn't
+        discriminating.
+  - [ ] 6.4.5 Tarix: `resolve_href` turns exit-7 errors into "no link"
+        silently; the index is opened and its prefix probed per lookup
+        (cache the prefix per docvol).
+- [ ] 6.5 Discovery, `where` and `list`
+  - [ ] 6.5.1 `where` prints `[source]` only for folders that exist.
+  - [ ] 6.5.2 `where_lines` and `installed_docvols` each open every docset.
+  - [ ] 6.5.3 `list` repeats "also as" once per matching pair.
+  - [ ] 6.5.4 No test for `remove`/`update` with a family name matching
+        both a DevDocs docvol and a docset.
+  - [ ] 6.5.5 `import shelf_backends` is repeated lazily in 3 functions.
+- [ ] 6.6 Repeated header/footer cache
+  - [ ] 6.6.1 `repeats.json` items aren't type-checked on read.
+  - [ ] 6.6.2 `REPEAT_FORMAT` bumps don't rebuild the fts and headings
+        indexes (bump `FTS_FORMAT` and `HEADINGS_FORMAT` by hand).
+  - [ ] 6.6.3 No tests for cache reuse, rebuild when the docset changes,
+        the `Info.plist` keeper page or the write-failure warning.
+- [ ] 6.7 Dash/Zeal catalogs
+  - [ ] 6.7.1 The "came from Zeal's catalog" note prints once per list when
+        both fall back (the catalog itself is fetched once).
+  - [ ] 6.7.2 One malformed `versions` entry discards the whole Zeal
+        catalog with an unclear note.
+  - [ ] 6.7.3 Unused loop variables in `cached_catalog_match`.
+  - [ ] 6.7.4 No tests for catalog cache expiry, malformed JSON or the MCP
+        text of the new network error.
+  - [ ] 6.7.5 A stale GitHub cache isn't reused when a refetch fails.
+- [ ] 6.8 Tests and small cleanups
+  - [ ] 6.8.1 An expected "skipping" warning leaks into test stderr.
+  - [ ] 6.8.2 No tests for CRLF notes files or exit 2 for help with no
+        command (`name=` anchors are in 2.2).
+  - [ ] 6.8.3 `show` reads the notes file twice, through the private
+        `_read_notes`.
+  - [ ] 6.8.4 The first line of SKILL.md's body is very long.
+
+#### Reference: other docset and DevDocs readers (skimmed 2026-11-17)
+
+Read Zeal's folder, no network:
+https://github.com/andreas-mausch/docset-mcp (Rust),
+https://github.com/keturn/ZDocsetMCP (Python, MIT),
+https://github.com/erno-szabados/zealmcp (Python, MIT, tiny).
+Downloads docsets via Zeal's catalog: https://github.com/bbsvip/docset-mcp.
+macOS / Dash only: https://github.com/Kapeli/dash-mcp-server,
+https://github.com/codybrom/DocsetMCP,
+https://github.com/joshuadanpeterson/enhanced-dash-mcp,
+https://github.com/Robdel12/doc-fetcher-mcp,
+https://github.com/nzrsky/appleref-mcp.
+DevDocs-based: https://github.com/maxwhipw/devdocs-mcp,
+`@madhan-g-p/devdocs-mcp-server` (npm). Non-MCP: dasht,
+`zeal python:pprint` (opens the GUI). Not worth taking from them: HTTP or
+Docker transports, talking to the running Dash app, Readability/Turndown
+conversion, Apple's DocC format (needs brotli), downloading from Kapeli's
+servers.
 
 ## Automation
 
