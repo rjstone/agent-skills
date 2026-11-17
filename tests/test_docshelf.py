@@ -6,6 +6,7 @@ import contextlib
 import io
 import json
 import os
+import plistlib
 import shutil
 import sqlite3
 import subprocess
@@ -28,6 +29,7 @@ SCRIPT = os.path.join(SKILL, "scripts", "docshelf.py")
 
 sys.path.insert(0, os.path.join(SKILL, "scripts"))
 import shelf_cli  # noqa: E402
+import shelf_dash  # noqa: E402
 from shelf_core import CLIError  # noqa: E402
 import shelf_core  # noqa: E402
 import shelf_devdocs  # noqa: E402
@@ -93,6 +95,73 @@ def make_devdocs(cache: str, slug: str, *, name: str, release: str,
         "attribution": "", "alias": alias, "links": {}})
     dump(manifest_path, manifest)
     return folder
+
+
+def make_docset(root: str, name: str, entries: List[Tuple[str, str, str]],
+                pages: Dict[str, str], form: str = "searchIndex",
+                plist_name: Optional[str] = None,
+                meta_version: Optional[str] = None, wal: bool = False) -> str:
+    """Write <root>/<name>.docset/Contents/{Info.plist, Resources/docSet.dsidx,
+    Resources/Documents/...} and return the .docset folder.
+
+    entries are (name, type, path); form "ztoken" writes the Core Data tables
+    with the anchor in ZANCHOR; wal=True leaves the rows in docSet.dsidx-wal."""
+    ds = os.path.join(root, name + ".docset")
+    res = os.path.join(ds, "Contents", "Resources")
+    os.makedirs(res, exist_ok=True)
+    if plist_name is not None:
+        with open(os.path.join(ds, "Contents", "Info.plist"), "wb") as f:
+            plistlib.dump({"CFBundleName": plist_name}, f)
+    if meta_version is not None:
+        with open(os.path.join(ds, "meta.json"), "w", encoding="utf-8") as f:
+            json.dump({"version": meta_version}, f)
+    for page, html in pages.items():
+        full = os.path.join(res, "Documents", *page.split("/"))
+        os.makedirs(os.path.dirname(full), exist_ok=True)
+        with open(full, "w", encoding="utf-8") as f:
+            f.write(html)
+    db = os.path.join(res, "docSet.dsidx")
+    work = tempfile.mkdtemp() if wal else None
+    target = os.path.join(work, "docSet.dsidx") if wal else db
+    con = sqlite3.connect(target)
+    try:
+        if wal:
+            con.execute("PRAGMA journal_mode=wal")
+            con.execute("PRAGMA wal_autocheckpoint=0")
+        if form == "ztoken":
+            con.executescript(
+                "CREATE TABLE ZTOKEN (Z_PK INTEGER PRIMARY KEY, ZTOKENNAME TEXT,"
+                " ZTOKENTYPE INTEGER, ZMETAINFORMATION INTEGER);"
+                "CREATE TABLE ZTOKENTYPE (Z_PK INTEGER PRIMARY KEY, ZTYPENAME TEXT);"
+                "CREATE TABLE ZTOKENMETAINFORMATION (Z_PK INTEGER PRIMARY KEY,"
+                " ZFILE INTEGER, ZANCHOR TEXT);"
+                "CREATE TABLE ZFILEPATH (Z_PK INTEGER PRIMARY KEY, ZPATH TEXT);")
+            types: Dict[str, int] = {}
+            for i, (n, t, path) in enumerate(entries, 1):
+                if t not in types:
+                    types[t] = len(types) + 1
+                    con.execute("INSERT INTO ZTOKENTYPE VALUES (?, ?)", (types[t], t))
+                file_part, _, anchor = path.partition("#")
+                con.execute("INSERT INTO ZFILEPATH VALUES (?, ?)", (i, file_part))
+                con.execute("INSERT INTO ZTOKENMETAINFORMATION VALUES (?, ?, ?)",
+                            (i, i, anchor or None))
+                con.execute("INSERT INTO ZTOKEN VALUES (?, ?, ?, ?)",
+                            (i, n, types[t], i))
+        else:
+            con.execute("CREATE TABLE searchIndex (id INTEGER PRIMARY KEY, "
+                        "name TEXT, type TEXT, path TEXT)")
+            con.executemany("INSERT INTO searchIndex (name, type, path) "
+                            "VALUES (?, ?, ?)", entries)
+        con.commit()
+        if wal:  # copy while the writer is open: the rows are still in -wal
+            for suffix in ("", "-wal", "-shm"):
+                if os.path.exists(target + suffix):
+                    shutil.copyfile(target + suffix, db + suffix)
+    finally:
+        con.close()
+        if work:
+            shutil.rmtree(work, ignore_errors=True)
+    return ds
 
 
 class SkeletonTests(unittest.TestCase):
@@ -2650,6 +2719,118 @@ class BackendInterfaceTests(unittest.TestCase):
         code, out, err = self.run_main(f, "notes", "fake", "--check")
         self.assertNotIn("DROPME", out)
         self.assertEqual(f.page_blocks("p")[0].text.strip("# "), "f")
+
+
+class DashReaderTests(unittest.TestCase):
+    ENTRIES = [("open", "Function", "lib.html#open"), ("os", "Module", "os.html")]
+    PAGES = {"lib.html": "<h1>lib</h1>", "os.html": "<h1>os</h1>"}
+
+    def setUp(self):
+        self.tmp = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, self.tmp, ignore_errors=True)
+        self.cache = os.path.join(self.tmp, "cache")
+
+    def docvol(self, name="Lib", **kw):
+        kw.setdefault("entries", self.ENTRIES)
+        kw.setdefault("pages", self.PAGES)
+        path = make_docset(self.tmp, name, **kw)
+        return shelf_dash.DashDocvol(path, "dash", self.cache)
+
+    def test_search_index_entries_and_refs(self):
+        dv = self.docvol()
+        got = [(e.ref, e.page, e.anchor) for e in dv.entries()]
+        self.assertEqual(got, [("Lib:1", "lib.html", "open"),
+                               ("Lib:2", "os.html", None)])
+        self.assertEqual(dv.entry_count, 2)
+        self.assertEqual(dv.pages(), ["lib.html", "os.html"])
+        self.assertTrue(dv.read_only)
+        self.assertIn("<h1>os</h1>", dv.page_html("os.html"))
+        self.assertEqual(dv.make_ref("os.html", "top"), "Lib:page:os.html#top")
+        self.assertEqual(dv.resolve_href("lib.html", "os.html#x"),
+                         "Lib:page:os.html#x")
+        self.assertIsNone(dv.resolve_href("lib.html", "nope.html"))
+
+    def test_ztoken_form_reads_the_same(self):
+        a = self.docvol("A")
+        b = self.docvol("B", form="ztoken")
+        key = lambda dv: [(e.name, e.type, e.page, e.anchor) for e in dv.entries()]
+        self.assertEqual(key(a), key(b))
+        self.assertEqual(b.entry_count, 2)
+
+    def test_marker_and_percent_paths(self):
+        dv = self.docvol(entries=[("x", "Func", "<dash_entry_name=x>a%20b.html#x"),
+                                  ("c", "Func", "sub\\c.html")], pages={})
+        got = [(e.page, e.anchor) for e in dv.entries()]
+        self.assertEqual(got, [("a b.html", "x"), ("sub/c.html", None)])
+
+    def test_url_rows_are_not_entries(self):
+        dv = self.docvol(entries=self.ENTRIES + [("x", "Guide", "https://example.org/x")])
+        self.assertEqual(len(dv.entries()), 2)
+        self.assertEqual(dv.pages(), ["lib.html", "os.html"])
+
+    def test_resolve_forms(self):
+        dv = self.docvol()
+        page, anchor, entry = dv.resolve("1")
+        self.assertEqual((page, anchor, entry.ref), ("lib.html", "open", "Lib:1"))
+        self.assertEqual(dv.resolve("page:os.html#top"), ("os.html", "top", None))
+        with self.assertRaises(CLIError) as c:
+            dv.resolve("x")
+        self.assertEqual(c.exception.code, 2)
+        self.assertIn("bad reference", str(c.exception))
+        with self.assertRaises(CLIError) as c:
+            dv.resolve("99")
+        self.assertEqual(c.exception.code, 5)
+
+    def test_path_outside_documents_refused(self):
+        dv = self.docvol(plist_name="Lib")
+        with self.assertRaises(CLIError) as c:
+            dv.page_html("../Info.plist")
+        self.assertEqual(c.exception.code, 5)
+
+    def test_title_version_family(self):
+        dv = self.docvol("Python_3", plist_name="Python 3", meta_version="3.12.4")
+        self.assertEqual((dv.title, dv.display_name, dv.version, dv.release),
+                         ("Python 3", "Python 3", "3.12.4", "3.12.4"))
+        self.assertEqual(dv.family, "python")
+        plain = self.docvol("Plain")
+        self.assertEqual((plain.title, plain.version), ("Plain", ""))
+        self.assertEqual([shelf_dash.dash_family(n) for n in
+                          ("Node.js", "Qt_6.5", "Foo Bar-2")],
+                         ["node.js", "qt", "foo_bar"])
+
+    def test_wal_rows_are_read(self):
+        dv = self.docvol(wal=True)
+        res = os.path.join(dv.path, "Contents", "Resources")
+        self.assertTrue(os.path.getsize(os.path.join(res, "docSet.dsidx-wal")) > 0)
+        self.assertEqual(dv.entry_count, 2)
+        self.assertEqual([e.ref for e in dv.entries()], ["Lib:1", "Lib:2"])
+        self.assertIn("-", dv.stamp())
+
+    def test_wal_in_read_only_folder_uses_a_copy(self):
+        dv = self.docvol(wal=True)
+        real = shelf_dash._open_ro
+
+        def refuse_original(path):  # what mode=ro does with no -shm file
+            if os.path.abspath(path) == dv.index_file:
+                raise sqlite3.OperationalError("unable to open database file")
+            return real(path)
+
+        with mock.patch.object(shelf_dash, "_open_ro", refuse_original):
+            again = shelf_dash.DashDocvol(dv.path, "dash", self.cache)
+            self.assertEqual(len(again.entries()), 2)
+        self.assertTrue(os.path.isfile(
+            os.path.join(again.data_dir(), "index", "docSet.dsidx-wal")))
+
+    def test_unreadable_index_is_skipped(self):
+        path = make_docset(self.tmp, "Bad", [], {})
+        open(os.path.join(path, "Contents", "Resources", "docSet.dsidx"), "w").close()
+        err = io.StringIO()
+        with contextlib.redirect_stderr(err):
+            dv = shelf_dash.open_docset(path, "dash", self.cache)
+        self.assertIsNone(dv)
+        lines = err.getvalue().strip().splitlines()
+        self.assertEqual(len(lines), 1)
+        self.assertTrue(lines[0].startswith("warning: skipping"))
 
 
 if __name__ == "__main__":
