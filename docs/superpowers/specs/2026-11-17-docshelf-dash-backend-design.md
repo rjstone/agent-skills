@@ -29,8 +29,11 @@ sandboxes and CI, where no docsets exist, need nothing new.
    for this, but I can't install it. If you install it, I can use it.
    Otherwise I'll download <the DevDocs alternative>." Then ask how to
    proceed.
-4. Before downloading a DevDocs documentation, check `list` for a docset
-   of the same documentation; if there is one, use it instead.
+4. Don't download documentation that is already on disk in another
+   format: a docset found locally is used as is, even when DevDocs offers
+   the same documentation. `install` enforces this (see Commands); pass
+   `--redundant` only when the user explicitly asks for that download
+   (the user, 2026-11-17).
 5. Always narrow searches to the subject: `-d FAMILY` (or an exact name)
    or a project `"docvols"` list, not unscoped searches (the user,
    2026-11-17).
@@ -209,6 +212,11 @@ The TODO.md items, done before the Dash backend so both backends use them:
   DevDocs part still prints. The catalogs are fetched only when Dash or
   Zeal is installed or a docset folder exists (my call): elsewhere
   `sources` stays DevDocs-only and contacts no new host.
+- `install NAME` when a docset of the same documentation is already on
+  disk (same family, same major.minor version or an unknown docset
+  version): exit 2, naming the docset and saying it is used as is;
+  `--redundant` downloads anyway (the user, 2026-11-17: redundant
+  downloads only when explicitly asked for).
 - `install`, `update`, `remove` on a docset name: exit 2 with "NAME is a
   Dash/Zeal docset; Dash or Zeal manages it".
 - The "not installed" hint (0.3.0) also says, when a cached Dash/Zeal
