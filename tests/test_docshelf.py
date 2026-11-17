@@ -2971,6 +2971,45 @@ class NotesWriteTests(unittest.TestCase):
             self.assertEqual(f.read(), "## a\n1\n\n## b\n2\n")
         self.assertEqual([n for n in os.listdir(self.notes)], ["python.md"])
 
+    @unittest.skipUnless(hasattr(os, "symlink") and os.name == "posix",
+                         "symlinks need POSIX here")
+    def test_dangling_symlink_refused_nothing_created(self):
+        gone = os.path.join(self.tmp, "gone", "deeper")
+        os.makedirs(self.notes, exist_ok=True)
+        os.symlink(os.path.join(gone, "python.md"), self.file)
+        r = self.cli("notes", "python", "--set", "a", "--text", "b")
+        self.assertEqual(r.returncode, 2, r.stdout + r.stderr)
+        self.assertIn(self.file, r.stderr)
+        self.assertFalse(os.path.exists(os.path.join(self.tmp, "gone")))
+        self.assertTrue(os.path.islink(self.file))
+        self.assertEqual(os.listdir(self.notes), ["python.md"])
+
+    def test_set_and_delete_match_heading_case_insensitively(self):
+        self.put("## foo\nold\n\n## Bar Baz\nkeep\n")
+        r = self.cli("notes", "python", "--set", "Foo", "--text", "new")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertEqual(self.read(), "## foo\nnew\n\n## Bar Baz\nkeep\n")
+        r = self.cli("notes", "python", "--delete", "BAR baz")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertEqual(self.read(), "## foo\nnew\n")
+
+    def test_write_keeps_crlf_line_endings(self):
+        os.makedirs(self.notes, exist_ok=True)
+        with open(self.file, "wb") as f:
+            f.write(b"## a\r\n1\r\n\r\n## b\r\n2\r\n")
+        r = self.cli("notes", "python", "--set", "c", "--text", "x\ny")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertEqual(self.read(),
+                         "## a\r\n1\r\n\r\n## b\r\n2\r\n\r\n## c\r\nx\r\ny\r\n")
+        r = self.cli("notes", "python", "--delete", "a")
+        self.assertEqual(self.read(), "## b\r\n2\r\n\r\n## c\r\nx\r\ny\r\n")
+
+    def test_delete_unheaded_general_keeps_blank_after_title(self):
+        self.put("# Title\n\nintro\n\n## a\n1\n")
+        r = self.cli("notes", "python", "--delete", "General")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertEqual(self.read(), "# Title\n\n## a\n1\n")
+
     @unittest.skipUnless(os.name == "posix", "file modes are POSIX")
     def test_write_keeps_file_mode(self):
         self.put("## a\n1\n")

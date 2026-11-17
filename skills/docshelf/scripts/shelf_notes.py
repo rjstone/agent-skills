@@ -298,7 +298,7 @@ def _target(lines, heading):
     body (the `## ` line, or a title line before an unheaded General)."""
     secs = _sections(lines)
     for start, end, h in secs:
-        if h == heading:
+        if h.lower() == heading.lower():  # as display matches; keep the file's text
             return start, end, 1
     if heading == "General":
         end = secs[0][0] if secs else len(lines)
@@ -361,8 +361,10 @@ def delete_section(text: str, heading: str) -> str:
     hit = _target(lines, heading)
     if not hit:
         raise CLIError("no section %r in the notes file" % heading, 5)
-    start, end, _head = hit
+    start, end, head = hit
     new = lines[:start] + lines[end:]
+    if head == 0 and start > 0 and end < len(lines):
+        new = lines[:start] + [""] + lines[end:]  # blank line after the title
     return _join(new) if end == len(lines) else "\n".join(new) + "\n"
 
 
@@ -373,6 +375,9 @@ def _new_file_mode() -> int:
 
 
 def _write_notes(path, text):
+    if os.path.islink(path) and not os.path.exists(path):
+        raise CLIError("cannot write %s: it is a symlink to a missing file; "
+                       "not written" % path, 2)
     # write beside the real file, so a symlinked notes file stays a symlink
     path = os.path.realpath(path)
     d = os.path.dirname(path)
@@ -390,7 +395,7 @@ def _write_notes(path, text):
                        "writable folder)" % (path, e), 2)
     try:
         os.chmod(tmp, mode)  # mkstemp makes it 0600; keep the file's mode
-        with os.fdopen(fd, "w", encoding="utf-8", newline="\n") as f:
+        with os.fdopen(fd, "w", encoding="utf-8", newline="") as f:
             f.write(text)
         os.replace(tmp, path)
     except OSError as e:
@@ -421,7 +426,10 @@ def _write_request(cfg, args, path, text):
     if warns:
         raise CLIError("not written; the notes would be too big:\n  "
                        + "\n  ".join(warns), 2)
-    _write_notes(path, new)
+    out = new
+    if text and text.count("\r\n") * 2 > text.count("\n"):
+        out = new.replace("\n", "\r\n")  # keep a CRLF file CRLF
+    _write_notes(path, out)
     print("wrote " + path)
     return new
 
