@@ -164,9 +164,10 @@ items are done.
   - [ ] 6.13.1 Notes tests: an LF file stays LF; a mixed-ending file takes
         the majority ending.
   - [ ] 6.13.2 Test `--delete` on a notes file that is a dangling symlink.
-  - [ ] 6.13.3 Install tests: a failure message names the slug; a 404
-        leaves no folder behind; a redundant skip plus a failure exits with
-        the failure's code.
+  - [ ] 6.13.3 `install`/`update` with several names: a network-error
+        failure doesn't name its docvol (prefix "<name>: " in `_each` when
+        missing). Tests: that; a 404 leaves no folder behind; a redundant
+        skip plus a failure exits with the failure's code.
   - [ ] 6.13.4 `sources` dedupes after the query filter; it should keep
         the first row overall.
   - [ ] 6.13.5 `_cached_or_fetched`: `getmtime` can raise OSError if the
@@ -179,6 +180,9 @@ items are done.
         only.
   - [ ] 6.13.10 `install` repeats an exit-2 error (unwritable cache) once
         per name.
+  - [ ] 6.13.11 `notes --set General` on an unheaded General after the
+        title drops the blank line between them (`# T\ng2`); same family as
+        the 6.9.1 spacing fix.
 
 #### Reference: other docset and DevDocs readers (skimmed 2026-11-17)
 
