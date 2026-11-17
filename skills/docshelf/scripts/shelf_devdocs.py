@@ -12,6 +12,7 @@ from datetime import datetime, timezone
 from typing import Dict, List, Optional, Tuple
 from urllib.parse import urlsplit
 
+import shelf_backends  # imports this module back; used only inside functions
 from shelf_core import (VERSION, CLIError, warn, Config, Docvol, Entry, make_temp,
                         pick_docvol, sweep_stale_tmp)
 
@@ -615,7 +616,6 @@ class Redundant(CLIError):
 
 def _refuse_redundant(cfg: Config, row: dict) -> None:
     import types
-    import shelf_backends
     want = types.SimpleNamespace(family=row["slug"].split("~")[0],
                                  version=_row_version(row), read_only=False)
     for d in shelf_backends.installed_docvols(cfg):
@@ -634,7 +634,6 @@ def _refuse_read_only(d: Docvol) -> None:
 
 def _installed_note(cfg: Config, name: str) -> Optional[str]:
     """The line for a project-list name already on disk (any backend), or None."""
-    import shelf_backends
     low = name.lower()
     hits = [d for d in shelf_backends.installed_docvols(cfg)
             if low in (d.name.lower(), d.family.lower())]
@@ -700,7 +699,6 @@ def cmd_install(cfg, args) -> int:
 
 
 def cmd_update(cfg, args) -> int:
-    import shelf_backends
     have = shelf_backends.installed_docvols(cfg)
     if args.names:
         targets = [pick_docvol(have, n) for n in args.names]
@@ -735,7 +733,6 @@ def cmd_update(cfg, args) -> int:
 
 
 def cmd_remove(cfg, args) -> int:
-    import shelf_backends
     try:
         found = pick_docvol(shelf_backends.installed_docvols(cfg), args.name)
         _refuse_read_only(found)

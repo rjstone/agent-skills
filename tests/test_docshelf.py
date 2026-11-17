@@ -2,6 +2,7 @@
 make_devdocs() in temp dirs. Run from the repo root:
 python3 -m unittest discover -s tests -v
 """
+import argparse
 import atexit
 import contextlib
 import io
@@ -2763,6 +2764,30 @@ class HelpTests(unittest.TestCase):
         self.assertEqual(r.returncode, 0, r.stderr)
         self.assertIn("--max-lines", r.stdout)
 
+    def test_notes_help_describes_arguments_without_flag_syntax(self):
+        r = run_cli("notes", "--help")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        text = " ".join(r.stdout.split())
+        self.assertIn("General for the general notes); needs a text.", text)
+        self.assertIn("Body of the section to write (no '## ' lines).", text)
+        self.assertNotIn("needs --text", text)
+        self.assertNotIn("for --set", text)
+
+    def test_param_default_is_the_one_default_rule(self):
+        P = shelf_cli.Param
+        self.assertIs(shelf_cli.param_default(P(("--x",), "h", kind="flag")),
+                      False)
+        self.assertIsNone(shelf_cli.param_default(P(("--x",), "h")))
+        self.assertEqual(shelf_cli.param_default(
+            P(("--x",), "h", kind="int", default=7)), 7)
+        parser = argparse.ArgumentParser()
+        for p in (P(("--f",), "h", kind="flag"), P(("--n",), "h", default=3),
+                  P(("--s",), "h")):
+            shelf_cli._add_param(parser, p)
+        got = vars(parser.parse_args([]))
+        self.assertEqual(got, {"f": shelf_cli.param_default(P(("--f",), "h", kind="flag")),
+                               "n": 3, "s": None})
+
     def test_skill_md_mentions_no_dash_docvol(self):
         with open(os.path.join(SKILL, "SKILL.md"), encoding="utf-8") as f:
             text = f.read()
@@ -3038,6 +3063,61 @@ class McpTests(unittest.TestCase):
         self.assertEqual(sorted(by_name["notes"]["inputSchema"]["properties"]),
                          ["check", "delete", "docvol", "set", "text"])
 
+    # tool -> (required, {argument: type}); "T[]" is an array of T, "T=v"
+    # a default, ">=n" a minimum. A change here is a change to the tool
+    # surface that clients see: make it on purpose.
+    TOOLS = {
+        "list": ([], {}),
+        "search": (["query"], {
+            "query": "string[]", "docvols": "string[]", "type": "string",
+            "all": "boolean", "max_lines": "integer=40>=1",
+            "json": "boolean"}),
+        "show": (["ref"], {
+            "ref": "string", "grep": "string[]", "full": "boolean",
+            "max_lines": "integer=150>=1", "offset": "integer=0>=0",
+            "no_notes": "boolean"}),
+        "toc": (["ref"], {"ref": "string", "max_lines": "integer=150>=1"}),
+        "fts": (["query"], {
+            "query": "string[]", "docvols": "string[]", "all": "boolean",
+            "max_lines": "integer=11>=1", "json": "boolean"}),
+        "types": ([], {"docvols": "string[]", "all": "boolean"}),
+        "sources": (["query"], {"query": "string[]", "refresh": "boolean"}),
+        "suggest": ([], {"json": "boolean"}),
+        "install": ([], {"names": "string[]", "force": "boolean"}),
+        "remove": (["name"], {"name": "string"}),
+        "notes": (["docvol"], {
+            "docvol": "string", "check": "boolean", "set": "string",
+            "text": "string", "delete": "string"}),
+    }
+
+    @staticmethod
+    def describe(prop):
+        kind = prop["type"]
+        if kind == "array":
+            kind = prop["items"]["type"] + "[]"
+        if "default" in prop:
+            kind += "=%s" % prop["default"]
+        if "minimum" in prop:
+            kind += ">=%s" % prop["minimum"]
+        return kind
+
+    def test_tools_list_matches_the_stored_schema(self):
+        tools = self.rpc("tools/list")["result"]["tools"]
+        self.assertEqual([t["name"] for t in tools], list(self.TOOLS))
+        for t in tools:
+            required, props = self.TOOLS[t["name"]]
+            schema = t["inputSchema"]
+            self.assertEqual(schema["type"], "object", t["name"])
+            self.assertEqual(schema.get("required", []), required, t["name"])
+            self.assertEqual(
+                {k: self.describe(v) for k, v in schema["properties"].items()},
+                props, t["name"])
+            self.assertTrue(t["description"], t["name"])
+            for k, v in schema["properties"].items():
+                self.assertTrue(v["description"], (t["name"], k))
+                self.assertNotRegex(v["description"], r"(?<![\w-])--[a-z]",
+                                    (t["name"], k))
+
     def test_initialize_instructions(self):
         r = self.rpc("initialize", {"protocolVersion": "2025-06-18"})["result"]
         text = r["instructions"]
@@ -3087,6 +3167,29 @@ class McpTests(unittest.TestCase):
             [{"jsonrpc": "2.0", "method": "notifications/initialized"}]) + "\n")
         self.proc.stdin.flush()
         self.assertEqual(self.rpc("ping")["result"], {})  # next line is ping's
+
+    def test_nested_array_in_batch_is_invalid_request(self):
+        r = self.send_raw(json.dumps([
+            [{"jsonrpc": "2.0", "id": 1, "method": "ping"}],
+            {"jsonrpc": "2.0", "id": 2, "method": "ping"}]))
+        self.assertEqual(len(r), 2)
+        self.assertEqual(r[0]["error"]["code"], -32600)
+        self.assertIsNone(r[0]["id"])
+        self.assertEqual(r[1], {"jsonrpc": "2.0", "id": 2, "result": {}})
+
+    def test_all_invalid_batch_gives_an_error_each(self):
+        r = self.send_raw("[1, \"x\", null, {\"id\": 5}]")
+        self.assertEqual(len(r), 4)
+        for reply in r:
+            self.assertEqual(reply["error"]["code"], -32600)
+        self.assertEqual([x["id"] for x in r], [None, None, None, 5])
+        self.assertEqual(self.rpc("ping")["result"], {})  # still serving
+
+    def test_parse_error_on_an_array_line(self):
+        r = self.send_raw('[{"jsonrpc": "2.0", "id": 1, "method": "ping"}')
+        self.assertEqual(r["error"]["code"], -32700)
+        self.assertIsNone(r["id"])
+        self.assertEqual(self.rpc("ping")["result"], {})
 
     def test_empty_batch_is_one_error(self):
         r = self.send_raw("[]")
@@ -3334,6 +3437,26 @@ class McpExplainTests(unittest.TestCase):
             self.assertTrue(self.explain(
                 "no DevDocs documentation matches %s" % quoted + tail
             ).endswith("(see: the `sources` tool)"))
+
+    def test_apostrophe_in_our_own_text(self):
+        out = self.explain("don't use --all here; install --force a downloads")
+        self.assertIn("don't use `all` here", out)
+        self.assertIn("the `install` tool with `force` a downloads", out)
+        self.assert_clean(out)
+
+    def test_unbalanced_quote_still_rewrites(self):
+        out = self.explain("bad name 'x; narrow it with -d NAME or --all")
+        self.assertIn("'x;", out)
+        self.assert_clean(out)
+        out = self.explain('odd " quote; raise --max-lines')
+        self.assertIn("raise `max_lines`", out)
+
+    def test_hyphenated_ref_untouched(self):
+        for ref in ("my-docs:api-guide#a-b", "a-d:b", "x-all:y"):
+            msg = "no page for %s" % ref
+            self.assertEqual(self.explain(msg), msg)
+        out = self.explain("no page for my-docs:x-y; narrow with -d NAME")
+        self.assertEqual(out, "no page for my-docs:x-y; narrow with `docvols`")
 
     def test_plain_text_untouched(self):
         msg = "docvol 'a': damaged index; try again"
@@ -6219,6 +6342,59 @@ class SuggestScanTests(unittest.TestCase):
         findings, _ = self.scan()
         self.assertEqual(self.libs(findings), [("new",)])
 
+    def test_cmake_hash_inside_quotes_and_bracket_comments(self):
+        self.write("CMakeLists.txt",
+                   'message("a # b")\nfind_package(Kept)\n'
+                   'set(X "#") # find_package(Gone)\n'
+                   '#[[ find_package(Gone1)\nfind_package(Gone2) ]]\n'
+                   'find_package(Kept2)\n'
+                   '#[==[ find_package(Gone3) ]] find_package(Gone4)\n'
+                   ' ]==] find_package(Kept3)\n'
+                   '#[[ not closed on this line\nfind_package(Gone5)\n')
+        findings, _ = self.scan()
+        self.assertEqual(self.libs(findings),
+                         [("kept",), ("kept2",), ("kept3",)])
+
+    def test_ruby_version_with_and_without_prefix(self):
+        self.write(".ruby-version", "ruby-3.3.1\n")
+        findings, _ = self.scan()
+        self.assertEqual(self.of(findings, "lang", ("ruby",))[0].version,
+                         "3.3.1")
+        self.write(".ruby-version", "3.2.4\n")
+        findings, _ = self.scan()
+        self.assertEqual(self.of(findings, "lang", ("ruby",))[0].version,
+                         "3.2.4")
+
+    def test_docker_platform_and_registry_prefixes(self):
+        self.write("Dockerfile",
+                   "FROM --platform=linux/amd64 python:3.11-slim\n"
+                   "FROM localhost:5000/team/redis:7\n"
+                   "FROM ghcr.io/owner/tool:1.2\n"
+                   "FROM localhost:5000/nginx\n")
+        findings, _ = self.scan()
+        self.assertEqual(
+            [(f.names, f.version) for f in findings if f.kind == "lib"],
+            [(("python",), "3.11"), (("redis",), "7"), (("tool",), "1.2"),
+             (("nginx",), "")])
+
+    @unittest.skipIf(sys.version_info < (3, 11), "tomllib needs Python 3.11")
+    def test_pyproject_exact_python_spec(self):
+        self.write("pyproject.toml",
+                   '[project]\nrequires-python = "==3.11"\n')
+        findings, _ = self.scan()
+        self.assertEqual(self.of(findings, "lang", ("python",))[0].version,
+                         "3.11")
+
+    def test_non_utf8_build_file_is_noted_and_scan_continues(self):
+        path = os.path.join(self.root, "package.json")
+        with open(path, "wb") as f:
+            f.write(b'{"dependencies": {"vue": "\xff"}}')
+        self.write("requirements.txt", "flask\n")
+        findings, notes = self.scan()
+        self.assertEqual(len(notes), 1)
+        self.assertTrue(notes[0].startswith("note: skipped package.json:"))
+        self.assertEqual(self.libs(findings), [("flask",)])
+
     def test_malformed_file_is_noted(self):
         self.write("package.json", "{bad")
         findings, notes = self.scan()
@@ -6331,8 +6507,9 @@ class SuggestTests(unittest.TestCase):
                      entries=[("e", "Function", "p#e")], pages={"p": "<h1>e</h1>"},
                      **kw)
 
-    def listed(self, *rows):
-        """Rows appended to docs.json, in the order given (newest first)."""
+    def listed(self, *rows, first=False):
+        """Rows added to docs.json in the order given (newest first), after
+        the existing rows or, with first=True, before them."""
         path = os.path.join(self.cache, "devdocs", "docs.json")
         os.makedirs(os.path.dirname(path), exist_ok=True)
         data = []
@@ -6340,7 +6517,7 @@ class SuggestTests(unittest.TestCase):
             with open(path, encoding="utf-8") as f:
                 data = json.load(f)
         with open(path, "w", encoding="utf-8") as f:
-            json.dump(data + list(rows), f)
+            json.dump(list(rows) + data if first else data + list(rows), f)
 
     def suggest(self, *args, cwd=None, env=None):
         return run_cli("suggest", *args, cwd=cwd or self.proj,
@@ -6348,15 +6525,10 @@ class SuggestTests(unittest.TestCase):
 
     def test_installed_and_available(self):
         self.installed("python~3.12", "Python")
-        self.listed(row("Python", "python~3.14", "3.14.0", version="3.14"),
-                    row("CMake", "cmake~3.30", "3.30", version="3.30"))
         # DevDocs lists newest first: python~3.14 before the installed 3.12
-        path = os.path.join(self.cache, "devdocs", "docs.json")
-        with open(path, encoding="utf-8") as f:
-            rows = json.load(f)
-        rows.sort(key=lambda r: r["slug"] != "python~3.14")
-        with open(path, "w", encoding="utf-8") as f:
-            json.dump(rows, f)
+        self.listed(row("Python", "python~3.14", "3.14.0", version="3.14"),
+                    first=True)
+        self.listed(row("CMake", "cmake~3.30", "3.30", version="3.30"))
         self.write(".python-version", "3.12.4\n")
         self.write("CMakeLists.txt", "find_package(Foo)\n")
         r = self.suggest()
@@ -6365,6 +6537,18 @@ class SuggestTests(unittest.TestCase):
         self.assertIn("installed python~3.12  (.python-version)", lines)
         self.assertIn("available cmake~3.30  (CMakeLists.txt)", lines)
         self.assertIn('"docvols": ["python~3.12", "cmake~3.30"]', lines)
+
+    def test_devdocs_docvol_beats_docset_of_the_same_family(self):
+        self.installed("python~3.12", "Python")
+        make_docset(self.tmp, "Python", [("e", "Function", "p.html")],
+                    {"p.html": "<h1>e</h1>"}, meta_version="3.12")
+        self.write(".python-version", "3.12.4\n")
+        r = self.suggest(env={"DOCSHELF_DOCSET_DIRS": self.tmp})
+        self.assertEqual(r.returncode, 0, r.stderr)
+        lines = r.stdout.splitlines()
+        self.assertIn("installed python~3.12  (.python-version)", lines)
+        self.assertNotIn("docset", r.stdout.split('"docvols"')[0])
+        self.assertIn('"docvols": ["python~3.12"]', lines)
 
     def test_version_without_docs_takes_newest_with_note(self):
         self.listed(row("Python", "python~3.14", "3.14.0", version="3.14"))

@@ -68,116 +68,18 @@ items are done.
 
 #### 6. Deferred review items
 
-- [ ] 6.2 DevDocs install, update and sources
-  - [ ] 6.2.2 The real `fetch()` is untested (User-Agent, redirects, error
-        mapping): add a loopback `http.server` test.
-- [ ] 6.4 Docset reading (index, tarix)
-  - [ ] 6.4.1 WAL stamps use whole-second mtimes; the stamp test only
-        checks for "-".
-        The discovery memo key inherits the whole-second mtime.
-  - [ ] 6.4.2 Containment tests cover `..` only (no absolute or backslash
-        paths).
-  - [ ] 6.4.4 Tarix: no tests for symlink or directory members or a
-        truncated archive; the containment-before-lookup test isn't
-        discriminating.
-- [ ] 6.5 Discovery, `where` and `list`
-  - [ ] 6.5.4 No test for `remove`/`update` with a family name matching
-        both a DevDocs docvol and a docset.
-  - [ ] 6.5.5 `import shelf_backends` is repeated lazily in 3 functions.
-- [ ] 6.6 Repeated header/footer cache
-  - [ ] 6.6.3 No tests for cache reuse, rebuild when the docset changes,
-        the `Info.plist` keeper page or the write-failure warning.
-- [ ] 6.7 Dash/Zeal catalogs
-  - [ ] 6.7.3 Unused loop variables in `cached_catalog_match`.
-  - [ ] 6.7.4 No tests for catalog cache expiry, malformed JSON or the MCP
-        text of the new network error.
-- [ ] 6.8 Tests and small cleanups
-  - [ ] 6.8.1 An expected "skipping" warning leaks into test stderr.
-  - [ ] 6.8.2 No tests for CRLF notes files or exit 2 for help with no
-        command.
-  - [ ] 6.8.3 `show` reads the notes file twice, through the private
-        `_read_notes`.
-  - [ ] 6.8.4 The first line of SKILL.md's body is very long.
-  - [ ] 6.8.6 Tests: no lock on the SKIP_TAGS-before-STRUCTURE_TAGS order;
-        `<html>` cases untested; `FtsMaxLinesTests` checks counts only; no
-        `show --offset` boundary tests (total == max_lines, offset =
-        total-1) or MCP nonneg test; no exit-4 scope test for `types`;
-        `TypesTests.setUp` builds its own env; no MCP no-argument install
-        test; the docset-skip install test doesn't prove no download; no
-        temp-cleanup or traversal tests for notes writes.
-  - [ ] 6.8.7 Cosmetics: an extra blank line in `shelf_render`'s imports;
-        the `types` help line is ~81 columns.
 - [ ] 6.9 Notes
   - [ ] 6.9.2 No lock against concurrent writers of notes files (writes are
         atomic; last writer wins).
-
-- [ ] 6.12 After the 0.6.0 reviews
-  - [ ] 6.12.1 No CLI test for a double-encoded anchor or the
-        "warning: no #..." path in `show` (only `section_lines` is tested).
-  - [ ] 6.12.2 `unquote_all` stops after 3 passes; untested and
-        undocumented.
-  - [ ] 6.12.3 `suggest`: a docset and a DevDocs docvol of the same family
-        are chosen by `installed_docvols` order (DevDocs first); untested.
-  - [ ] 6.12.5 `shelf_suggest`: `_has_parser_file` repeats `_scan_dir`'s
-        filter; CMake `#` inside quotes or `#[[ ]]` comments isn't handled.
-  - [ ] 6.12.6 Tests: `.ruby-version` with a `ruby-` prefix, Docker
-        `--platform` and registry prefixes (`localhost:5000/`, `ghcr.io/`),
-        an `==3.11` Python spec, a non-UTF-8 build file;
-        `test_installed_and_available` re-sorts `docs.json` instead of
-        listing rows in order.
-  - [ ] 6.12.7 `name=` on `<details>` (an accordion group name) still adds
-        an anchor; harmless unless it collides.
-
 - [ ] 6.13 After the 0.6.1 reviews
-  - [ ] 6.13.1 Notes tests: an LF file stays LF; a mixed-ending file takes
-        the majority ending.
-  - [ ] 6.13.2 Test `--delete` on a notes file that is a dangling symlink.
-  - [ ] 6.13.3 `install`/`update` with several names: a network-error
-        failure doesn't name its docvol (prefix "<name>: " in `_each` when
-        missing). Tests: that; a 404 leaves no folder behind; a redundant
-        skip plus a failure exits with the failure's code.
-  - [ ] 6.13.4 `sources` dedupes after the query filter; it should keep
-        the first row overall.
-  - [ ] 6.13.5 `_cached_or_fetched`: `getmtime` can raise OSError if the
-        file goes away between checks.
-  - [ ] 6.13.6 No test for reusing a stale Zeal catalog cache offline.
-  - [ ] 6.13.7 Nameless catalog entries are undercounted when only the
-        contrib catalog falls back.
-  - [ ] 6.13.8 `_zeal_rows` docstring has a stray "((".
-  - [ ] 6.13.9 The 6.12.4 lower-bound test lists the newer version first
-        only.
-  - [ ] 6.13.10 `install` repeats an exit-2 error (unwritable cache) once
-        per name.
-  - [ ] 6.13.11 `notes --set General` on an unheaded General after the
-        title drops the blank line between them (`# T\ng2`); same family as
-        the 6.9.1 spacing fix.
   - [ ] 6.13.12 Over MCP, hint lines in normal output still use CLI wording
         (`-d NAME picks one`, `raise --max-lines`, `show REF opens`);
         `explain()` runs only on error text, since rewriting output could
         change quoted doc text.
-  - [ ] 6.13.13 Tool schema descriptions still name CLI flags (`notes`
-        `set`: "needs --text", `text`: "for --set").
-  - [ ] 6.13.14 `explain()` tests: an apostrophe in our own text, an
-        unbalanced quote, a hyphenated REF.
-  - [ ] 6.13.15 MCP tests: a nested-array batch element, an all-invalid
-        batch, a parse error on an array line.
-  - [ ] 6.13.16 A permanent `tools/list` regression test.
-  - [ ] 6.13.17 `param_defaults` restates `_add_param`'s default rule; share
-        a helper.
   - [ ] 6.13.18 A live temp older than one hour can be swept by a
         concurrent process (a long fts build or install).
-  - [ ] 6.13.19 Tests: the sweep swallowing errors; the notes writer leaving
-        no `*.tmp`; `sources NAME` printing the catalog note.
-  - [ ] 6.13.20 The fts "once per query" test depends on
-        `_match_terms.cache_clear()`.
   - [ ] 6.13.21 The `ids` term is useless for `printf(3)` / `vector<int>`
         tokens.
-  - [ ] 6.13.22 The "skipped N malformed entries" note prints once per
-        catalog label (twice per command).
-  - [ ] 6.13.23 "the docset lists came from Zeal's catalog" overstates when
-        only one list fell back.
-  - [ ] 6.13.24 An install that is "up to date" from 0.7.0 gains
-        `entry_count` only at the next upstream release.
   - [ ] 6.13.25 A docvol whose index can't be read (a corrupt DevDocs
         `index.json` with `entry_count`, or a damaged docset index) stops
         every search over all docvols; warn and skip it there instead (one
