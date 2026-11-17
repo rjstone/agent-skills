@@ -32,6 +32,17 @@ prefer Context7 or web search when the library has no docvol or you need
 the very latest release, and a per-library skill when one covers the task.
 Docvols can be stale: `list` shows versions.
 
+## First lookup in a project
+
+Do these before the first lookup, once per project:
+
+1. No AGENTS.md or CLAUDE.md you can see (project or user) has a
+   `## Documentation lookups` section: read
+   [references/lookup-defaults.md](references/lookup-defaults.md) now and
+   follow it. It asks the user once and records the answer.
+2. No `"docvols"` list in a `.docshelf.json`: run `suggest` (not `list`)
+   and offer its list to the user.
+
 The documentation comes from DevDocs (https://devdocs.io); docshelf is not
 affiliated with DevDocs, and each documentation keeps its own licence:
 the table on https://devdocs.io/about lists each one's sources and
@@ -61,12 +72,8 @@ User-contributed docsets carry their own licences.
 
 ## Read when needed
 
-- No AGENTS.md or CLAUDE.md (project or user) says which tool to use for
-  documentation lookups: [references/lookup-defaults.md](references/lookup-defaults.md),
-  once.
 - Docsets, their folders, REF forms or the message for step 3:
   [references/dash-zeal.md](references/dash-zeal.md).
-
 - A needed docvol is missing, or before `sources`, `install`, `update` or
   `remove`, or on exit 7 (network):
   [references/getting-docvols.md](references/getting-docvols.md). `sources`,
