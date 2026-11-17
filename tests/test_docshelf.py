@@ -2821,6 +2821,14 @@ class DashReaderTests(unittest.TestCase):
         self.assertTrue(os.path.isfile(
             os.path.join(again.data_dir(), "index", "docSet.dsidx-wal")))
 
+    def test_malformed_info_plist_falls_back_to_name(self):
+        path = make_docset(self.tmp, "Junk", self.ENTRIES, self.PAGES)
+        with open(os.path.join(path, "Contents", "Info.plist"), "wb") as f:
+            f.write(b"<?xml version='1.0'?><plist><dict><key>x")
+        dv = shelf_dash.open_docset(path, "dash", self.cache)
+        self.assertIsNotNone(dv)
+        self.assertEqual(dv.title, "Junk")
+
     def test_unreadable_index_is_skipped(self):
         path = make_docset(self.tmp, "Bad", [], {})
         open(os.path.join(path, "Contents", "Resources", "docSet.dsidx"), "w").close()
