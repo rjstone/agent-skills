@@ -231,7 +231,8 @@ def installed_docvols(cfg: Config) -> List[DevDocsDocvol]:
 class NetError(CLIError):
     """A download failed (exit code 7); names the host to allow."""
 
-    def __init__(self, url: str, reason: str):
+    def __init__(self, url: str, reason: str, status: Optional[int] = None):
+        self.status = status  # the HTTP status, when the server answered
         host = urlsplit(url).hostname or url
         super().__init__(
             "cannot reach %s (%s). The hosts docshelf may contact are listed "
@@ -265,7 +266,7 @@ def fetch(url: str, dest: Optional[str] = None) -> bytes:
                     except OSError as e:
                         raise _write_error(dest, e)
     except urllib.error.HTTPError as e:
-        raise NetError(url, "HTTP %d" % e.code)
+        raise NetError(url, "HTTP %d" % e.code, status=e.code)
     except (urllib.error.URLError, OSError, ValueError,
             http.client.HTTPException) as e:
         raise NetError(url, str(getattr(e, "reason", e)))
@@ -422,7 +423,14 @@ def install(cfg: Config, row: dict) -> str:
                                            suffix=".tmp")
             os.close(fd)
         for n in names[:2]:
-            fetch("%s/%s/%s" % (DOCUMENTS_BASE, slug, n), tmps[n])
+            try:
+                fetch("%s/%s/%s" % (DOCUMENTS_BASE, slug, n), tmps[n])
+            except NetError as e:
+                if e.status == 404:
+                    raise CLIError("%s: documentation not found on DevDocs "
+                                   "(HTTP 404 from %s); sources QUERY lists "
+                                   "the names" % (slug, urlsplit(DOCUMENTS_BASE).hostname), 5)
+                raise
         try:
             idx = _load(tmps["index.json"])
             if not isinstance(idx, dict) or not isinstance(
@@ -476,6 +484,13 @@ def cmd_sources(cfg, args) -> int:
             if all(w in r["slug"].lower() or w in str(r.get("name", "")).lower()
                    for w in words)]
     hits.sort(key=lambda r: (len(r["slug"]), r["slug"]))
+    seen = set()
+    unique = []
+    for r in hits:  # a slug twice in the list: the first row, as in install
+        if r["slug"] not in seen:
+            seen.add(r["slug"])
+            unique.append(r)
+    hits = unique
     for r in hits[:30]:
         print("%s  %s  %s  %.1f MB%s" % (
             r["slug"], r.get("name", ""), r.get("release", ""),
@@ -524,6 +539,10 @@ def _row_version(row: dict) -> str:
     return version
 
 
+class Redundant(CLIError):
+    """The documentation is already on disk as a Dash/Zeal docset."""
+
+
 def _refuse_redundant(cfg: Config, row: dict) -> None:
     import types
     import shelf_backends
@@ -531,9 +550,9 @@ def _refuse_redundant(cfg: Config, row: dict) -> None:
                                  version=_row_version(row), read_only=False)
     for d in shelf_backends.installed_docvols(cfg):
         if d.read_only and shelf_backends.same_documentation(d, want):
-            raise CLIError(
-                "%s: Dash/Zeal docset %s has this documentation and is used "
-                "as is; install --force %s downloads it anyway"
+            raise Redundant(
+                "%s: skipped, Dash/Zeal docset %s has this documentation and "
+                "is used as is; install --force %s downloads it anyway"
                 % (row["slug"], d.name, row["slug"]), 2)
 
 
@@ -566,7 +585,7 @@ def cmd_install(cfg, args) -> int:
             raise CLIError('install needs NAME (or a "docvols" list in '
                            '.docshelf.json)', 2)
     rows = get_manifest(cfg)
-    failed = False
+    first_failure = 0
     for name in names:
         try:
             if from_project:
@@ -577,15 +596,16 @@ def cmd_install(cfg, args) -> int:
             row = resolve_install(rows, name)
             if not getattr(args, "force", False):
                 _refuse_redundant(cfg, row)
-        except CLIError as e:
-            if not from_project:
-                raise
-            print(str(e), file=sys.stderr)
-            failed = True
+            status = install(cfg, row)
+        except Redundant as e:
+            print(str(e), file=sys.stderr)  # a skip, not a failure
             continue
-        status = install(cfg, row)
+        except CLIError as e:
+            print(str(e), file=sys.stderr)
+            first_failure = first_failure or e.code
+            continue
         print(_describe(cfg, status, row["slug"]))
-    return 5 if failed else 0
+    return first_failure
 
 
 def cmd_update(cfg, args) -> int:

@@ -13,7 +13,9 @@ downloaded. Lookups work offline; only the commands below use the network.
   alias (`py`), a family (`python`) or a title (`Node.js 24 LTS`). A family
   or alias picks the newest version, since DevDocs lists newest first; give
   the slug for another version. Prints `installed`, `updated` or
-  `up to date`.
+  `up to date`. A failed name does not stop the rest: each failure is
+  printed and the exit code is the first failure's (5 when DevDocs answers
+  404, i.e. no such documentation; 7 for other network errors).
 - `update [NAME...]` fetches the DevDocs list fresh (not the 24-hour copy)
   and re-downloads documentations whose DevDocs timestamp is newer; with
   no names, every installed docvol. One that DevDocs no longer lists is
@@ -22,7 +24,8 @@ downloaded. Lookups work offline; only the commands below use the network.
 
 A docset already on disk (Dash or Zeal) is used instead of `install`: the
 documentation is not downloaded again. `install` of a documentation that
-exists locally as a docset is refused unless `--force`, which is for when the
+exists locally as a docset is skipped with a note (exit 0 if nothing else
+failed) unless `--force`, which is for when the
 user explicitly asks for the DevDocs copy. docshelf never installs, updates
 or removes docsets (see [dash-zeal.md](dash-zeal.md)); `sources` also lists
 docsets Dash or Zeal could download, when one of them is present.

@@ -1938,7 +1938,7 @@ class FakeNet:
         if isinstance(v, Exception):
             raise v
         if v is None:
-            raise shelf_devdocs.NetError(url, "HTTP 404")
+            raise shelf_devdocs.NetError(url, "HTTP 404", status=404)
         data = v if isinstance(v, bytes) else v.encode("utf-8")
         if dest is None:
             return data
@@ -2074,6 +2074,35 @@ class NetworkTests(unittest.TestCase):
         self.assertFalse(os.path.exists(os.path.join(folder, "meta.json")))
         leftovers = [f for _, _, fs in os.walk(folder) for f in fs]
         self.assertEqual(leftovers, [])
+
+    def test_install_continues_past_failure(self):
+        url = "%s/node/db.json" % shelf_devdocs.DOCUMENTS_BASE
+        self.net.pages[url] = shelf_devdocs.NetError(url, "connection reset")
+        code, out, err = self.main("install", "python~3.14", "node",
+                                   "python~3.15")
+        self.assertEqual(code, 7)
+        self.assertIn("documents.devdocs.io", err)
+        self.assertIn("installed python~3.14", out)
+        self.assertIn("installed python~3.15", out)
+        self.assertEqual(sorted(os.listdir(self.root)),
+                         ["docs.json", "python~3.14", "python~3.15"])
+
+    def test_install_404_is_not_found(self):
+        url = "%s/python~3.15/index.json" % shelf_devdocs.DOCUMENTS_BASE
+        del self.net.pages[url]
+        code, _, err = self.main("install", "python~3.15")
+        self.assertEqual(code, 5)
+        self.assertIn("python~3.15", err)
+        self.assertIn("not found on DevDocs", err)
+        self.assertNotIn("allowlist", err)
+
+    def test_sources_lists_each_slug_once(self):
+        self.write_manifest(self.rows + [dict(self.rows[0], name="Dup")])
+        code, out, _ = self.main("sources", "python")
+        self.assertEqual(code, 0)
+        slugs = [ln.split()[0] for ln in out.splitlines()]
+        self.assertEqual(slugs.count("python~3.15"), 1, out)
+        self.assertNotIn("Dup", out)
 
     def test_failed_update_keeps_old_docvol(self):
         self.main("install", "python~3.14")
@@ -4212,12 +4241,12 @@ class DashReadOnlyTests(unittest.TestCase):
                 found.append((p, os.stat(p).st_mtime_ns))
         return sorted(found)
 
-    def test_install_refuses_redundant_without_force(self):
+    def test_install_skips_redundant_without_force(self):
         self.docset()
         code, out, err = self.main("install", "python~3.12")
-        self.assertEqual(code, 2, (out, err))
-        self.assertIn("python~3.12: Dash/Zeal docset Python_3 has this "
-                      "documentation and is used as is; install --force "
+        self.assertEqual(code, 0, (out, err))
+        self.assertIn("python~3.12: skipped, Dash/Zeal docset Python_3 has "
+                      "this documentation and is used as is; install --force "
                       "python~3.12 downloads it anyway", err)
         self.assertEqual(self.net.fetched, [shelf_devdocs.MANIFEST_URL])
         code, out, err = self.main("install", "python~3.12", "--force")
@@ -4233,7 +4262,7 @@ class DashReadOnlyTests(unittest.TestCase):
     def test_unknown_docset_version_counts_as_same(self):
         self.docset(version=None)
         code, out, err = self.main("install", "python~3.12")
-        self.assertEqual(code, 2, (out, err))
+        self.assertEqual(code, 0, (out, err))
         self.assertIn("Dash/Zeal docset Python_3 has this documentation", err)
 
     def test_name_version_python_2_does_not_block_3_12(self):
@@ -4245,7 +4274,7 @@ class DashReadOnlyTests(unittest.TestCase):
         self.docset("Python_3", version=None)
         for slug in ("python~3.12", "python~3.11"):
             code, out, err = self.main("install", slug)
-            self.assertEqual(code, 2, (slug, out, err))
+            self.assertEqual(code, 0, (slug, out, err))
             self.assertIn("Dash/Zeal docset Python_3 has this documentation", err)
 
     def test_remove_and_update_refuse_docsets(self):
