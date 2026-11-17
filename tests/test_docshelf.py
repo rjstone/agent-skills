@@ -91,6 +91,18 @@ def tearDownModule():
         p.stop()
 
 
+def temp_env(test):
+    """A temporary folder for `test` (removed at cleanup) with its own cache
+    and notes folders: (folder, cache, notes, env for run_cli)."""
+    tmp = tempfile.TemporaryDirectory()
+    test.addCleanup(tmp.cleanup)
+    folder = os.path.realpath(tmp.name)
+    cache, notes = os.path.join(folder, "cache"), os.path.join(folder, "notes")
+    return folder, cache, notes, {"HOME": folder, "USERPROFILE": folder,
+                                  "DOCSHELF_CACHE_DIR": cache,
+                                  "DOCSHELF_NOTES_DIR": notes}
+
+
 def run_cli(*args, env=None, cwd=None, script=SCRIPT):
     full_env = clean_env()
     if env:
@@ -277,6 +289,12 @@ class SkeletonTests(unittest.TestCase):
 
     def test_no_command_exits_2(self):
         self.assertEqual(run_cli(env=self.env(), cwd=self.work).returncode, 2)
+
+    def test_no_command_prints_the_help_and_exits_2(self):
+        r = run_cli(env=self.env(), cwd=self.work)
+        self.assertEqual(r.returncode, 2)
+        self.assertEqual(r.stdout, TOP_HELP_EXPECTED)  # same text as --help
+        self.assertEqual(r.stderr, "")
 
     def test_where_defaults(self):
         env = {"HOME": self.home, "USERPROFILE": self.home}
@@ -544,8 +562,12 @@ class DevDocsDiskTests(unittest.TestCase):
         self.make("zed", name="Zed")
         self.make("alpha", name="Alpha")
         os.makedirs(os.path.join(self.cache, "devdocs", "broken"))
-        names = [d.name for d in shelf_devdocs.installed_docvols(self.cfg())]
+        err = io.StringIO()
+        with contextlib.redirect_stderr(err):  # the warning is expected: capture it
+            names = [d.name for d in shelf_devdocs.installed_docvols(self.cfg())]
         self.assertEqual(names, ["alpha", "zed"])
+        self.assertIn("warning: skipping", err.getvalue())
+        self.assertIn("broken", err.getvalue())
 
     def test_list(self):
         r = run_cli("list", env=self.env, cwd=self.work)
@@ -1263,6 +1285,36 @@ class ShowOffsetTests(unittest.TestCase):
         self.assertEqual(self.cli("show", "l:p#s", "--offset", "0").returncode, 0)
         self.assertEqual(self.cli("show", "l:p#s", "--offset", "-1").returncode, 2)
 
+    def test_offset_boundaries(self):
+        full = self.full()
+        self.assertEqual(len(full), 400)
+        # exactly as many lines as --max-lines: no cut line
+        r = self.cli("show", "l:p#s", "--max-lines", "400", "--no-notes")
+        self.assertEqual(r.stdout.splitlines(), full)
+        # one more than fits: the cut line points at the one line left
+        r = self.cli("show", "l:p#s", "--max-lines", "399", "--no-notes")
+        self.assertEqual(r.stdout.splitlines()[:399], full[:399])
+        self.assertEqual(r.stdout.splitlines()[-1],
+                         "... 1 more lines; --offset 399 continues (or --full)")
+        # offset = total - 1: only the last line, nothing more to say
+        r = self.cli("show", "l:p#s", "--offset", "399", "--no-notes")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertEqual(r.stdout.splitlines(), [full[399]])
+        # an offset page that ends exactly at the end has no cut line either
+        r = self.cli("show", "l:p#s", "--offset", "300", "--max-lines", "100",
+                     "--no-notes")
+        self.assertEqual(r.stdout.splitlines(), full[300:])
+
+    def test_mcp_offset_must_not_be_negative(self):
+        mcp = McpTests("test_initialize_and_list")
+        mcp.setUp()
+        self.addCleanup(mcp.doCleanups)
+        r = mcp.call("show", {"ref": "alpha:api#frob", "offset": -1})
+        self.assertTrue(r["isError"], r)
+        self.assertIn("offset must be >= 0", r["content"][0]["text"])
+        r = mcp.call("show", {"ref": "alpha:api#frob", "offset": 0})
+        self.assertFalse(r["isError"], r)
+
     def titled_with_notes(self):
         body = "".join("<p>row %d</p>" % i for i in range(20))
         make_devdocs(self.cache, "t", name="T", release="1",
@@ -1293,6 +1345,36 @@ class ShowOffsetTests(unittest.TestCase):
         self.assertNotIn("--- notes", r.stdout)
         r = self.cli("show", "t:p#s", "--offset", "0")
         self.assertIn("General note here.", r.stdout)
+
+
+class ShowAnchorWarningTests(unittest.TestCase):
+    """6.12.1: `show` with a double-encoded anchor, and the missing-anchor
+    warning, end to end."""
+
+    def setUp(self):
+        self.tmp, self.cache, _notes, self.env = temp_env(self)
+        make_devdocs(self.cache, "l", name="L", release="1",
+                     entries=[("Page", "Guide", "p")],
+                     pages={"p": "<h1>P</h1><h2 id='a/b'>Slash</h2><p>inside</p>"
+                                 "<h2 id='next'>Next</h2><p>after</p>"})
+
+    def cli(self, *args):
+        return run_cli(*args, env=self.env, cwd=self.tmp)
+
+    def test_double_encoded_anchor_finds_the_section(self):
+        for anchor in ("a%2Fb", "a%252Fb"):
+            r = self.cli("show", "l:p#" + anchor, "--no-notes")
+            self.assertEqual(r.returncode, 0, r.stderr)
+            self.assertEqual(r.stderr, "", anchor)
+            self.assertIn("inside", r.stdout)
+            self.assertNotIn("after", r.stdout)
+
+    def test_missing_anchor_warns_and_shows_the_page(self):
+        r = self.cli("show", "l:p#nope", "--no-notes")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertIn("warning: no #nope on p", r.stderr)
+        self.assertIn("inside", r.stdout)
+        self.assertIn("after", r.stdout)  # the whole page, not a section
 
 
 class ShowGrepTests(unittest.TestCase):
@@ -1859,13 +1941,11 @@ class FtsTests(unittest.TestCase):
 
 class FtsIdentifierTests(unittest.TestCase):
     def setUp(self):
-        tmp = tempfile.TemporaryDirectory()
-        self.addCleanup(tmp.cleanup)
-        self.tmp = os.path.realpath(tmp.name)
-        self.cache = os.path.join(self.tmp, "cache")
-        self.env = {"HOME": self.tmp, "USERPROFILE": self.tmp,
-                    "DOCSHELF_CACHE_DIR": self.cache,
-                    "DOCSHELF_NOTES_DIR": os.path.join(self.tmp, "notes")}
+        # _match_terms is lru_cached: start each test (and leave the next one)
+        # with it empty, so no test depends on what ran before it
+        shelf_lookup._match_terms.cache_clear()
+        self.addCleanup(shelf_lookup._match_terms.cache_clear)
+        self.tmp, self.cache, _notes, self.env = temp_env(self)
         make_devdocs(
             self.cache, "py", name="Py", release="1",
             entries=[("A", "Guide", "pa"), ("B", "Guide", "pb"),
@@ -1906,10 +1986,6 @@ class FtsIdentifierTests(unittest.TestCase):
             self.assertEqual([h["page"] for h in json.loads(r.stdout)][:1], ["pc"], q)
 
     def test_match_expression_built_once_per_query(self):
-        import contextlib
-        import io
-        from unittest import mock
-        shelf_lookup._match_terms.cache_clear()
         real = shelf_lookup._quote
         calls = []
 
@@ -1994,13 +2070,7 @@ class FtsIdentifierTests(unittest.TestCase):
 
 class FtsMaxLinesTests(unittest.TestCase):
     def setUp(self):
-        tmp = tempfile.TemporaryDirectory()
-        self.addCleanup(tmp.cleanup)
-        self.tmp = os.path.realpath(tmp.name)
-        self.cache = os.path.join(self.tmp, "cache")
-        self.env = {"HOME": self.tmp, "USERPROFILE": self.tmp,
-                    "DOCSHELF_CACHE_DIR": self.cache,
-                    "DOCSHELF_NOTES_DIR": os.path.join(self.tmp, "notes")}
+        self.tmp, self.cache, _notes, self.env = temp_env(self)
         make_devdocs(self.cache, "many", name="Many", release="1",
                      entries=[("p%d" % i, "Guide", "p%d" % i) for i in range(8)],
                      pages={"p%d" % i: "<h1>P%d</h1><p>zebra zebra %d</p>" % (i, i)
@@ -2014,6 +2084,20 @@ class FtsMaxLinesTests(unittest.TestCase):
             lines = r.stdout.splitlines()
             self.assertTrue(1 <= len(lines) <= n, (n, r.stdout))
             self.assertTrue(lines[0].startswith("many:"), r.stdout)
+
+    def test_cap_keeps_the_best_hits_and_says_what_was_cut(self):
+        r = run_cli("fts", "zebra", "-d", "many", "--max-lines", "3",
+                    env=self.env, cwd=self.tmp)
+        lines = r.stdout.splitlines()
+        self.assertEqual(len(lines), 3, r.stdout)
+        shown = [l.split()[0] for l in lines if l.startswith("many:")]
+        self.assertEqual(len(shown), 1, r.stdout)  # a hit takes two lines
+        self.assertTrue(lines[1].startswith("  "), r.stdout)  # its snippet
+        self.assertIn("zebra", lines[1])
+        self.assertIn("more hits cut", lines[2])
+        full = run_cli("fts", "zebra", "-d", "many", "--max-lines", "20",
+                       env=self.env, cwd=self.tmp).stdout.splitlines()
+        self.assertEqual(lines[0], full[0])  # the first hit is the best one
 
 
 class FakeNet:
@@ -2130,6 +2214,16 @@ class FetchLoopbackTests(unittest.TestCase):
             shelf_devdocs.fetch(self.base + "/missing")
         self.assertEqual((c.exception.status, c.exception.code), (404, 7))
         self.assertIn("HTTP 404", str(c.exception))
+
+    def test_http_error_closes_its_response(self):
+        import urllib.error
+        body = io.BytesIO(b"nope")
+        err = urllib.error.HTTPError("http://x/", 404, "Not Found", {}, body)
+        with mock.patch.object(shelf_devdocs.urllib.request, "urlopen",
+                               side_effect=err):
+            with self.assertRaises(shelf_devdocs.NetError):
+                shelf_devdocs.fetch("http://x/")
+        self.assertTrue(body.closed)  # else a ResourceWarning at garbage collection
 
     def test_500_is_net_error(self):
         with self.assertRaises(shelf_devdocs.NetError) as c:
@@ -2609,7 +2703,8 @@ Look up (usual order):
   fts QUERY... [-d NAME]         words inside pages, 5 best hits with REFs;
                                  include the function name: fts read_csv skip
   types [-d NAME]                each docvol's entry types with counts, most
-                                 frequent first (the names `search --type` takes)
+                                 frequent first (the names `search --type`
+                                 takes)
 
 Notes (format: references/notes.md in the skill folder):
   notes DOCVOL --path            the notes file to edit
@@ -2770,13 +2865,7 @@ class TocTests(unittest.TestCase):
 
 class TypesTests(unittest.TestCase):
     def setUp(self):
-        tmp = tempfile.TemporaryDirectory()
-        self.addCleanup(tmp.cleanup)
-        self.tmp = os.path.realpath(tmp.name)
-        self.cache = os.path.join(self.tmp, "cache")
-        self.env = {"HOME": self.tmp, "USERPROFILE": self.tmp,
-                    "DOCSHELF_CACHE_DIR": self.cache,
-                    "DOCSHELF_NOTES_DIR": os.path.join(self.tmp, "notes")}
+        self.tmp, self.cache, _notes, self.env = temp_env(self)
 
     def add(self, slug, types):
         entries = [("e%d" % i, t, "p") for i, t in enumerate(types)]
@@ -2806,6 +2895,20 @@ class TypesTests(unittest.TestCase):
             "alpha", "  2  Function", "  1  Class", "beta", "  1  Macro"])
         r = run_cli("types", "--all", env=self.env, cwd=self.tmp)
         self.assertEqual(r.stdout.splitlines()[0], "alpha")
+
+    def test_types_scope_errors_exit_4(self):
+        big = [("e%d" % i, "Function", "p") for i in range(500)]
+        for n in "abcde":
+            make_devdocs(self.cache, "doc" + n, name=n, release="1",
+                         entries=big, pages={"p": "<p>t</p>"})
+        r = run_cli("types", env=self.env, cwd=self.tmp)  # 5 full docvols, no scope
+        self.assertEqual(r.returncode, 4, r.stderr)
+        self.assertEqual(r.stdout, "")
+        self.assertIn("--all", r.stderr)
+        r = run_cli("types", "-d", "nosuch", env=self.env, cwd=self.tmp)
+        self.assertEqual(r.returncode, 4, r.stderr)
+        r = run_cli("types", "-d", "doca", env=self.env, cwd=self.tmp)
+        self.assertEqual(r.returncode, 0, r.stderr)
 
     def test_types_docset(self):
         make_docset(self.tmp, "Dset", [("a", "Function", "p.html"),
@@ -3666,6 +3769,18 @@ class NotesWriteTests(unittest.TestCase):
         r = self.cli("notes", "python", "--delete", "a")
         self.assertEqual(self.read(), "## b\r\n2\r\n\r\n## c\r\nx\r\ny\r\n")
 
+    def test_replace_unheaded_general_keeps_blank_after_title(self):
+        self.put("# Title\n\nintro\n\n## a\n1\n")
+        r = self.cli("notes", "python", "--set", "General", "--text", "g2")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertEqual(self.read(), "# Title\n\ng2\n\n## a\n1\n")
+        self.put("# Title\nintro\n")  # no blank to start with: one is added
+        self.cli("notes", "python", "--set", "General", "--text", "g3")
+        self.assertEqual(self.read(), "# Title\n\ng3\n")
+        self.put("intro\n\n## a\n1\n")  # no title: nothing added
+        self.cli("notes", "python", "--set", "General", "--text", "g4")
+        self.assertEqual(self.read(), "g4\n\n## a\n1\n")
+
     def test_delete_unheaded_general_keeps_blank_after_title(self):
         self.put("# Title\n\nintro\n\n## a\n1\n")
         r = self.cli("notes", "python", "--delete", "General")
@@ -3710,6 +3825,81 @@ class NotesWriteTests(unittest.TestCase):
         self.put("## a\n1\n")
         self.cli("notes", "python", "--set", "b", "--text", "x\r\ny")
         self.assertEqual(self.read(), "## a\n1\n\n## b\nx\ny\n")
+
+    def test_lf_file_stays_lf(self):
+        os.makedirs(self.notes, exist_ok=True)
+        with open(self.file, "wb") as f:
+            f.write(b"## a\n1\n")
+        self.cli("notes", "python", "--set", "b", "--text", "x")
+        with open(self.file, "rb") as f:
+            self.assertEqual(f.read(), b"## a\n1\n\n## b\nx\n")
+
+    def test_mixed_endings_take_the_majority(self):
+        os.makedirs(self.notes, exist_ok=True)
+        for raw, want in ((b"## a\r\n1\r\n2\r\n\r\n## b\nx\n", b"\r\n"),
+                          (b"## a\r\n1\n2\n\n## b\nx\n", b"\n"),
+                          (b"## a\r\n1\n", b"\n")):  # a tie goes to LF
+            with open(self.file, "wb") as f:
+                f.write(raw)
+            r = self.cli("notes", "python", "--set", "c", "--text", "y")
+            self.assertEqual(r.returncode, 0, r.stderr)
+            with open(self.file, "rb") as f:
+                data = f.read()
+            self.assertEqual(data.count(b"\n"), data.count(want), (raw, data))
+            self.assertTrue(data.endswith(b"y" + want), (raw, data))
+
+    def test_crlf_file_is_shown_and_checked_without_stray_returns(self):
+        os.makedirs(self.notes, exist_ok=True)
+        with open(self.file, "wb") as f:
+            f.write(b"General\r\n\r\n## Guide\r\nabout guide\r\n")
+        r = self.cli("show", "python:guide")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertIn("General", r.stdout.splitlines())
+        self.assertIn("about guide", r.stdout.splitlines())
+        self.assertNotIn("\r\r", r.stdout.replace("\r\n", "\n"))
+        r = self.cli("notes", "python", "--check")
+        self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+        self.assertIn("## Guide: shown by show python~3.13:guide", r.stdout)
+        self.assertIn("ok", r.stdout)
+
+    @unittest.skipUnless(hasattr(os, "symlink") and os.name == "posix",
+                         "symlinks need POSIX here")
+    def test_delete_on_dangling_symlink_changes_nothing(self):
+        os.makedirs(self.notes, exist_ok=True)
+        target = os.path.join(self.tmp, "gone", "python.md")
+        os.symlink(target, self.file)
+        r = self.cli("notes", "python", "--delete", "a")
+        self.assertEqual(r.returncode, 5, r.stdout + r.stderr)  # no notes file yet
+        self.assertFalse(os.path.exists(os.path.join(self.tmp, "gone")))
+        self.assertTrue(os.path.islink(self.file))
+        self.assertEqual(os.listdir(self.notes), ["python.md"])
+
+    def test_writes_leave_no_temp_files(self):
+        self.cli("notes", "python", "--set", "a", "--text", "1")
+        self.cli("notes", "python", "--set", "a", "--text", "2")
+        self.cli("notes", "python", "--delete", "a")
+        self.assertEqual(os.listdir(self.notes), ["python.md"])
+        # a failed write cleans up too: os.replace raising OSError
+        self.put("## a\n1\n")
+        with mock.patch.object(shelf_notes.os, "replace",
+                               side_effect=OSError("disk gone")):
+            with self.assertRaises(CLIError) as c:
+                shelf_notes._write_notes(self.file, "## a\n2\n")
+        self.assertEqual(c.exception.code, 2)
+        self.assertEqual(self.read(), "## a\n1\n")
+        self.assertEqual(os.listdir(self.notes), ["python.md"])
+
+    def test_family_names_cannot_leave_the_notes_folder(self):
+        for bad in ("../evil", "a/b", "..", "", ".hidden", "a\\b"):
+            with self.assertRaises(CLIError, msg=bad) as c:
+                shelf_notes.notes_path(shelf_core.load_config(
+                    self.tmp, dict(self.env)), bad)
+            self.assertEqual(c.exception.code, 2)
+        for bad in ("../evil", "..%2Fevil"):
+            r = self.cli("notes", bad, "--set", "a", "--text", "b")
+            self.assertNotEqual(r.returncode, 0, bad)
+        self.assertFalse(os.path.exists(os.path.join(self.tmp, "evil.md")))
+        self.assertFalse(os.path.exists(self.notes))  # nothing was created
 
 
 class NotesPageHeadingTests(unittest.TestCase):
@@ -6487,6 +6677,37 @@ class FinalReviewFixTests(unittest.TestCase):
         shelf_core.sweep_stale_tmp(folder)
         self.assertEqual(sorted(os.listdir(folder)), ["keep.sqlite", "new.tmp-wal"])
 
+    def test_sweep_swallows_errors(self):
+        folder = os.path.join(self.tmp, "sw2")
+        os.makedirs(folder)
+        old = []
+        for n in ("a.tmp", "b.tmp"):
+            p = os.path.join(folder, n)
+            with open(p, "w") as f:
+                f.write("x")
+            t = time.time() - 2 * 3600
+            os.utime(p, (t, t))
+            old.append(p)
+        real_remove = os.remove
+
+        def flaky(path):
+            if path == old[0]:
+                raise PermissionError("busy")
+            real_remove(path)
+        with mock.patch.object(shelf_core.os, "remove", flaky):
+            shelf_core.sweep_stale_tmp(folder)  # no exception
+        self.assertEqual(os.listdir(folder), ["a.tmp"])  # the other one went
+        # a folder that cannot be listed, or does not exist
+        shelf_core.sweep_stale_tmp(os.path.join(folder, "missing"))
+        with mock.patch.object(shelf_core.os, "listdir",
+                               side_effect=PermissionError("no")):
+            shelf_core.sweep_stale_tmp(folder)
+        # a file that vanishes between listing and the age check
+        with mock.patch.object(shelf_core.os.path, "getmtime",
+                               side_effect=FileNotFoundError("gone")):
+            shelf_core.sweep_stale_tmp(folder)
+        self.assertEqual(os.listdir(folder), ["a.tmp"])
+
     # 6. bad entry_count values fall back to counting
     def test_bad_entry_count_types_fall_back_to_counting(self):
         folder = make_devdocs(self.cache, "vite", name="Vite", release="5",
@@ -6579,10 +6800,13 @@ class DocsetStampTests(unittest.TestCase):
         with mock.patch.dict(os.environ, env), \
                 mock.patch.object(shelf_lookup, "build_fts",
                                   wraps=shelf_lookup.build_fts) as built:
-            for _ in range(3):
-                ds = shelf_backends.installed_docvols(cfg)[0]
-                shelf_lookup.ensure_fts(cfg, ds)
+            err = io.StringIO()
+            with contextlib.redirect_stderr(err):  # the first-build note
+                for _ in range(3):
+                    ds = shelf_backends.installed_docvols(cfg)[0]
+                    shelf_lookup.ensure_fts(cfg, ds)
             self.assertEqual(built.call_count, 1)
+            self.assertEqual(err.getvalue().count("building the full-text index"), 1)
 
 
 class DashContainmentTests(unittest.TestCase):
@@ -6713,3 +6937,105 @@ class DashTarixEdgeTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class ShowNotesReadOnceTests(unittest.TestCase):
+    """6.8.3: `show` reads the notes file once and prints notes and size
+    warnings from that one read."""
+
+    def setUp(self):
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        self.tmp = os.path.realpath(tmp.name)
+        self.cache = os.path.join(self.tmp, "cache")
+        self.notes = os.path.join(self.tmp, "notes")
+        make_devdocs(self.cache, "py", name="Py", release="1",
+                     entries=[("asyncio.gather", "Function", "a#g")],
+                     pages={"a": "<h2 id='g'>asyncio.gather</h2><p>x</p>"})
+        os.makedirs(self.notes)
+        self.file = os.path.join(self.notes, "py.md")
+        with open(self.file, "w", encoding="utf-8") as f:
+            f.write("General note.\n\n## asyncio.gather\n"
+                    + "".join("line %d\n" % i for i in range(120)))
+
+    def main(self, *argv):
+        env = {"HOME": self.tmp, "USERPROFILE": self.tmp,
+               "DOCSHELF_CACHE_DIR": self.cache, "DOCSHELF_NOTES_DIR": self.notes}
+        out, err = io.StringIO(), io.StringIO()
+        real_open = open
+        opened = []
+
+        def counting_open(path, *a, **kw):
+            if isinstance(path, str) and os.path.realpath(path) == self.file:
+                opened.append(path)
+            return real_open(path, *a, **kw)
+
+        with mock.patch.dict(os.environ, env), \
+                mock.patch("builtins.open", counting_open), \
+                contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
+            code = shelf_cli.main(list(argv))
+        return code, out.getvalue(), err.getvalue(), opened
+
+    def test_notes_file_opened_once(self):
+        code, out, err, opened = self.main("show", "py:a#g")
+        self.assertEqual(code, 0, err)
+        self.assertIn("General note.", out)
+        self.assertIn("warning: notes: ", err)  # the 120-line section is over limit
+        self.assertEqual(len(opened), 1, opened)
+
+    def test_no_notes_file_is_still_one_read_at_most(self):
+        os.remove(self.file)
+        code, out, err, opened = self.main("show", "py:a#g")
+        self.assertEqual(code, 0, err)
+        self.assertNotIn("--- notes", out)
+        self.assertLessEqual(len(opened), 1, opened)
+
+
+class RenderEdgeTests(unittest.TestCase):
+    """6.8.6 / 6.12.2 / 6.12.7: render order, <html>, unquote_all, details."""
+
+    def blocks(self, html):
+        return shelf_render.html_to_text(html)
+
+    def test_skip_tags_win_over_structure_tags(self):
+        self.assertFalse(shelf_render.SKIP_TAGS & shelf_render.STRUCTURE_TAGS)
+        # even if a tag were in both sets, being skipped comes first
+        with mock.patch.object(shelf_render, "STRUCTURE_TAGS",
+                               shelf_render.STRUCTURE_TAGS | {"nav"}):
+            self.assertTrue(shelf_render._skippable("nav", {}))
+            self.assertEqual([b.text for b in self.blocks("<nav>menu</nav><p>x</p>")],
+                             ["x"])
+
+    def test_html_element_is_never_chrome(self):
+        for attrs in ('hidden', 'class="sidebar-drawer"', 'role="navigation"',
+                      'class="related" role="banner" hidden'):
+            html = '<html %s><body><h1 id="a">A</h1><p>text</p></body></html>' % attrs
+            self.assertEqual([b.text for b in self.blocks(html)], ["# A", "text"],
+                             attrs)
+
+    def test_html_document_skips_head_chrome_keeps_body(self):
+        html = ("<html><head><style>p{}</style><script>x()</script></head>"
+                "<body><nav>menu</nav><h1>T</h1><p>body</p>"
+                "<footer>foot</footer></body></html>")
+        self.assertEqual([b.text for b in self.blocks(html)], ["# T", "body"])
+
+    def test_unquote_all_decodes_up_to_three_times(self):
+        self.assertEqual(shelf_render.unquote_all("a%2Fb"), "a/b")
+        self.assertEqual(shelf_render.unquote_all("a%252Fb"), "a/b")
+        self.assertEqual(shelf_render.unquote_all("a%25252Fb"), "a/b")  # 3 passes
+        self.assertEqual(shelf_render.unquote_all("a%2525252Fb"), "a%2Fb")  # 4: stops
+        self.assertEqual(shelf_render.unquote_all("plain"), "plain")
+
+    def test_unquote_all_limit_is_documented(self):
+        self.assertIn("3", shelf_render.unquote_all.__doc__)
+
+    def test_details_name_is_a_group_not_an_anchor(self):
+        html = ('<details name="faq"><summary>One</summary><p>a</p></details>'
+                '<details name="faq" id="two"><summary>Two</summary><p>b</p>'
+                '</details>')
+        ids = [b.ids for b in self.blocks(html)]
+        self.assertEqual(ids, [[], [], ["two"], []])
+
+    def test_a_name_is_still_an_anchor(self):
+        blocks = self.blocks('<p><a name="old">x</a></p>')
+        self.assertEqual(blocks[0].ids, ["old"])

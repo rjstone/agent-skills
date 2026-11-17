@@ -297,6 +297,7 @@ def fetch(url: str, dest: Optional[str] = None) -> bytes:
                     except OSError as e:
                         raise _write_error(dest, e)
     except urllib.error.HTTPError as e:
+        e.close()  # it owns the connection's socket
         raise NetError(url, "HTTP %d" % e.code, status=e.code)
     except (urllib.error.URLError, OSError, ValueError,
             http.client.HTTPException) as e:

@@ -62,7 +62,7 @@ def parse_notes(text):
     return general, sections
 
 
-def _read_notes(cfg, family):
+def read_notes(cfg, family):
     """For display: (path, text or None); bad bytes show as U+FFFD."""
     path = notes_path(cfg, family)
     try:
@@ -97,8 +97,7 @@ def _entry_hit(key, typ, name, entry_type):
     return named, named or (typ is not None and "%s (%s)" % (key, typ.lower()) == want)
 
 
-def _notes_body(cfg, ds, entry_name, entry_type, headings) -> List[str]:
-    path, text = _read_notes(cfg, ds.family)
+def _notes_body(path, text, entry_name, entry_type, headings) -> List[str]:
     if text is None:
         return []
     general, sections = parse_notes(text)
@@ -130,11 +129,22 @@ def _notes_body(cfg, ds, entry_name, entry_type, headings) -> List[str]:
 def notes_for(cfg, ds, entry_name, entry_type, headings: Iterable[str] = ()) -> List[str]:
     """General notes, the entry's section, then the sections whose heading
     matches a heading in `headings` (those inside the section shown)."""
-    return _notes_body(cfg, ds, entry_name, entry_type, list(headings))
+    path, text = read_notes(cfg, ds.family)
+    return _notes_body(path, text, entry_name, entry_type, list(headings))
 
 
 def general_notes(cfg, ds, headings: Iterable[str] = ()) -> List[str]:
-    return _notes_body(cfg, ds, None, None, list(headings))
+    path, text = read_notes(cfg, ds.family)
+    return _notes_body(path, text, None, None, list(headings))
+
+
+def notes_and_warnings(cfg, ds, entry_name, entry_type,
+                       headings: Iterable[str] = ()) -> Tuple[List[str], List[str]]:
+    """What `show` prints after a page: (notes lines, size warnings), from one
+    read of the notes file. entry_name None means no entry: General only."""
+    path, text = read_notes(cfg, ds.family)
+    return (_notes_body(path, text, entry_name, entry_type, list(headings)),
+            size_warnings(text or ""))
 
 
 def size_warnings(text) -> List[str]:
@@ -339,6 +349,8 @@ def set_section(text: str, heading: str, body: str) -> str:
         while end - trail > start + head and not lines[end - 1 - trail].strip():
             trail += 1
         keep = lines[start:start + head]
+        if head == 0 and body_lines and start and lines[start - 1].startswith("# "):
+            keep = [""]  # an unheaded General after a title: one blank line between
         new = lines[:start] + keep + body_lines + [""] * trail + lines[end:]
         if end == len(lines):
             return _join(new)
@@ -461,7 +473,7 @@ def cmd_notes(cfg: Config, args) -> int:
         text = _write_request(cfg, args, path, _read_notes_strict(path))
         args.check = True
     else:
-        _, text = _read_notes(cfg, family)
+        _, text = read_notes(cfg, family)
     if text is None:
         print("notes file not present: %s" % path)
         return 0

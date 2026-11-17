@@ -7,7 +7,6 @@ from typing import Callable, Dict, List, Optional, Tuple
 from urllib.parse import unquote
 
 
-
 @dataclass
 class Block:
     level: int        # heading level 1-6, 0 for other blocks
@@ -30,9 +29,10 @@ SKIP_CLASSES = {"related", "mobile-nav", "sphinxsidebar", "sphinxsidebarwrapper"
                 "skip-link"}
 
 
-# name= on these is a form or frame name, not an anchor
+# name= on these is a form or frame name (on <details>, an accordion group
+# name), not an anchor
 NAME_NOT_ANCHOR = {"input", "button", "select", "textarea", "iframe", "object",
-                   "param", "map", "output", "form", "meta", "link"}
+                   "param", "map", "output", "form", "meta", "link", "details"}
 VOID_TAGS = {"area", "base", "br", "col", "embed", "hr", "img", "input", "link",
              "meta", "source", "track", "wbr"}
 NO_REF_PREFIXES = ("#", "http://", "https://", "mailto:", "javascript:")
@@ -254,7 +254,8 @@ def definition_ends(blocks: List[Block], offset=0) -> dict:
 
 
 def unquote_all(s: str) -> str:
-    """URL-decode until stable (anchors are sometimes encoded twice)."""
+    """URL-decode until stable (anchors are sometimes encoded twice). At most
+    3 passes: a string encoded 4 times or more is returned still encoded once."""
     for _ in range(3):
         decoded = unquote(s)
         if decoded == s:
