@@ -17,7 +17,7 @@ import shelf_notes
 from shelf_render import (_print_lines, _print_page_title,
                           section_headings, section_lines)
 from shelf_core import (CLIError, Config, cap_lines, pick_docvol, rank,
-                        select_docvols, short_name, warn)
+                        same_family_note, select_docvols, short_name, warn)
 
 FUZZY_SHOWN = 0  # fuzzy hits shown when exact, prefix or substring hits exist
 
@@ -106,12 +106,19 @@ def _heading_hits(docs, query, words, page_of, max_rank) -> list:
     return hits
 
 
+def _print_family_note(docs, args) -> None:
+    note = same_family_note(docs)
+    if note:
+        print(note, file=sys.stderr if args.json else sys.stdout)
+
+
 def cmd_search(cfg: Config, args: argparse.Namespace) -> int:
     _join_query(args)
     if not args.query:
         raise CLIError("empty search query", 2)
     docs = select_docvols(cfg, shelf_backends.installed_docvols(cfg),
                           args.docvol or [], args.all)
+    _print_family_note(docs, args)
     words = args.query.lower().split()
     want_type = args.type.lower() if args.type else None
     hits = []
@@ -467,6 +474,7 @@ def cmd_fts(cfg: Config, args: argparse.Namespace) -> int:
     _need_fts()
     docs = select_docvols(cfg, shelf_backends.installed_docvols(cfg),
                           args.docvol or [], args.all)
+    _print_family_note(docs, args)
     for ds in docs:
         ensure_fts(cfg, ds)
     # text output takes two lines per hit: fetch enough hits to reach the line cap

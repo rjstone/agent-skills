@@ -2527,6 +2527,78 @@ class _FakeDocvol(shelf_core.Docvol):
         return self._dir
 
 
+class FamilyScopeTests(unittest.TestCase):
+    NOTE = ("note: searching 2 docvols of python (python~3.11, python~3.12); "
+            "-d NAME picks one")
+
+    def setUp(self):
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        self.tmp = os.path.realpath(tmp.name)
+        self.cache = os.path.join(self.tmp, "cache")
+        self.env = {"HOME": self.tmp, "USERPROFILE": self.tmp,
+                    "DOCSHELF_CACHE_DIR": self.cache,
+                    "DOCSHELF_NOTES_DIR": os.path.join(self.tmp, "notes")}
+
+    def add(self, slug, entries=None):
+        entries = entries if entries is not None else [("x", "Function", "x")]
+        pages = {e[2].partition("#")[0]: "<p>t</p>" for e in entries}
+        make_devdocs(self.cache, slug, name=slug.capitalize(), release="1",
+                     entries=entries, pages=pages)
+
+    def cli(self, *args, project=None):
+        if project is not None:
+            with open(os.path.join(self.tmp, ".docshelf.json"), "w") as f:
+                json.dump(project, f)
+        return run_cli(*args, env=self.env, cwd=self.tmp)
+
+    def add_python_and_lua(self):
+        for slug in ("python~3.11", "python~3.12", "lua~5.4"):
+            self.add(slug)
+
+    def test_family_selects_all_versions(self):
+        self.add_python_and_lua()
+        r = self.cli("search", "x", "-d", "python")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        lines = r.stdout.splitlines()
+        self.assertEqual(lines[0], self.NOTE)
+        self.assertTrue(any(l.startswith("python~3.11:") for l in lines))
+        self.assertTrue(any(l.startswith("python~3.12:") for l in lines))
+        self.assertFalse(any(l.startswith("lua~5.4:") for l in lines))
+
+    def test_exact_name_selects_one(self):
+        self.add_python_and_lua()
+        r = self.cli("search", "x", "-d", "python~3.12")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertNotIn("note:", r.stdout)
+        self.assertNotIn("python~3.11", r.stdout)
+        self.assertIn("python~3.12:", r.stdout)
+
+    def test_json_note_goes_to_stderr(self):
+        self.add_python_and_lua()
+        r = self.cli("search", "x", "-d", "python", "--json")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertIsInstance(json.loads(r.stdout), list)
+        self.assertIn(self.NOTE, r.stderr)
+
+    def test_project_list_family(self):
+        self.add_python_and_lua()
+        r = self.cli("search", "x", project={"docvols": ["python"]})
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertIn("python~3.11:", r.stdout)
+        self.assertIn("python~3.12:", r.stdout)
+        self.assertNotIn("lua~5.4:", r.stdout)
+
+    def test_scope_error_lists_families(self):
+        big = [("x", "Function", "a")] + [
+            ("f%d" % i, "Function", "p%d" % i) for i in range(500)]
+        for slug in ("a~1", "a~2", "b", "c", "d"):
+            self.add(slug, big)
+        r = self.cli("search", "x")
+        self.assertEqual(r.returncode, 4)
+        self.assertIn("a (2), b, c, d", r.stderr)
+
+
 class BackendInterfaceTests(unittest.TestCase):
     def setUp(self):
         tmp = tempfile.TemporaryDirectory()

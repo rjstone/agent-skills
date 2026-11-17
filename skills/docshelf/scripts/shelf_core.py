@@ -5,7 +5,7 @@ import re
 import sys
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
-from typing import Iterator, List, Optional, Tuple
+from typing import Dict, Iterator, List, Optional, Tuple
 
 VERSION = "0.3.0"
 PROJECT_FILE = ".docshelf.json"
@@ -331,23 +331,48 @@ def pick_docvol(docvols, name, error=None) -> Docvol:
 
 
 def select_docvols(cfg, all_docvols, names, use_all) -> List[Docvol]:
-    """Scope: names > project list > all if <= 4 full-size or use_all."""
+    """Scope: names > project list > all if <= 4 full-size or use_all.
+    A name picks the docvol of that exact name, else every docvol of that
+    family (a family name selects all its versions), else whatever
+    pick_docvol finds (alias, title)."""
     wanted = names or cfg.project_docvols
     if wanted:
-        picked = []
+        chosen = []
         for n in wanted:
-            d = pick_docvol(all_docvols, n, ScopeError)
-            if d not in picked:
-                picked.append(d)
-        return picked
+            low = n.lower()
+            hit = ([d for d in all_docvols if d.name == n]
+                   or [d for d in all_docvols if d.name.lower() == low]
+                   or [d for d in all_docvols if d.family.lower() == low])
+            if not hit:
+                hit = [pick_docvol(all_docvols, n, ScopeError)]
+            chosen.extend(hit)
+        return [d for d in all_docvols if d in chosen]
     full = [d for d in all_docvols if d.full_size]
     if use_all or len(full) <= MAX_FULL_UNSCOPED:
         return list(all_docvols)
+    counts: Dict[str, int] = {}
+    for d in full:
+        counts[d.family] = counts.get(d.family, 0) + 1
+    listed = ", ".join("%s (%d)" % (f, c) if c > 1 else f
+                       for f, c in sorted(counts.items()))
     raise ScopeError(
         "%d full-size docvols and no scope; searching all of them is slow and "
-        "noisy.\nFull-size docvols: %s\nNarrow it with -d NAME (repeatable), "
-        "a \"docvols\" list in %s, or search everything with --all."
-        % (len(full), ", ".join(d.name for d in full), PROJECT_FILE))
+        "noisy.\nFull-size docvols: %s\nNarrow it with -d NAME (repeatable; "
+        "a family name picks all its versions), a \"docvols\" list in %s, or "
+        "search everything with --all."
+        % (len(full), listed, PROJECT_FILE))
+
+
+def same_family_note(docs) -> Optional[str]:
+    """Note for the first family with two or more docvols in docs, or None."""
+    groups: Dict[str, List[str]] = {}
+    for d in docs:
+        groups.setdefault(d.family, []).append(d.name)
+    for family, names in groups.items():
+        if len(names) > 1:
+            return ("note: searching %d docvols of %s (%s); -d NAME picks one"
+                    % (len(names), family, ", ".join(names)))
+    return None
 
 
 def cap_lines(lines, max_lines, hint) -> List[str]:

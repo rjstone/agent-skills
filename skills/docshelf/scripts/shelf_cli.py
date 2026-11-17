@@ -71,7 +71,7 @@ COMMANDS: List[Command] = [
             "substring; fuzzy for entries only).",
             shelf_lookup.cmd_search, [
         Param(("query",), "Words to find in entry names or page headings.", nargs="+"),
-        Param(("-d", "--docvol"), "Docvol to search (repeatable).", repeat=True),
+        Param(("-d", "--docvol"), "Docvol or family to search (repeatable).", repeat=True),
         Param(("--type",), "Only entries of this type (no headings).", rare=True),
         Param(("--all",), "Search every installed docvol.", kind="flag", rare=True),
         Param(("--max-lines",), "Output line cap.", kind="posint", rare=True,
@@ -90,7 +90,7 @@ COMMANDS: List[Command] = [
     Command("fts", "Full-text search inside pages (SQLite FTS5).",
             shelf_lookup.cmd_fts, [
         Param(("query",), "Words that must all appear in a page.", nargs="+"),
-        Param(("-d", "--docvol"), "Docvol to search (repeatable).", repeat=True),
+        Param(("-d", "--docvol"), "Docvol or family to search (repeatable).", repeat=True),
         Param(("--all",), "Search every installed docvol.", kind="flag", rare=True),
         Param(("--max-lines",), "Output line cap.", kind="posint", rare=True,
               default=shelf_lookup.FTS_MAX_LINES),
