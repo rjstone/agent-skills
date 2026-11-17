@@ -34,9 +34,18 @@ VOID_TAGS = {"area", "base", "br", "col", "embed", "hr", "img", "input", "link",
 NO_REF_PREFIXES = ("#", "http://", "https://", "mailto:", "javascript:")
 
 
+STRUCTURE_TAGS = {"html", "body", "main", "article"}
+
+
 def _skippable(tag, a) -> bool:
-    return (tag in SKIP_TAGS or "hidden" in a or a.get("role") in SKIP_ROLES
+    if tag in SKIP_TAGS:
+        return True
+    if tag in STRUCTURE_TAGS:  # page structure is never chrome
+        return False
+    return ("hidden" in a or a.get("role") in SKIP_ROLES
             or bool(SKIP_CLASSES.intersection((a.get("class") or "").split())))
+
+
 CONTAINER_TAGS = {"dl", "table", "ul", "ol"}
 BLOCK_TAGS = {"p", "div", "li", "dt", "dd", "tr", "pre", "ul", "ol", "dl", "table",
               "section", "article", "blockquote", "caption", "details", "summary",

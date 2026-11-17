@@ -3762,5 +3762,47 @@ class EnvIsolationTests(unittest.TestCase):
                     {"PATH": _EMPTY, "DOCSHELF_NO_SYSTEM_APPS": "1"}), [])
 
 
+class StructureNotSkippedTests(unittest.TestCase):
+    """html, body, main and article are page structure: a skip class, a
+    navigation role or the hidden attribute on them must not empty the page."""
+
+    def text(self, html):
+        return [b.text for b in shelf_render.html_to_text(html)]
+
+    def test_body_with_skip_class_keeps_content(self):
+        html = '<body class="sidebar-drawer"><h1 id="a">A</h1><p>text</p></body>'
+        self.assertIn("text", " ".join(self.text(html)))
+
+    def test_main_with_navigation_role_keeps_content(self):
+        html = '<main role="navigation"><h1 id="a">A</h1><p>text</p></main>'
+        self.assertIn("text", " ".join(self.text(html)))
+
+    def test_article_hidden_keeps_content(self):
+        html = '<article hidden><h1 id="a">A</h1><p>text</p></article>'
+        self.assertIn("text", " ".join(self.text(html)))
+
+    def test_div_with_skip_class_still_skipped(self):
+        html = '<div class="sphinxsidebar">nav</div><p>x</p>'
+        out = " ".join(self.text(html))
+        self.assertIn("x", out)
+        self.assertNotIn("nav", out)
+
+    def test_show_body_with_skip_class_keeps_content(self):
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        tmp_dir = os.path.realpath(tmp.name)
+        cache = os.path.join(tmp_dir, "cache")
+        make_devdocs(cache, "b", name="B", release="1",
+                     entries=[("Page", "Guide", "p")],
+                     pages={"p": '<body class="sidebar-drawer"><h1 id="a">A</h1>'
+                                 "<p>text</p></body>"})
+        env = {"HOME": tmp_dir, "USERPROFILE": tmp_dir,
+               "DOCSHELF_CACHE_DIR": cache,
+               "DOCSHELF_NOTES_DIR": os.path.join(tmp_dir, "notes")}
+        r = run_cli("show", "b:p", "--no-notes", env=env, cwd=tmp_dir)
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertIn("text", r.stdout)
+
+
 if __name__ == "__main__":
     unittest.main()
