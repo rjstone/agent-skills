@@ -240,9 +240,12 @@ def build_parser() -> argparse.ArgumentParser:
 
 def _join_grep_values(argv: List[str]) -> List[str]:
     """`--grep X` -> `--grep=X`, so a value starting with '-' (`--grep --keep`)
-    isn't read as an option. A trailing bare --grep stays for argparse."""
+    isn't read as an option. A trailing bare --grep stays for argparse, and
+    everything after `--` is positional, so it is left as it is."""
     out, i = [], 0
     while i < len(argv):
+        if argv[i] == "--":
+            return out + argv[i:]
         if argv[i] == "--grep" and i + 1 < len(argv):
             out.append("--grep=" + argv[i + 1])
             i += 2

@@ -66,10 +66,6 @@
   - tests: expected "skipping" warning leaks to test stderr; no tests for
     `name=`-only anchors, CRLF notes, no-command help exit 2
   - `show` reads the notes file twice via private `_read_notes`
-- [ ] `docshelf`: from the Haiku trials with the earlier prompts (2026-11-16):
-  - notes headings cache: no format-version key (an old-format cache would
-    be reused); `notes --check` skips pages that fail to render without
-    saying how many; the `--grep X` -> `--grep=X` rewrite ignores `--`.
 
 ## Automation
 

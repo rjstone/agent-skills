@@ -2199,6 +2199,39 @@ class NotesPageHeadingTests(unittest.TestCase):
         with open(os.path.join(self.notes, "duckdb.md"), "w", encoding="utf-8") as f:
             f.write(text)
 
+    def test_old_format_headings_cache_is_rebuilt(self):
+        ds = shelf_devdocs.DevDocsDocvol(self.folder)
+        os.makedirs(ds.data_dir(), exist_ok=True)
+        with open(os.path.join(ds.data_dir(), "headings.json"), "w") as f:
+            json.dump({"stamp": ds.stamp(),
+                       "headings": {"sql/utility": [["bogus", None]]}}, f)
+        self.write_notes("## count_if\nNon-zero counts as true.\n")
+        r = self.cli("notes", "duckdb", "--check")
+        self.assertEqual(r.stdout.splitlines()[-1], "ok", r.stdout)
+
+    def test_check_says_how_many_pages_it_could_not_read(self):
+        self.write_notes("## count_if\nNon-zero counts as true.\n")
+        real = shelf_devdocs.DevDocsDocvol.page_html
+
+        def page_html(ds, page):
+            if page == "sql/other":
+                raise ValueError("broken page")
+            return real(ds, page)
+        out = io.StringIO()
+        with mock.patch.object(shelf_devdocs.DevDocsDocvol, "page_html", page_html), \
+                mock.patch.dict(os.environ, self.env), \
+                contextlib.redirect_stdout(out):
+            code = shelf_cli.main(["notes", "duckdb", "--check"])
+        self.assertEqual(code, 0, out.getvalue())
+        self.assertIn("note: 1 page could not be read; its headings are not "
+                      "checked", out.getvalue().splitlines())
+
+    def test_grep_rewrite_stops_at_double_dash(self):
+        self.assertEqual(
+            shelf_cli._join_grep_values(
+                ["show", "R", "--grep", "a", "--", "--grep", "b"]),
+            ["show", "R", "--grep=a", "--", "--grep", "b"])
+
     def test_check_accepts_page_heading_and_lists_its_ref(self):
         self.write_notes("## count_if\nNon-zero counts as true.\n")
         r = self.cli("notes", "duckdb", "--check")
@@ -2249,8 +2282,9 @@ class NotesPageHeadingTests(unittest.TestCase):
         cache = os.path.join(self.folder, shelf_devdocs.DERIVED, "headings.json")
         self.assertTrue(os.path.isfile(cache))
         with open(cache, encoding="utf-8") as f:
-            self.assertEqual(json.load(f)["stamp"],
-                             shelf_devdocs.DevDocsDocvol(self.folder).stamp())
+            self.assertEqual(json.load(f)["stamp"], "%s|headings%d" % (
+                shelf_devdocs.DevDocsDocvol(self.folder).stamp(),
+                shelf_notes.HEADINGS_FORMAT))
         with open(os.path.join(self.folder, "db.json"), encoding="utf-8") as f:
             pages = json.load(f)
         pages["sql/other"] = self.OTHER + "<h3 id='sumx'>sum(x)</h3><p>Adds.</p>"
