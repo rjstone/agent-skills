@@ -159,6 +159,12 @@ items are done.
   - [ ] 6.10.1 The match expression is built more than once; the `ids`
         query keeps punctuation for plain tokens.
 
+- [ ] 6.11 After the 0.5.0 fix wave
+  - [ ] 6.11.1 A dangling symlink at the notes path reads as absent, so a
+        write creates the link's target (and its folder).
+  - [ ] 6.11.2 `fts --json` prints "no searchable words" as plain text,
+        not JSON.
+
 #### Reference: other docset and DevDocs readers (skimmed 2026-11-17)
 
 Read Zeal's folder, no network:
