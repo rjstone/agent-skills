@@ -236,9 +236,16 @@ metadata:
 ## Updating a skill (the user, 2026-11-08)
 
 1. Branch to `update/<skill-name>`.
-2. Always bump `metadata.version`, roughly semver: **major** for breaking or
-   big changes, **minor** when files are added, **patch** for edits that add
-   no files. CI fails a change to an existing skill without a higher version.
+2. Always bump `metadata.version` (CI fails a change to an existing skill
+   without a higher version). Which part depends on whether the skill has
+   scripts (the user, 2026-11-17):
+   - **Major:** no hard criteria. Bump for major changes, for changes that
+     may break what users expect, or to mark the skill as stable.
+   - **Minor:** a skill without scripts: files added (references, a
+     refactor into more files) or significant procedural changes. A skill
+     with scripts: new features, even when no files are added.
+   - **Patch:** a skill without scripts: small procedural changes and fixes.
+     A skill with scripts: script fixes that add no feature.
 3. Commit the changes to the branch.
 4. Open a PR for the branch (CI runs on the PR and on each push to it).
 5. When done, merge with a **merge commit** (no squash, no fast-forward) and
