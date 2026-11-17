@@ -3034,6 +3034,18 @@ class DashDiscoveryTests(unittest.TestCase):
         self.assertIn("shadowed", w.stdout)
         self.assertIn(zeal_copy, w.stdout)
 
+    def test_same_folder_two_spellings_is_one_folder(self):
+        mine = os.path.join(self.tmp, "mine")
+        self.docset(mine)
+        dirs = mine + os.pathsep + mine + os.sep
+        rows = self.listed(DOCSHELF_DOCSET_DIRS=dirs)
+        self.assertEqual([(r[0], r[-1]) for r in rows], [("Lib", "folder")])
+        w = self.cli("where", DOCSHELF_DOCSET_DIRS=dirs)
+        self.assertEqual(w.returncode, 0, w.stderr)
+        self.assertNotIn("shadowed", w.stdout)
+        self.assertEqual(sum(1 for ln in w.stdout.splitlines()
+                             if ln.strip().startswith(mine)), 1)
+
     def test_missing_env_dir_is_reported_not_fatal(self):
         gone = os.path.join(self.tmp, "gone")
         self.assertEqual(self.cli("list", DOCSHELF_DOCSET_DIRS=gone).returncode, 0)

@@ -442,9 +442,10 @@ def _search_folders(env) -> List[Tuple[str, str, int]]:
     for pkg in _dash_windows_packages(env):
         out.append((pkg, "dash", 4))
     seen, result = set(), []
-    for folder, source, depth in out:
-        if folder not in seen:
-            seen.add(folder)
+    for folder, source, depth in out:  # one physical folder, one entry
+        key = os.path.normcase(os.path.realpath(folder))
+        if key not in seen:
+            seen.add(key)
             result.append((folder, source, depth))
     return result
 
@@ -483,7 +484,9 @@ def _open_all(cfg, env):
         for path in paths:
             name = os.path.basename(path)[:-len(".docset")]
             if name in by_name:
-                by_name[name].shadowed.append(path)
+                same = os.path.realpath(path) == os.path.realpath(by_name[name].path)
+                if not same:
+                    by_name[name].shadowed.append(path)
                 continue
             d = open_docset(path, source, cfg.cache_dir)
             if d is not None:
