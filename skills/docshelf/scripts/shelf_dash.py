@@ -40,12 +40,37 @@ FOOTER_MIN_PAGES = 5    # fewer pages: no footer detection
 FOOTER_SHARE = 0.6      # share of sampled pages that must end with it
 FOOTER_MAX_BLOCKS = 30
 FOOTER_FORMAT = 1       # bump when footer.json's contents change
-_FAMILY_VERSION = re.compile(r"[_-]\d+(\.\d+)*$")
+_FAMILY_VERSION = re.compile(r"[_-](\d+(?:\.\d+)*)$")
+_SQLITE_MAGIC = b"SQLite format 3\x00"
 
 
 def dash_family(name: str) -> str:
     """'Python_3' -> 'python', 'Node.js' -> 'node.js', 'Qt_6.5' -> 'qt'."""
     return _FAMILY_VERSION.sub("", name.lower().replace(" ", "_"))
+
+
+def name_version(name: str) -> str:
+    """The version part dash_family strips: 'Python_3' -> '3',
+    'Qt_6.5' -> '6.5', 'Node.js' -> ''."""
+    m = _FAMILY_VERSION.search(name.replace(" ", "_"))
+    return m.group(1) if m else ""
+
+
+def _write_json(path: str, data) -> None:
+    """Write data to path atomically (temp file + os.replace)."""
+    folder = os.path.dirname(path)
+    os.makedirs(folder, exist_ok=True)
+    fd, tmp = tempfile.mkstemp(dir=folder, suffix=".tmp")
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as f:
+            json.dump(data, f, ensure_ascii=False)
+        os.replace(tmp, path)
+    except BaseException:
+        try:
+            os.remove(tmp)
+        except OSError:
+            pass
+        raise
 
 
 def entry_location(path: str) -> Tuple[str, Optional[str]]:
@@ -58,7 +83,8 @@ def entry_location(path: str) -> Tuple[str, Optional[str]]:
 
 def _open_ro(path: str) -> sqlite3.Connection:
     # mode=ro, never immutable=1: a WAL index keeps its rows in the -wal file,
-    # which immutable=1 ignores.
+    # which immutable=1 ignores. Only for rollback-journal files: a mode=ro
+    # reader of a WAL file still creates and writes its -shm file.
     uri = pathlib.Path(os.path.abspath(path)).as_uri() + "?mode=ro"
     return sqlite3.connect(uri, uri=True)
 
@@ -98,7 +124,7 @@ class DashDocvol(Docvol):
         self.cache_dir = cache_dir
         self.source = source
         self.read_only = True
-        self.shadowed: List[str] = []  # later copies of this name, not used
+        self.shadowed: List[str] = []  # later copies of this name (`where`)
         self.name = os.path.basename(self.path)[:-len(".docset")] \
             if self.path.endswith(".docset") else os.path.basename(self.path)
         self.family = dash_family(self.name)
@@ -112,68 +138,132 @@ class DashDocvol(Docvol):
             pass
         self.display_name = self.title
         meta = _load_json(os.path.join(self.path, "meta.json"))
-        self.version = str(meta.get("version") or "")
+        # Dash on macOS writes no meta.json: then the name's version part.
+        self.version = str(meta.get("version") or "") or name_version(self.name)
         self.release = self.version
         self.docs_dir = os.path.join(self.path, *DOCS_REL)
         self.index_file = os.path.join(self.path, *INDEX_REL)
         self._entries: Optional[List[Entry]] = None
         self._pages: Optional[List[str]] = None
-        self._known: Optional[set] = None
         self._footer: Optional[Tuple[List[str], Optional[str]]] = None
-        self._use_copy = False
-        with self._connect() as con:
-            self.entry_count = con.execute(
-                "SELECT COUNT(*) FROM %s" % _table(con)).fetchone()[0]
+        self._count: Optional[int] = None
+        self._copied = False
+        # Discovery reads no rows (counting or copying a big index on every
+        # command is slow): only the header, to skip a file that is no SQLite.
+        with open(self.index_file, "rb") as f:
+            if f.read(len(_SQLITE_MAGIC)) != _SQLITE_MAGIC:
+                raise ValueError("docSet.dsidx is not an SQLite database")
 
     def data_dir(self) -> str:
         digest = hashlib.sha1(self.path.encode("utf-8")).hexdigest()[:8]
         return os.path.join(self.cache_dir, "docsets", "%s-%s" % (self.name, digest))
 
-    def _copy_index(self) -> str:
+    def _is_wal(self) -> bool:
+        """True for a WAL-mode index: header bytes 18-19 are 2, or a -wal
+        file sits beside it."""
+        if os.path.exists(self.index_file + "-wal"):
+            return True
+        with open(self.index_file, "rb") as f:
+            head = f.read(20)
+        return len(head) == 20 and 2 in (head[18], head[19])
+
+    def _index_copy(self) -> str:
+        """A copy of the WAL index (and its -wal) in data_dir()/index,
+        refreshed only when stamp() changes. Files are copied to temporary
+        names and moved into place, and the stamp is written last, so a crash
+        leaves no half copy that looks current."""
         dest_dir = os.path.join(self.data_dir(), "index")
+        dest = os.path.join(dest_dir, "docSet.dsidx")
+        stamp_file = os.path.join(dest_dir, "stamp")
+        stamp = self.stamp()
+        if self._copied or (os.path.isfile(dest)
+                            and _load_json(stamp_file).get("stamp") == stamp):
+            return dest
         os.makedirs(dest_dir, exist_ok=True)
-        for suffix in ("", "-wal"):
-            src = self.index_file + suffix
-            dest = os.path.join(dest_dir, "docSet.dsidx" + suffix)
-            if os.path.exists(src):
-                shutil.copyfile(src, dest)
-            elif os.path.exists(dest):
-                os.remove(dest)
-        return os.path.join(dest_dir, "docSet.dsidx")
+        moves = []
+        try:
+            for suffix in ("", "-wal"):
+                if os.path.exists(self.index_file + suffix):
+                    fd, tmp = tempfile.mkstemp(dir=dest_dir, suffix=".tmp")
+                    os.close(fd)
+                    moves.append((tmp, dest + suffix))
+                    shutil.copyfile(self.index_file + suffix, tmp)
+            for old in (stamp_file, dest + "-wal", dest + "-shm"):
+                if os.path.exists(old):
+                    os.remove(old)
+            for tmp, final in moves:
+                os.replace(tmp, final)
+        finally:
+            for tmp, _ in moves:
+                if os.path.exists(tmp):
+                    os.remove(tmp)
+        _write_json(stamp_file, {"stamp": stamp})
+        self._copied = True
+        return dest
 
     def _connect(self) -> "_Conn":
-        """Open the index read-only; if that fails (a WAL index in a
-        read-only folder has no -shm file), read a copy kept in data_dir()."""
-        if not self._use_copy:
-            con = None
+        """Open the index. A rollback-journal index is opened read-only in
+        place; a WAL index is read from a copy in data_dir() (an ordinary
+        open of our own copy), because SQLite writes a -shm file beside any
+        WAL database it reads, and docshelf never writes into a docset."""
+        if self._is_wal():
+            return _Conn(sqlite3.connect(self._index_copy()))
+        return _Conn(_open_ro(self.index_file))
+
+    def _index_error(self, e: Exception) -> CLIError:
+        return CLIError("cannot read the index of docset %s (%s): %s"
+                        % (self.name, self.path, e), 7)
+
+    @property
+    def entry_count(self) -> int:
+        """Rows in the index, read only when asked for and cached in
+        data_dir()/count.json under stamp(); 0 (with a warning) when the
+        index cannot be read."""
+        if self._count is None:
+            cache = os.path.join(self.data_dir(), "count.json")
+            stamp = self.stamp()
+            data = _load_json(cache)
+            if data.get("stamp") == stamp and isinstance(data.get("count"), int):
+                self._count = data["count"]
+                return self._count
             try:
-                con = _open_ro(self.index_file)
-                con.execute("SELECT name FROM sqlite_master LIMIT 1").fetchall()
-                return _Conn(con)
-            except sqlite3.OperationalError:
-                if con is not None:
-                    con.close()
-                self._use_copy = True
-        return _Conn(_open_ro(self._copy_index()))
+                with self._connect() as con:
+                    self._count = int(con.execute(
+                        "SELECT COUNT(*) FROM %s" % _table(con)).fetchone()[0])
+            except (sqlite3.Error, ValueError, OSError) as e:
+                warn(str(self._index_error(e)))
+                self._count = 0
+                return 0
+            try:
+                _write_json(cache, {"stamp": stamp, "count": self._count})
+            except OSError as e:
+                warn("cannot write %s: %s" % (cache, e))
+        return self._count
 
     def entries(self) -> List[Entry]:
         if self._entries is None:
-            out = []
-            with self._connect() as con:
-                form = _table(con)
-                sql = _SQL_SEARCH if form == "searchIndex" else _SQL_ZTOKEN
-                for row in con.execute(sql):
-                    i, name, typ, path = row[:4]
-                    path = path or ""
-                    if form == "ZTOKEN" and row[4]:
-                        path += "#" + row[4]
-                    if not path or re.match(r"https?://", path, re.I):
-                        continue
-                    page, anchor = entry_location(path)
-                    out.append(Entry(name or "", typ or "",
-                                     "%s:%d" % (self.name, i), page, anchor))
-            self._entries = out
+            try:
+                self._entries = self._read_entries()
+            except (sqlite3.Error, ValueError, OSError) as e:
+                raise self._index_error(e)
         return self._entries
+
+    def _read_entries(self) -> List[Entry]:
+        out = []
+        with self._connect() as con:
+            form = _table(con)
+            sql = _SQL_SEARCH if form == "searchIndex" else _SQL_ZTOKEN
+            for row in con.execute(sql):
+                i, name, typ, path = row[:4]
+                path = path or ""
+                if form == "ZTOKEN" and row[4]:
+                    path += "#" + row[4]
+                if not path or re.match(r"https?://", path, re.I):
+                    continue
+                page, anchor = entry_location(path)
+                out.append(Entry(name or "", typ or "",
+                                 "%s:%d" % (self.name, i), page, anchor))
+        return out
 
     def pages(self) -> List[str]:
         if self._pages is None:
@@ -181,8 +271,10 @@ class DashDocvol(Docvol):
         return self._pages
 
     def _doc_file(self, page: str) -> str:
-        docs = self.docs_dir
-        full = os.path.normpath(os.path.join(docs, *page.split("/")))
+        """The page's file; CLIError 5 when it is missing or resolves (through
+        '..' or a symlink) to a file outside Documents/."""
+        docs = os.path.realpath(self.docs_dir)
+        full = os.path.realpath(os.path.join(docs, *page.split("/")))
         try:
             inside = os.path.commonpath([docs, full]) == docs
         except ValueError:
@@ -305,19 +397,7 @@ class DashDocvol(Docvol):
             return self._footer
         footer, keep = self.detect_footer()
         try:
-            os.makedirs(self.data_dir(), exist_ok=True)
-            fd, tmp = tempfile.mkstemp(dir=self.data_dir(), suffix=".tmp")
-            try:
-                with os.fdopen(fd, "w", encoding="utf-8") as f:
-                    json.dump({"stamp": stamp, "footer": footer, "keep": keep},
-                              f, ensure_ascii=False)
-                os.replace(tmp, cache)
-            except BaseException:
-                try:
-                    os.remove(tmp)
-                except OSError:
-                    pass
-                raise
+            _write_json(cache, {"stamp": stamp, "footer": footer, "keep": keep})
         except OSError as e:
             warn("cannot write %s: %s" % (cache, e))
         self._footer = (footer, keep)
@@ -584,7 +664,8 @@ def _scan(env):
 
 
 def _open_all(cfg, env):
-    """Open the docsets; return (docvols, {winner name: shadowed paths})."""
+    """Open the docsets, the first of each name; later copies of a name go
+    to the winner's `shadowed` list. Returns the list of docvols."""
     docvols, by_name = [], {}
     for folder, source, paths in _scan(env):
         for path in paths:

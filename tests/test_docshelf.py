@@ -14,6 +14,7 @@ import subprocess
 import sys
 import tempfile
 import threading
+import types
 import unittest
 from unittest import mock
 from typing import Dict, List, Optional, Tuple
@@ -29,6 +30,7 @@ SKILL = os.path.join(REPO_ROOT, "skills", "docshelf")
 SCRIPT = os.path.join(SKILL, "scripts", "docshelf.py")
 
 sys.path.insert(0, os.path.join(SKILL, "scripts"))
+import shelf_backends  # noqa: E402
 import shelf_cli  # noqa: E402
 import shelf_dash  # noqa: E402
 from shelf_core import CLIError  # noqa: E402
@@ -2878,6 +2880,34 @@ class DashReaderTests(unittest.TestCase):
                           ("Node.js", "Qt_6.5", "Foo Bar-2")],
                          ["node.js", "qt", "foo_bar"])
 
+    def test_version_from_name_without_meta(self):
+        got = [self.docvol(n).version for n in ("Python_3", "Qt_6.5", "Plain")]
+        self.assertEqual(got, ["3", "6.5", ""])
+        same = shelf_backends.same_documentation
+        ns = lambda v, ro: types.SimpleNamespace(family="python", version=v,
+                                                 read_only=ro)
+        self.assertTrue(same(ns("3", True), ns("3.12", False)))
+        self.assertTrue(same(ns("3.12.1", True), ns("3.12", False)))
+        self.assertFalse(same(ns("2", True), ns("3.12", False)))
+        self.assertFalse(same(ns("3.12", True), ns("3.13", False)))
+
+    def test_symlink_out_of_documents_refused(self):
+        dv = self.docvol()
+        outside = os.path.join(self.tmp, "secret.html")
+        with open(outside, "w") as f:
+            f.write("<p>secret</p>")
+        try:
+            os.symlink(outside, os.path.join(dv.docs_dir, "evil.html"))
+            os.symlink(os.path.join(dv.docs_dir, "os.html"),
+                       os.path.join(dv.docs_dir, "alias.html"))
+        except (OSError, NotImplementedError) as e:
+            self.skipTest("symlinks not permitted here: %s" % e)
+        with self.assertRaises(CLIError) as c:
+            dv.page_html("evil.html")
+        self.assertEqual(c.exception.code, 5)
+        self.assertIsNone(dv.resolve_href("lib.html", "evil.html"))
+        self.assertIn("<h1>os</h1>", dv.page_html("alias.html"))
+
     def test_wal_rows_are_read(self):
         dv = self.docvol(wal=True)
         res = os.path.join(dv.path, "Contents", "Resources")
@@ -2898,8 +2928,8 @@ class DashReaderTests(unittest.TestCase):
         with mock.patch.object(shelf_dash, "_open_ro", refuse_original):
             again = shelf_dash.DashDocvol(dv.path, "dash", self.cache)
             self.assertEqual(len(again.entries()), 2)
-        self.assertTrue(os.path.isfile(
-            os.path.join(again.data_dir(), "index", "docSet.dsidx-wal")))
+        self.assertTrue(os.path.isfile(  # (closing our copy checkpoints its -wal)
+            os.path.join(again.data_dir(), "index", "docSet.dsidx")))
 
     def test_malformed_info_plist_falls_back_to_name(self):
         path = make_docset(self.tmp, "Junk", self.ENTRIES, self.PAGES)
@@ -3238,6 +3268,18 @@ class DashReadOnlyTests(unittest.TestCase):
         self.assertEqual(code, 2, (out, err))
         self.assertIn("Dash/Zeal docset Python_3 has this documentation", err)
 
+    def test_name_version_python_2_does_not_block_3_12(self):
+        self.docset("Python_2", version=None)
+        code, out, err = self.main("install", "python~3.12")
+        self.assertEqual((code, err), (0, ""))
+
+    def test_name_version_python_3_blocks_every_3_x(self):
+        self.docset("Python_3", version=None)
+        for slug in ("python~3.12", "python~3.11"):
+            code, out, err = self.main("install", slug)
+            self.assertEqual(code, 2, (slug, out, err))
+            self.assertIn("Dash/Zeal docset Python_3 has this documentation", err)
+
     def test_remove_and_update_refuse_docsets(self):
         folder = self.docset()
         before = self.snapshot(folder)
@@ -3403,6 +3445,129 @@ class DashCatalogTests(unittest.TestCase):
         self.assertIn("api.github.com", str(e))
         self.assertIn("assets/allowlist.txt", str(e))
         self.assertNotIn("(devdocs.io", str(e))
+
+
+class DashWalCopyTests(unittest.TestCase):
+    """A WAL index is read from a copy in the cache: nothing is written into
+    the docset folder (no -shm is created or touched)."""
+    ENTRIES = [("open", "Function", "lib.html#open"), ("os", "Module", "os.html")]
+    PAGES = {"lib.html": "<h1>lib</h1><p>Opens files.</p>",
+             "os.html": "<h1>os</h1><p>Operating system calls.</p>"}
+
+    def setUp(self):
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        self.tmp = os.path.realpath(tmp.name)
+        self.docs = os.path.join(self.tmp, "docs")
+        self.cache = os.path.join(self.tmp, "cache")
+        self.path = make_docset(self.docs, "Lib", self.ENTRIES, self.PAGES, wal=True)
+        shm = os.path.join(self.path, "Contents", "Resources", "docSet.dsidx-shm")
+        if os.path.exists(shm):  # as downloaded: index and -wal only
+            os.remove(shm)
+
+    def snapshot(self):
+        out = []
+        for dirpath, dirs, files in os.walk(self.path):
+            for n in dirs + files:
+                p = os.path.join(dirpath, n)
+                st = os.stat(p)
+                out.append((os.path.relpath(p, self.path), st.st_size, st.st_mtime_ns))
+        return sorted(out)
+
+    def open(self):
+        return shelf_dash.DashDocvol(self.path, "folder", self.cache)
+
+    def test_docset_folder_unchanged(self):
+        before = self.snapshot()
+        dv = self.open()
+        self.assertEqual([e.ref for e in dv.entries()], ["Lib:1", "Lib:2"])
+        self.assertEqual(dv.entry_count, 2)
+        self.assertIn("Opens files.", dv.page_html("lib.html"))
+        env = {"HOME": self.tmp, "USERPROFILE": self.tmp,
+               "DOCSHELF_DOCSET_DIRS": self.docs, "DOCSHELF_CACHE_DIR": self.cache,
+               "DOCSHELF_NOTES_DIR": os.path.join(self.tmp, "notes")}
+        r = run_cli("fts", "Operating", "-d", "Lib", env=env, cwd=self.tmp)
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertIn("Lib:", r.stdout)
+        self.assertEqual(self.snapshot(), before)
+
+    def test_copy_reused_until_the_wal_changes(self):
+        dv = self.open()
+        self.assertEqual(len(dv.entries()), 2)
+        copy = os.path.join(dv.data_dir(), "index", "docSet.dsidx")
+        self.assertTrue(os.path.isfile(copy))
+        real_copy = shutil.copyfile
+        with mock.patch.object(shelf_dash.shutil, "copyfile", wraps=real_copy) as cp:
+            self.assertEqual(len(self.open().entries()), 2)
+        self.assertEqual(cp.call_count, 0)
+        con = sqlite3.connect(dv.index_file)  # a writer adds a row to the -wal
+        try:
+            con.execute("PRAGMA wal_autocheckpoint=0")
+            con.execute("INSERT INTO searchIndex (name, type, path) "
+                        "VALUES ('sys', 'Module', 'os.html')")
+            con.commit()
+            with mock.patch.object(shelf_dash.shutil, "copyfile", wraps=real_copy) as cp:
+                self.assertEqual(len(self.open().entries()), 3)
+            self.assertGreater(cp.call_count, 0)
+        finally:
+            con.close()
+
+
+class DashLazyTests(unittest.TestCase):
+    """Discovery opens no docset index; only commands that need a docset's
+    rows or entry count read it."""
+
+    def setUp(self):
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        self.tmp = os.path.realpath(tmp.name)
+        self.cache = os.path.join(self.tmp, "cache")
+        self.docs = os.path.join(self.tmp, "docsets")
+        make_devdocs(self.cache, "alpha", name="Alpha", release="1",
+                     entries=[("frob", "Function", "a")],
+                     pages={"a": "<h1>frob</h1><p>Frobs.</p>"})
+        make_docset(self.docs, "Lib", [("frob", "Function", "api.html"),
+                                       ("grub", "Function", "api.html")],
+                    {"api.html": "<h1>frob</h1>"}, wal=True)
+        env = mock.patch.dict(os.environ, {
+            "HOME": self.tmp, "USERPROFILE": self.tmp,
+            "DOCSHELF_DOCSET_DIRS": self.docs, "DOCSHELF_CACHE_DIR": self.cache,
+            "DOCSHELF_NOTES_DIR": os.path.join(self.tmp, "notes")})
+        env.start()
+        self.addCleanup(env.stop)
+
+    def main(self, *argv):
+        out, err = io.StringIO(), io.StringIO()
+        with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
+            code = shelf_cli.main(list(argv))
+        return code, out.getvalue(), err.getvalue()
+
+    def watch(self):
+        """Patch the index readers to count calls (still working)."""
+        conn = mock.patch.object(shelf_dash.DashDocvol, "_connect", autospec=True,
+                                 side_effect=shelf_dash.DashDocvol._connect)
+        copy = mock.patch.object(shelf_dash.shutil, "copyfile",
+                                 wraps=shutil.copyfile)
+        return conn, copy
+
+    def test_search_other_docvol_never_reads_the_docset_index(self):
+        conn, copy = self.watch()
+        with conn as c, copy as cp:
+            code, out, err = self.main("search", "frob", "-d", "alpha")
+        self.assertEqual(code, 0, err)
+        self.assertIn("frob", out)
+        self.assertEqual((c.call_count, cp.call_count), (0, 0))
+
+    def test_list_reads_the_count_once_then_caches_it(self):
+        code, out, err = self.main("list")
+        self.assertEqual(code, 0, err)
+        line = next(ln for ln in out.splitlines() if ln.startswith("Lib  "))
+        self.assertIn("  2 entries  ", line)
+        conn, copy = self.watch()
+        with conn as c, copy:
+            code, out2, err = self.main("list")
+        self.assertEqual((code, out2), (0, out))
+        self.assertEqual(c.call_count, 0)
 
 
 class EnvIsolationTests(unittest.TestCase):

@@ -27,13 +27,13 @@ def _major_minor(version: str) -> Tuple[int, ...]:
 
 def same_documentation(a, b) -> bool:
     """True when a DevDocs docvol and a docset document the same thing: same
-    family, exactly one of them read-only, and equal major.minor versions
-    (or the docset's version unknown). Reads only family, version and
-    read_only, so a manifest row wrapped in a namespace works too."""
+    family, exactly one of them read-only, and equal versions, compared on
+    as many of the first two numbers as both have (docset "3" matches 3.12
+    and 3.11; "3.12" and "3.13" differ; an unknown version matches all).
+    Reads only family, version and read_only, so a manifest row wrapped in a
+    namespace works too."""
     if a.family != b.family or bool(a.read_only) == bool(b.read_only):
         return False
-    docset = a if a.read_only else b
-    other = b if a.read_only else a
-    if not docset.version:
-        return True
-    return _major_minor(docset.version) == _major_minor(other.version)
+    x, y = _major_minor(a.version), _major_minor(b.version)
+    n = min(len(x), len(y))
+    return x[:n] == y[:n]
