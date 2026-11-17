@@ -54,7 +54,7 @@ licence.
   name (`fts read_csv skip`, not `fts skip`).
 - Hits below a "fuzzy matches" line only share letters in order; treat them
   as misses. Entries that open the same section are listed once.
-- For one option or row of a long section, `show REF --grep TEXT` prints
+- For one option or row of a long section, `show REF --grep=TEXT` prints
   every matching line, and a matching parameter name comes with its
   description; `...` marks lines without a match, so there's no need to
   rerun without `--grep` or to pipe the section through `grep`. REF is the

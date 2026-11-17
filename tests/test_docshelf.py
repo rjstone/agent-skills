@@ -116,7 +116,7 @@ class SkeletonTests(unittest.TestCase):
     def test_help_runs(self):
         r = run_cli("--help", env=self.env(), cwd=self.work)
         self.assertEqual(r.returncode, 0, r.stderr)
-        self.assertTrue(r.stdout.startswith("docshelf 0.3.0"), r.stdout)
+        self.assertTrue(r.stdout.startswith("docshelf %s" % shelf_core.VERSION), r.stdout)
         self.assertIn("where", r.stdout)
 
     def test_no_command_exits_2(self):
@@ -1655,8 +1655,8 @@ class NetworkTests(unittest.TestCase):
         self.assertEqual(self.main("remove", "python")[0], 5)
 
 
-TOP_HELP_EXPECTED = """\
-docshelf 0.3.0: look up DevDocs documentation offline (stdlib only).
+TOP_HELP_EXPECTED = "docshelf " + shelf_core.VERSION + """\
+: look up DevDocs documentation offline (stdlib only).
 This is the command reference; `<command> --help` adds only the options
 listed at the end. REF = <docvol>:<path>[#anchor], as search and fts print
 them; <docvol> is the name `list` prints.
@@ -1670,7 +1670,7 @@ Look up (usual order):
                                  best first
   show REF                       that entry's section (max 150 lines) plus
                                  your notes for it
-  show REF --grep TEXT           only lines containing TEXT, with their
+  show REF --grep=TEXT           only lines containing TEXT, with their
                                  heading, table header row, and a matching
                                  term's definition (repeatable; plain text,
                                  not a pattern, case-insensitive)

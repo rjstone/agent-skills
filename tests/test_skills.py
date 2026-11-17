@@ -20,6 +20,8 @@ REQUIRED = {"name", "description", "license", "metadata"}
 SOURCE = "https://github.com/rjstone/agent-skills"
 VERSION = re.compile(r'^"\d+\.\d+\.\d+"$')
 FRONTMATTER = re.compile(r"^---\n(.*?)\n---\n", re.S)
+# a script's own version: VERSION = "1.2.3" or __version__ = "1.2.3"
+SCRIPT_VERSION = re.compile(r'^(?:VERSION|__version__)\s*=\s*["\'](\d+\.\d+\.\d+)["\']', re.M)
 
 
 def all_skill_dirs():
@@ -93,6 +95,30 @@ class TestSkills(unittest.TestCase):
                 self.assertRegex(meta.get("version", ""), VERSION, 'metadata.version as a quoted "X.Y.Z"')
                 if "compatibility" in fm:
                     self.assertTrue(1 <= len(fm["compatibility"]) <= 500, "compatibility 1-500 chars")
+
+    def test_skill_md_version_is_not_behind_its_scripts(self):
+        """A script's VERSION may lag SKILL.md's metadata.version (a docs-only
+        change bumps SKILL.md alone) but never pass it: the highest script
+        version equals SKILL.md's after a script change (the user,
+        2026-11-17)."""
+        def parse(v):
+            return tuple(int(x) for x in v.strip("\"'").split("."))
+        for d in skill_dirs():
+            scripts = os.path.join(SKILLS, d, "scripts")
+            if not os.path.isdir(scripts):
+                continue
+            with self.subTest(skill=d):
+                fm = frontmatter(read(os.path.join(SKILLS, d, "SKILL.md")))
+                skill_v = parse(fm["_metadata"]["version"])
+                for name in sorted(os.listdir(scripts)):
+                    if not name.endswith(".py"):
+                        continue
+                    for m in SCRIPT_VERSION.finditer(read(os.path.join(scripts, name))):
+                        self.assertLessEqual(
+                            parse(m.group(1)), skill_v,
+                            "%s VERSION %s is ahead of SKILL.md %s; bump "
+                            "SKILL.md to match" % (name, m.group(1),
+                                                   fm["_metadata"]["version"]))
 
     def test_references_are_linked_from_skill_md(self):
         for d in skill_dirs():

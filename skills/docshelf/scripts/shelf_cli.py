@@ -153,7 +153,7 @@ Look up (usual order):
                                  best first
   show REF                       that entry's section (max 150 lines) plus
                                  your notes for it
-  show REF --grep TEXT           only lines containing TEXT, with their
+  show REF --grep=TEXT           only lines containing TEXT, with their
                                  heading, table header row, and a matching
                                  term's definition (repeatable; plain text,
                                  not a pattern, case-insensitive)

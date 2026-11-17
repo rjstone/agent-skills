@@ -246,6 +246,12 @@ metadata:
      with scripts: new features, even when no files are added.
    - **Patch:** a skill without scripts: small procedural changes and fixes.
      A skill with scripts: script fixes that add no feature.
+   - **Script versions:** a version a script reports (`VERSION = "x.y.z"`,
+     e.g. in `--version`) is written in one place and tests read it from
+     there, never as a literal. It may lag `metadata.version` (a change to
+     Markdown only bumps SKILL.md) but never pass it: after a script change
+     the highest script version equals `metadata.version`, so bump SKILL.md
+     to match. `tests/test_skills.py` checks this (the user, 2026-11-17).
 3. Commit the changes to the branch.
 4. Open a PR for the branch (CI runs on the PR and on each push to it).
 5. When done, merge with a **merge commit** (no squash, no fast-forward) and
