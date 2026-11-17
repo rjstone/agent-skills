@@ -1,4 +1,5 @@
 """docshelf DevDocs backend: docvols on disk, byte-span page index."""
+import errno
 import http.client
 import json
 import os
@@ -12,6 +13,7 @@ from datetime import datetime, timezone
 from typing import Dict, List, Optional, Tuple
 from urllib.parse import urlsplit
 
+import shelf_backends  # imports this module back; used only inside functions
 from shelf_core import (VERSION, CLIError, warn, Config, Docvol, Entry, make_temp,
                         pick_docvol, sweep_stale_tmp)
 
@@ -167,7 +169,7 @@ class DevDocsDocvol(Docvol):
             st = os.stat(self.db_path)
         except OSError:
             raise CLIError("docvol %s: db.json is missing" % self.name, 5)
-        return st.st_size, int(st.st_mtime)
+        return st.st_size, st.st_mtime_ns
 
     def page_index(self) -> Dict[str, Tuple[int, int]]:
         size, mtime = self._db_stat()
@@ -265,9 +267,24 @@ class NetError(CLIError):
             "in assets/allowlist.txt in the skill folder." % (host, reason), 7)
 
 
-def _write_error(path: str, e: OSError) -> CLIError:
-    return CLIError("cannot write %s: %s (check free disk space and that "
-                    "DOCSHELF_CACHE_DIR is a writable folder)" % (path, e), 2)
+class CacheError(CLIError):
+    """The cache can't be written (exit code 2): the same for every name, so
+    a loop over names stops at the first."""
+
+
+def _cache_error(path: str, e: OSError) -> CLIError:
+    """Exit 2 for a failed write. A CacheError (the loop over names stops)
+    only for errors that repeat for every name: no permission, a read-only
+    or full disk; anything else (a stray file at one slug) is per name."""
+    hint = ("(check free disk space and that DOCSHELF_CACHE_DIR is a "
+            "writable folder)")
+    msg = "cannot write %s: %s %s" % (path, e, hint)
+    if isinstance(e, PermissionError) or e.errno in (errno.EROFS, errno.ENOSPC):
+        return CacheError(msg, 2)
+    return CLIError(msg, 2)
+
+
+_write_error = _cache_error
 
 
 def fetch(url: str, dest: Optional[str] = None) -> bytes:
@@ -292,6 +309,7 @@ def fetch(url: str, dest: Optional[str] = None) -> bytes:
                     except OSError as e:
                         raise _write_error(dest, e)
     except urllib.error.HTTPError as e:
+        e.close()  # it owns the connection's socket
         raise NetError(url, "HTTP %d" % e.code, status=e.code)
     except (urllib.error.URLError, OSError, ValueError,
             http.client.HTTPException) as e:
@@ -434,6 +452,24 @@ def _documents_host() -> str:
     return urlsplit(DOCUMENTS_BASE).hostname or DOCUMENTS_BASE
 
 
+def _add_entry_count(folder: str, meta: dict) -> None:
+    """Best effort: write entry_count into folder's meta.json."""
+    tmp = None
+    try:
+        idx = _load(os.path.join(folder, "index.json"))
+        meta = dict(meta, entry_count=len(idx["entries"]))
+        fd, tmp = make_temp(folder, prefix="meta.json.", sweep=False)
+        with os.fdopen(fd, "w", encoding="utf-8") as f:
+            json.dump(meta, f, ensure_ascii=False)
+        os.replace(tmp, os.path.join(folder, "meta.json"))
+        tmp = None
+    except (OSError, ValueError, KeyError, TypeError, AttributeError):
+        pass  # the count is read from index.json when absent
+    finally:
+        if tmp:
+            _discard(tmp)
+
+
 def install(cfg: Config, row: dict) -> str:
     """Download row's documentation: 'installed', 'updated' or 'up to date'."""
     slug = row["slug"]
@@ -448,6 +484,8 @@ def install(cfg: Config, row: dict) -> str:
         if (int(old.get("mtime") or 0) >= int(row.get("mtime") or 0)
                 and os.path.isfile(os.path.join(folder, "index.json"))
                 and os.path.isfile(os.path.join(folder, "db.json"))):
+            if "entry_count" not in old:  # from before 0.7.0: add it, no download
+                _add_entry_count(folder, old)
             return "up to date"
     except (OSError, ValueError, AttributeError, TypeError):
         pass
@@ -455,8 +493,7 @@ def install(cfg: Config, row: dict) -> str:
     try:
         os.makedirs(folder, exist_ok=True)
     except OSError as e:
-        raise CLIError("cannot create %s: %s (set DOCSHELF_CACHE_DIR to a "
-                       "writable folder)" % (folder, e), 2)
+        raise _cache_error(folder, e)
     names = ("index.json", "db.json", "meta.json")
     tmps = {}
     pindex = None
@@ -522,17 +559,16 @@ def cmd_sources(cfg, args) -> int:
     rows = get_manifest(cfg, args.refresh)
     words = [w.lower() for w in args.query]
     have = {d.name for d in installed_docvols(cfg)}
-    hits = [r for r in rows
-            if all(w in r["slug"].lower() or w in str(r.get("name", "")).lower()
-                   for w in words)]
-    hits.sort(key=lambda r: (len(r["slug"]), r["slug"]))
     seen = set()
     unique = []
-    for r in hits:  # a slug twice in the list: the first row, as in install
+    for r in rows:  # a slug twice in the list: the first row, as in install
         if r["slug"] not in seen:
             seen.add(r["slug"])
             unique.append(r)
-    hits = unique
+    hits = [r for r in unique
+            if all(w in r["slug"].lower() or w in str(r.get("name", "")).lower()
+                   for w in words)]
+    hits.sort(key=lambda r: (len(r["slug"]), r["slug"]))
     for r in hits[:30]:
         print("%s  %s  %s  %.1f MB%s" % (
             r["slug"], r.get("name", ""), r.get("release", ""),
@@ -554,22 +590,25 @@ def _print_catalog_hits(cfg, args, words) -> None:
     here = {shelf_dash._norm(d.name): d.name
             for d in shelf_dash.installed_docsets(cfg)}
     zeal: dict = {}  # Zeal's catalog at most once per run
-    for label in shelf_dash.DOCSET_LISTS:
-        try:
-            names = shelf_dash.label_names(cfg, label, args.refresh, zeal)
-        except CLIError as e:
-            print("note: the Dash/Zeal %s list could not be loaded (%s)"
-                  % (label, e), file=sys.stderr)
-            continue
-        shown = 0
-        for name, _v, title in sorted(names):
-            key = shelf_dash._norm(name)
-            if shown < 30 and all(w in key or w in shelf_dash._norm(title)
-                                  for w in norm):
-                shown += 1
-                print("%s  (Dash/Zeal: download in the app, %s)%s" % (
-                    name, label,
-                    "  (here as %s)" % here[key] if key in here else ""))
+    try:
+        for label in shelf_dash.DOCSET_LISTS:
+            try:
+                names = shelf_dash.label_names(cfg, label, args.refresh, zeal)
+            except CLIError as e:
+                print("note: the Dash/Zeal %s list could not be loaded (%s)"
+                      % (label, e), file=sys.stderr)
+                continue
+            shown = 0
+            for name, _v, title in sorted(names):
+                key = shelf_dash._norm(name)
+                if shown < 30 and all(w in key or w in shelf_dash._norm(title)
+                                      for w in norm):
+                    shown += 1
+                    print("%s  (Dash/Zeal: download in the app, %s)%s" % (
+                        name, label,
+                        "  (here as %s)" % here[key] if key in here else ""))
+    finally:
+        shelf_dash.zeal_notes(zeal)  # once per run, after the lists
 
 
 def _row_version(row: dict) -> str:
@@ -587,7 +626,6 @@ class Redundant(CLIError):
 
 def _refuse_redundant(cfg: Config, row: dict) -> None:
     import types
-    import shelf_backends
     want = types.SimpleNamespace(family=row["slug"].split("~")[0],
                                  version=_row_version(row), read_only=False)
     for d in shelf_backends.installed_docvols(cfg):
@@ -606,7 +644,6 @@ def _refuse_read_only(d: Docvol) -> None:
 
 def _installed_note(cfg: Config, name: str) -> Optional[str]:
     """The line for a project-list name already on disk (any backend), or None."""
-    import shelf_backends
     low = name.lower()
     hits = [d for d in shelf_backends.installed_docvols(cfg)
             if low in (d.name.lower(), d.family.lower())]
@@ -618,19 +655,32 @@ def _installed_note(cfg: Config, name: str) -> Optional[str]:
     return None
 
 
-def _each(items, action) -> int:
+def _each(items, action, label=str) -> int:
     """Run action on each item, printing the line it returns; a Redundant is
-    a skip note. Every failure is kept, and one CLIError joins them all (one
-    per line) with the first failure's code once all items have run."""
+    a skip note. Every failure is kept (its line starts with "<label>: ")
+    and one CLIError joins them all (one per line) with the first failure's
+    code once all items have run; a CacheError stops the loop, as it would
+    repeat for every item."""
     failures = []
-    for item in items:
+    items = list(items)
+    for pos, item in enumerate(items):
         try:
             line = action(item)
         except Redundant as e:
             print(str(e), file=sys.stderr)  # a skip, not a failure
             continue
         except CLIError as e:
+            name = label(item)
+            stop = isinstance(e, CacheError)
+            if not str(e).startswith(name + ": "):
+                e = CLIError("%s: %s" % (name, e), e.code)
             failures.append(e)
+            if stop:
+                rest = [label(i) for i in items[pos + 1:]]
+                if rest:
+                    failures.append(CLIError("not tried: " + ", ".join(rest),
+                                             e.code))
+                break
             continue
         if line:
             print(line)
@@ -648,6 +698,7 @@ def cmd_install(cfg, args) -> int:
             raise CLIError('install needs NAME (or a "docvols" list in '
                            '.docshelf.json)', 2)
     rows = get_manifest(cfg)
+    slugs = {}  # a typed name -> the slug it resolved to, for failure lines
 
     def one(name: str) -> Optional[str]:
         if from_project:
@@ -655,14 +706,14 @@ def cmd_install(cfg, args) -> int:
             if note:
                 return note
         row = resolve_install(rows, name)
+        slugs[name] = row["slug"]
         if not getattr(args, "force", False):
             _refuse_redundant(cfg, row)
         return _describe(cfg, install(cfg, row), row["slug"])
-    return _each(names, one)
+    return _each(names, one, lambda n: slugs.get(n, n))
 
 
 def cmd_update(cfg, args) -> int:
-    import shelf_backends
     have = shelf_backends.installed_docvols(cfg)
     if args.names:
         targets = [pick_docvol(have, n) for n in args.names]
@@ -693,11 +744,10 @@ def cmd_update(cfg, args) -> int:
             raise NotOnDevDocs(e.slug, "DevDocs no longer has documents for "
                                "%s (HTTP 404 from %s); the installed copy is "
                                "kept" % (e.slug, _documents_host()))
-    return _each(targets, one)
+    return _each(targets, one, lambda d: d.name)
 
 
 def cmd_remove(cfg, args) -> int:
-    import shelf_backends
     try:
         found = pick_docvol(shelf_backends.installed_docvols(cfg), args.name)
         _refuse_read_only(found)

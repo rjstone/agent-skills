@@ -180,9 +180,42 @@ def parse_requirements(text: str) -> List[Finding]:
     return out
 
 
+_CMAKE_BRACKET = re.compile(r"#\[(=*)\[")
+
+
+def _cmake_code(text: str) -> str:
+    """text without CMake comments: '#' to the end of the line, and
+    '#[[ ... ]]' / '#[=[ ... ]=]' bracket comments (to the end of the file
+    when not closed). A '#' inside double quotes is not a comment."""
+    out: List[str] = []
+    i, n, quoted = 0, len(text), False
+    while i < n:
+        c = text[i]
+        if quoted:
+            if c == "\\":
+                out.append(text[i:i + 2])
+                i += 2
+                continue
+            quoted = c != '"'
+        elif c == '"':
+            quoted = True
+        elif c == "#":
+            m = _CMAKE_BRACKET.match(text, i)
+            if m:
+                end = text.find("]%s]" % m.group(1), m.end())
+                i = n if end < 0 else end + len(m.group(1)) + 2
+            else:
+                end = text.find("\n", i)
+                i = n if end < 0 else end  # keep the newline
+            continue
+        out.append(c)
+        i += 1
+    return "".join(out)
+
+
 def parse_cmake(text: str) -> List[Finding]:
     out = [_lang("cmake")]
-    text = "\n".join(line.split("#", 1)[0] for line in text.splitlines())
+    text = _cmake_code(text)
     if re.search(r"(?i)\bCMAKE_CXX_STANDARD\b", text):
         out.append(_lang("cpp"))
     for m in re.finditer(r"(?i)\bfind_package\s*\(\s*([A-Za-z0-9_.+-]+)", text):
@@ -332,16 +365,22 @@ def _parser_for(name: str) -> Optional[Callable[[str], List[Finding]]]:
     return None
 
 
-def _scan_dir(folder: str, rel: str, findings: List[Finding],
-              notes: List[str]) -> None:
+def _parsable(folder: str) -> List[Tuple[str, Callable[[str], List[Finding]]]]:
+    """(name, parser) for each build file in folder, sorted by name."""
+    out = []
     for name in sorted(os.listdir(folder)):
         parser = _parser_for(name)
-        path = os.path.join(folder, name)
-        if parser is None or not os.path.isfile(path):
-            continue
+        if parser is not None and os.path.isfile(os.path.join(folder, name)):
+            out.append((name, parser))
+    return out
+
+
+def _scan_dir(folder: str, rel: str, findings: List[Finding],
+              notes: List[str]) -> None:
+    for name, parser in _parsable(folder):
         source = rel + name
         try:
-            with open(path, encoding="utf-8-sig") as f:
+            with open(os.path.join(folder, name), encoding="utf-8-sig") as f:
                 text = f.read()
             found = parser(text)
         except (OSError, ValueError, TypeError) as e:  # incl. JSON, TOML, Unicode
@@ -352,8 +391,7 @@ def _scan_dir(folder: str, rel: str, findings: List[Finding],
 
 def _has_parser_file(folder: str) -> bool:
     try:
-        return any(_parser_for(n) and os.path.isfile(os.path.join(folder, n))
-                   for n in os.listdir(folder))
+        return bool(_parsable(folder))
     except OSError:
         return False
 

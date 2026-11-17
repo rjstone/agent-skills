@@ -231,15 +231,13 @@ def cmd_show(cfg: Config, args: argparse.Namespace) -> int:
     shown = _print_lines(lines, args, def_ends, _page_title_line(blocks, lines))
     # notes go with the first page only: not past the end, not on a continuation
     if shown and not args.no_notes and not (getattr(args, "offset", 0) or 0):
-        heads = section_headings(blocks, anchor)
-        if entry is not None:
-            out = shelf_notes.notes_for(cfg, ds, entry.name, entry.type, heads)
-        else:
-            out = shelf_notes.general_notes(cfg, ds, heads)
+        out, warns = shelf_notes.notes_and_warnings(
+            cfg, ds, entry.name if entry is not None else None,
+            entry.type if entry is not None else None,
+            section_headings(blocks, anchor))
         for line in out:
             print(line)
-        _p, text = shelf_notes._read_notes(cfg, ds.family)
-        for w in shelf_notes.size_warnings(text or ""):
+        for w in warns:
             print("warning: notes: " + w, file=sys.stderr)
     return 0
 

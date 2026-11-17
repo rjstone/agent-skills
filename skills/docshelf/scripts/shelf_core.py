@@ -10,7 +10,7 @@ from dataclasses import dataclass
 from typing import Dict, Iterator, List, Optional, Tuple
 from urllib.parse import unquote
 
-VERSION = "0.7.1"
+VERSION = "0.7.2"
 PROJECT_FILE = ".docshelf.json"
 
 

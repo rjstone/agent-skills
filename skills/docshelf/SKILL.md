@@ -6,14 +6,15 @@ license: MIT
 metadata:
   author: Robert Stone
   source: https://github.com/rjstone/agent-skills
-  version: "0.7.1"
+  version: "0.7.2"
   credits: "DevDocs, devdocs-mcp, Zeal"
 ---
 
 # docshelf
 
-Look up DevDocs documentation and Dash/Zeal docsets offline with `python scripts/docshelf.py`
-(stdlib only; the path is relative to this skill's folder). Stay in the
+Look up DevDocs documentation and Dash/Zeal docsets offline with
+`python scripts/docshelf.py` (stdlib only; the path is relative to this
+skill's folder). Stay in the
 project folder and give the script's full path; don't `cd` to the skill
 folder, because a project's `.docshelf.json` is found from the current
 folder. Run its `--help` first: that is the command reference, with the

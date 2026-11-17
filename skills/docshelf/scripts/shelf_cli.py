@@ -156,8 +156,8 @@ COMMANDS: List[Command] = [
         Param(("--check",), "List which REFs show each section; warn on "
               "oversized notes and headings matching no entry.", kind="flag"),
         Param(("--set",), "Write the section with this heading (exact text "
-              "after '## '; General for the general notes); needs --text."),
-        Param(("--text",), "Body of the section for --set (no '## ' lines)."),
+              "after '## '; General for the general notes); needs a text."),
+        Param(("--text",), "Body of the section to write (no '## ' lines)."),
         Param(("--delete",), "Delete the section with this heading."),
     ]),
 ]
@@ -198,7 +198,8 @@ Look up (usual order):
   fts QUERY... [-d NAME]         words inside pages, 5 best hits with REFs;
                                  include the function name: fts read_csv skip
   types [-d NAME]                each docvol's entry types with counts, most
-                                 frequent first (the names `search --type` takes)
+                                 frequent first (the names `search --type`
+                                 takes)
 
 Notes (format: references/notes.md in the skill folder):
   notes DOCVOL --path            the notes file to edit
@@ -279,8 +280,9 @@ def _add_param(parser, p: Param):
             kwargs["nargs"] = p.nargs
         if p.repeat:
             kwargs["action"] = "append"
-        if p.default is not None:
-            kwargs["default"] = p.default
+        default = param_default(p)
+        if default is not None:
+            kwargs["default"] = default
     parser.add_argument(*p.flags, **kwargs)
 
 
@@ -292,12 +294,18 @@ def param_dest(p: Param) -> str:
     return long[0].lstrip("-").replace("-", "_")
 
 
+def param_default(p: Param) -> Any:
+    """The default argparse gives the parameter: False for a flag, else
+    `default` (None when unset)."""
+    return False if p.kind == "flag" else p.default
+
+
 def param_defaults(c: Command) -> dict:
     """dest -> default for each of the command's parameters, as _add_param
-    gives them to argparse (flags False, others `default` or None)."""
+    gives them to argparse."""
     out = {}
     for p in c.params:
-        d = False if p.kind == "flag" else p.default
+        d = param_default(p)
         out[param_dest(p)] = list(d) if isinstance(d, list) else d
     return out
 
