@@ -1637,6 +1637,12 @@ class FtsTests(unittest.TestCase):
         self.assertEqual(r.returncode, 0)
         self.assertEqual(r.stdout.strip(), "no matches for 'zzzznothing'")
 
+    def test_fts_json_no_searchable_words_is_json(self):
+        r = self.cli("fts", "- ()", "-d", "py", "--json")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertEqual(json.loads(r.stdout), [])
+        self.assertIn("no searchable words in '- ()'", r.stderr)
+
     def test_hit_ref_is_page_anchor_when_no_entry(self):
         self.add("duck", [("Other", "Guide", "p")],
                  {"p": "<h2 id='intro'>Intro</h2><p>quack quack</p>"})
@@ -2284,6 +2290,23 @@ class TocTests(unittest.TestCase):
                      pages={"q": "<h1 id='t'>T</h1><h2>A</h2>"})
         self.assertEqual(self.toc("lib2:q").splitlines(),
                          ["(page: T)", "T  lib2:q#t", "  A  lib2:q#t"])
+
+    def test_toc_missing_anchor_warns_like_show(self):
+        r = run_cli("toc", "lib:p#missing", env=self.env, cwd=self.tmp)
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertEqual(r.stdout.splitlines(), self.WANT)
+        self.assertEqual(r.stderr.strip(), "warning: no #missing on p")
+        r = run_cli("show", "lib:p#missing", "--no-notes", env=self.env,
+                    cwd=self.tmp)
+        self.assertIn("warning: no #missing on p", r.stderr)
+
+    def test_toc_page_without_headings(self):
+        make_devdocs(self.cache, "lib3", name="Lib3", release="1",
+                     entries=[("x", "Function", "q")],
+                     pages={"q": "<p>Just text.</p>"})
+        out = self.toc("lib3:q").splitlines()
+        self.assertEqual(out[-1], "(no headings)")
+        self.assertLessEqual(len(out), 2)
 
     def test_toc_max_lines_caps(self):
         lines = self.toc("lib:p", "--max-lines", "2").splitlines()
