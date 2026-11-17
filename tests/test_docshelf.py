@@ -38,6 +38,7 @@ from shelf_core import CLIError  # noqa: E402
 import shelf_core  # noqa: E402
 import shelf_devdocs  # noqa: E402
 import shelf_lookup  # noqa: E402
+import shelf_suggest  # noqa: E402
 import shelf_notes  # noqa: E402
 import shelf_render  # noqa: E402
 
@@ -4542,6 +4543,166 @@ class StructureNotSkippedTests(unittest.TestCase):
         r = run_cli("show", "b:p", "--no-notes", env=env, cwd=tmp_dir)
         self.assertEqual(r.returncode, 0, r.stderr)
         self.assertIn("text", r.stdout)
+
+
+class SuggestScanTests(unittest.TestCase):
+    def setUp(self):
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        self.root = os.path.realpath(tmp.name)
+
+    def write(self, rel, text):
+        path = os.path.join(self.root, *rel.split("/"))
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        with open(path, "w", encoding="utf-8") as f:
+            f.write(text)
+
+    def scan(self):
+        return shelf_suggest.scan_project(self.root)
+
+    def of(self, findings, kind, names=None, source=None):
+        return [f for f in findings if f.kind == kind
+                and (names is None or f.names == names)
+                and (source is None or f.source == source)]
+
+    def libs(self, findings):
+        return [f.names for f in findings if f.kind == "lib"]
+
+    def test_package_json(self):
+        self.write("package.json", json.dumps({
+            "dependencies": {"react": "^18", "@types/node": "*",
+                             "@angular/core": "17"},
+            "engines": {"node": ">=20.11"}}))
+        findings, notes = self.scan()
+        self.assertEqual(notes, [])
+        self.assertEqual(self.libs(findings),
+                         [("react",), ("node",), ("angular", "core")])
+        self.assertEqual(len(self.of(findings, "lang", ("javascript",))), 1)
+        node = self.of(findings, "lang", ("node",))
+        self.assertEqual([f.version for f in node], ["20.11"])
+        self.assertEqual(node[0].source, "package.json")
+
+    @unittest.skipIf(sys.version_info < (3, 11), "tomllib needs Python 3.11")
+    def test_pyproject_pep621_and_poetry(self):
+        self.write("pyproject.toml",
+                   '[project]\nrequires-python = ">=3.10"\n'
+                   'dependencies = ["Django>=5", "numpy[extra]"]\n'
+                   '[project.optional-dependencies]\ndev = ["pytest"]\n')
+        findings, _ = self.scan()
+        self.assertEqual(self.libs(findings),
+                         [("django",), ("numpy",), ("pytest",)])
+        self.assertEqual([f.version for f in self.of(findings, "lang",
+                                                     ("python",))], [""])
+        self.write("pyproject.toml",
+                   '[tool.poetry.dependencies]\npython = "3.12"\n'
+                   'requests = "*"\n')
+        findings, _ = self.scan()
+        self.assertEqual(self.libs(findings), [("requests",)])
+        self.assertEqual([f.version for f in self.of(findings, "lang",
+                                                     ("python",))], ["3.12"])
+
+    def test_requirements(self):
+        self.write("requirements.txt",
+                   "# c\nFlask==3.0  # web\n-r other.txt\n\n"
+                   "SQLAlchemy[asyncio]>=2\n")
+        findings, _ = self.scan()
+        self.assertEqual(self.libs(findings), [("flask",), ("sqlalchemy",)])
+        self.assertEqual(len(self.of(findings, "lang", ("python",))), 1)
+
+    def test_cmake(self):
+        self.write("CMakeLists.txt",
+                   "find_package(Qt6 REQUIRED)\nFIND_PACKAGE(OpenGL)\n"
+                   "set(CMAKE_CXX_STANDARD 20)")
+        findings, _ = self.scan()
+        self.assertEqual([f.names for f in findings if f.kind == "lang"],
+                         [("cmake",), ("cpp",)])
+        self.assertEqual(self.libs(findings), [("qt6",), ("opengl",)])
+
+    def test_cargo_go_gemfile_composer(self):
+        self.write("Cargo.toml", '[dependencies]\nserde = "1"\n')
+        self.write("go.mod", "module x\n\ngo 1.22\n")
+        self.write("Gemfile", "ruby \"3.3\"\ngem 'rails'\n")
+        self.write("composer.json", json.dumps(
+            {"require": {"php": ">=8", "ext-json": "*",
+                         "laravel/framework": "^11"}}))
+        findings, notes = self.scan()
+        self.assertEqual(notes, [])
+        if shelf_suggest.tomllib is not None:
+            self.assertEqual(len(self.of(findings, "lang", ("rust",))), 1)
+            self.assertEqual(len(self.of(findings, "lib", ("serde",))), 1)
+        self.assertEqual([f.version for f in
+                          self.of(findings, "lang", ("go",))], ["1.22"])
+        self.assertEqual([f.version for f in
+                          self.of(findings, "lang", ("ruby",))], ["3.3"])
+        self.assertEqual(len(self.of(findings, "lib", ("rails",))), 1)
+        self.assertEqual(len(self.of(findings, "lang", ("php",))), 1)
+        self.assertEqual(len(self.of(findings, "lib",
+                                     ("framework", "laravel"))), 1)
+        self.assertEqual(len(self.of(findings, "lib", ("php",))), 0)
+
+    def test_docker(self):
+        self.write("Dockerfile",
+                   "FROM docker.io/library/node:20-alpine AS build\n"
+                   "FROM build\nFROM scratch\nFROM nginx@sha256:abc\n")
+        self.write("compose.yaml",
+                   "services:\n  db:\n    image: postgres:16\n")
+        findings, _ = self.scan()
+        by_source = {(f.source, f.names): f.version
+                     for f in findings if f.kind == "lib"}
+        self.assertEqual(by_source, {
+            ("Dockerfile", ("node",)): "20",
+            ("Dockerfile", ("nginx",)): "",
+            ("compose.yaml", ("postgres",)): "16"})
+
+    def test_version_files(self):
+        self.write(".nvmrc", "v20.11.0\n")
+        self.write(".python-version", "system\n")
+        self.write(".tool-versions", "nodejs 22.1.0\ngolang 1.23\n")
+        findings, _ = self.scan()
+        self.assertEqual(
+            [(f.source, f.names[0], f.version) for f in findings],
+            [(".nvmrc", "node", "20.11.0"),
+             (".python-version", "python", ""),
+             (".tool-versions", "node", "22.1.0"),
+             (".tool-versions", "go", "1.23")])
+        self.write(".nvmrc", "lts/iron\n")
+        findings, _ = self.scan()
+        self.assertEqual(self.of(findings, "lang", ("node",),
+                                 ".nvmrc")[0].version, "")
+
+    def test_child_folders_and_skips(self):
+        deps = json.dumps({"dependencies": {"vue": "3"}})
+        self.write("packages/web/package.json", deps)
+        self.write("node_modules/x/package.json", deps)
+        self.write(".git/package.json", deps)
+        self.write("node_modules/package.json", deps)
+        findings, _ = self.scan()
+        self.assertEqual({f.source for f in findings},
+                         {"packages/web/package.json"})
+        self.write("web/package.json", deps)
+        findings, _ = self.scan()
+        self.assertEqual(
+            {f.source for f in findings if f.names == ("vue",)},
+            {"web/package.json", "packages/web/package.json"})
+
+    def test_malformed_file_is_noted(self):
+        self.write("package.json", "{bad")
+        findings, notes = self.scan()
+        self.assertEqual(findings, [])
+        self.assertEqual(len(notes), 1)
+        self.assertTrue(notes[0].startswith("note: skipped package.json:"))
+
+    def test_no_tomllib(self):
+        self.write("pyproject.toml", '[project]\nname = "x"\n')
+        with mock.patch.object(shelf_suggest, "tomllib", None):
+            findings, notes = self.scan()
+        self.assertEqual(findings, [])
+        self.assertEqual(len(notes), 1)
+        self.assertIn("3.11", notes[0])
+
+    def test_normalize(self):
+        self.assertEqual(shelf_suggest.normalize("Foo__Bar.baz-Q"),
+                         "foo-bar-baz-q")
 
 
 if __name__ == "__main__":
