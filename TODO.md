@@ -163,6 +163,25 @@ items are done.
         write creates the link's target (and its folder).
   - [ ] 6.11.2 `fts --json` prints "no searchable words" as plain text,
         not JSON.
+- [ ] 6.12 After the 0.6.0 reviews
+  - [ ] 6.12.1 No CLI test for a double-encoded anchor or the
+        "warning: no #..." path in `show` (only `section_lines` is tested).
+  - [ ] 6.12.2 `unquote_all` stops after 3 passes; untested and
+        undocumented.
+  - [ ] 6.12.3 `suggest`: a docset and a DevDocs docvol of the same family
+        are chosen by `installed_docvols` order (DevDocs first); untested.
+  - [ ] 6.12.4 `suggest`: a bare lower bound pins the minimum
+        (`django>=3.2` picks `django~3.2` when listed); decide whether
+        that's wanted.
+  - [ ] 6.12.5 `shelf_suggest`: `_has_parser_file` repeats `_scan_dir`'s
+        filter; CMake `#` inside quotes or `#[[ ]]` comments isn't handled.
+  - [ ] 6.12.6 Tests: `.ruby-version` with a `ruby-` prefix, Docker
+        `--platform` and registry prefixes (`localhost:5000/`, `ghcr.io/`),
+        an `==3.11` Python spec, a non-UTF-8 build file;
+        `test_installed_and_available` re-sorts `docs.json` instead of
+        listing rows in order.
+  - [ ] 6.12.7 `name=` on `<details>` (an accordion group name) still adds
+        an anchor; harmless unless it collides.
 
 #### Reference: other docset and DevDocs readers (skimmed 2026-11-17)
 
