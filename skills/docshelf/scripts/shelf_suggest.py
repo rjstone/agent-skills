@@ -57,6 +57,10 @@ def _dict(value: object) -> dict:
     return value if isinstance(value, dict) else {}
 
 
+def _list(value: object) -> list:
+    return value if isinstance(value, list) else []
+
+
 def _load_toml(text: str) -> dict:
     if tomllib is None:
         raise ValueError("reading TOML needs Python 3.11 or newer")
@@ -99,10 +103,10 @@ def parse_pyproject(text: str) -> List[Finding]:
         spec = poetry_deps["python"]
     out = [_lang("python", _plain_python_version(spec)
                  if isinstance(spec, str) else "")]
-    reqs: List[str] = [r for r in project.get("dependencies") or []
+    reqs: List[str] = [r for r in _list(project.get("dependencies"))
                        if isinstance(r, str)]
     for group in _dict(project.get("optional-dependencies")).values():
-        reqs.extend(r for r in group or [] if isinstance(r, str))
+        reqs.extend(r for r in _list(group) if isinstance(r, str))
     for req in reqs:
         name = _requirement_name(req)
         if name:
@@ -117,7 +121,7 @@ def parse_requirements(text: str) -> List[Finding]:
     out = [_lang("python")]
     for raw in text.splitlines():
         line = raw.split("#", 1)[0].strip()
-        if not line or line.startswith("-"):
+        if not line or line.startswith("-") or "://" in line:
             continue
         name = _requirement_name(line)
         if name:
@@ -127,6 +131,7 @@ def parse_requirements(text: str) -> List[Finding]:
 
 def parse_cmake(text: str) -> List[Finding]:
     out = [_lang("cmake")]
+    text = "\n".join(line.split("#", 1)[0] for line in text.splitlines())
     if re.search(r"(?i)\bCMAKE_CXX_STANDARD\b", text):
         out.append(_lang("cpp"))
     for m in re.finditer(r"(?i)\bfind_package\s*\(\s*([A-Za-z0-9_.+-]+)", text):
@@ -276,10 +281,10 @@ def _scan_dir(folder: str, rel: str, findings: List[Finding],
             continue
         source = rel + name
         try:
-            with open(path, encoding="utf-8") as f:
+            with open(path, encoding="utf-8-sig") as f:
                 text = f.read()
             found = parser(text)
-        except (OSError, ValueError) as e:  # incl. JSON, TOML, Unicode errors
+        except (OSError, ValueError, TypeError) as e:  # incl. JSON, TOML, Unicode
             notes.append("note: skipped %s: %s" % (source, e))
             continue
         findings.extend(f._replace(source=source) for f in found)

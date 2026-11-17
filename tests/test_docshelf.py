@@ -38,9 +38,9 @@ from shelf_core import CLIError  # noqa: E402
 import shelf_core  # noqa: E402
 import shelf_devdocs  # noqa: E402
 import shelf_lookup  # noqa: E402
-import shelf_suggest  # noqa: E402
 import shelf_notes  # noqa: E402
 import shelf_render  # noqa: E402
+import shelf_suggest  # noqa: E402
 
 _EMPTY = tempfile.mkdtemp(prefix="docshelf-empty-")
 atexit.register(shutil.rmtree, _EMPTY, ignore_errors=True)
@@ -4626,8 +4626,8 @@ class SuggestScanTests(unittest.TestCase):
             {"require": {"php": ">=8", "ext-json": "*",
                          "laravel/framework": "^11"}}))
         findings, notes = self.scan()
-        self.assertEqual(notes, [])
         if shelf_suggest.tomllib is not None:
+            self.assertEqual(notes, [])
             self.assertEqual(len(self.of(findings, "lang", ("rust",))), 1)
             self.assertEqual(len(self.of(findings, "lib", ("serde",))), 1)
         self.assertEqual([f.version for f in
@@ -4693,6 +4693,37 @@ class SuggestScanTests(unittest.TestCase):
         self.assertNotIn("docs/examples/x/package.json", sources)
         if shelf_suggest.tomllib is not None:
             self.assertIn("apps/api/pyproject.toml", sources)
+
+    @unittest.skipIf(sys.version_info < (3, 11), "tomllib needs Python 3.11")
+    def test_wrong_shapes_do_not_crash(self):
+        self.write("pyproject.toml",
+                   '[project]\ndependencies = 3\n'
+                   '[project.optional-dependencies]\ndev = "x"\n'
+                   '[tool.poetry]\ndependencies = "x"\n')
+        self.write("Cargo.toml", "dependencies = 3\n")
+        findings, _ = self.scan()
+        self.assertEqual(self.libs(findings), [])
+
+    def test_bom_files(self):
+        self.write("package.json",
+                   "\ufeff" + json.dumps({"dependencies": {"vue": "3"}}))
+        self.write("requirements.txt", "\ufeffFlask==3\n")
+        findings, notes = self.scan()
+        self.assertEqual(notes, [])
+        self.assertEqual(self.libs(findings), [("vue",), ("flask",)])
+
+    def test_requirements_skips_urls(self):
+        self.write("requirements.txt",
+                   "git+https://github.com/x/y.git\n"
+                   "https://example.com/a.whl\nflask\n")
+        findings, _ = self.scan()
+        self.assertEqual(self.libs(findings), [("flask",)])
+
+    def test_cmake_comments_ignored(self):
+        self.write("CMakeLists.txt",
+                   "# find_package(Old)\nfind_package(New) # find_package(X)\n")
+        findings, _ = self.scan()
+        self.assertEqual(self.libs(findings), [("new",)])
 
     def test_malformed_file_is_noted(self):
         self.write("package.json", "{bad")
