@@ -8,7 +8,7 @@ from typing import Callable, Dict, List, NamedTuple, Optional, Tuple
 
 import shelf_backends
 import shelf_devdocs
-from shelf_core import Config
+from shelf_core import Config, Docvol
 
 try:
     import tomllib
@@ -382,7 +382,7 @@ def _row_version(row: dict) -> str:
     return slug.split("~", 1)[1].replace("_", " ") if "~" in slug else ""
 
 
-def _suggest_for(finding: Finding, installed: list,
+def _suggest_for(finding: Finding, installed: List[Docvol],
                  manifest: Optional[List[dict]]) -> Optional[Suggestion]:
     v = finding.version
     for n in finding.names:
@@ -401,6 +401,9 @@ def _suggest_for(finding: Finding, installed: list,
                 return _make(found, "", finding.source)
         for pool, version_of in pools:  # nothing agrees: the newest
             if pool:
+                if pool is have:  # list order is not version order
+                    pool = sorted(have, reverse=True, key=lambda d:
+                                  shelf_backends._major_minor(d.version))
                 newest = version_of(pool[0])
                 note = ("no %s docs; newest is %s" % (v, newest) if newest
                         else "no %s docs listed" % v)
@@ -416,7 +419,7 @@ def _make(candidate, note: str, source: str) -> Suggestion:
                       [source], note)
 
 
-def match(findings: List[Finding], installed: list,
+def match(findings: List[Finding], installed: List[Docvol],
           manifest: Optional[List[dict]]) -> Tuple[List[Suggestion], int]:
     """Suggestions (first found first, one per name, sources merged) and the
     number of distinct library names that matched no docvol."""

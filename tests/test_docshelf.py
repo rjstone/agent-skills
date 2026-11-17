@@ -4870,6 +4870,38 @@ class SuggestTests(unittest.TestCase):
         r = self.suggest(cwd=sub)
         self.assertIn('"docvols": ["flask"]', r.stdout)
 
+    def test_fallback_picks_newest_installed(self):
+        self.installed("python~3.8", "Python")
+        self.installed("python~3.12", "Python")
+        self.write(".python-version", "3.9\n")
+        r = self.suggest()
+        line = next(x for x in r.stdout.splitlines() if "python~" in x)
+        self.assertIn("installed python~3.12", line)
+        self.assertIn("no 3.9 docs; newest is 3.12", line)
+
+    def test_same_name_merges_sources(self):
+        self.listed(row("Django", "django", "5"))
+        self.write("requirements.txt", "django\n")
+        self.write("pyproject.toml",
+                   '[project]\nname = "x"\ndependencies = ["django"]\n')
+        r = self.suggest()
+        lines = [x for x in r.stdout.splitlines() if " django " in x]
+        self.assertEqual(lines, [
+            "available django  (pyproject.toml, requirements.txt)"])
+
+    def test_available_agreeing_beats_disagreeing_installed(self):
+        self.installed("python~3.12", "Python")
+        self.listed(row("Python", "python~3.14", "3.14.0", version="3.14"))
+        self.write(".python-version", "3.14\n")
+        r = self.suggest()
+        self.assertIn("available python~3.14  (.python-version)", r.stdout)
+        self.assertNotIn("python~3.12", r.stdout)
+
+    def test_json_notes_name_missing_list(self):
+        self.write("go.mod", "module x\n\ngo 1.22\n")
+        data = json.loads(self.suggest("--json").stdout)
+        self.assertTrue(any("no DevDocs list cached" in n for n in data["notes"]))
+
     def test_mcp_tool(self):
         import shelf_mcp
         self.assertIn("suggest", [t["name"] for t in shelf_mcp.tool_schemas()])
