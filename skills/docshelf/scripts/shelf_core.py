@@ -11,6 +11,10 @@ VERSION = "0.3.0"
 PROJECT_FILE = ".docshelf.json"
 
 
+def warn(msg: str) -> None:
+    print("warning: " + msg, file=sys.stderr)
+
+
 class CLIError(Exception):
     """A user-facing error; main() prints the message and exits with code."""
     docvol: Optional[str] = None  # set when the error is an unknown docvol name
@@ -208,6 +212,18 @@ class Docvol(ABC):
     release: str
     aliases: Tuple[str, ...] = ()
     entry_count: int = 0
+    source: str = ""          # "devdocs", "dash", "zeal" or "folder"
+    read_only: bool = False
+    version: str = ""
+    _href_known: Optional[set] = None
+
+    @property
+    def display_name(self) -> str:
+        return self.__dict__.get("_display_name") or self.title
+
+    @display_name.setter
+    def display_name(self, value: str) -> None:
+        self._display_name = value
 
     @property
     def full_size(self) -> bool:
@@ -225,6 +241,18 @@ class Docvol(ABC):
     def page_html(self, page: str) -> str:
         """The page's HTML; CLIError(code 5) when there is no such page."""
 
+    def page_blocks(self, page: str, link=None) -> "List[Block]":
+        """The page as text blocks (see shelf_render.html_to_text)."""
+        from shelf_render import html_to_text  # lazy: shelf_render imports us
+        return html_to_text(self.page_html(page), link=link)
+
+    def resolve_href(self, page: str, href: str) -> Optional[str]:
+        """The REF a link on page points to, or None."""
+        if self._href_known is None:
+            self._href_known = set(self.pages())
+        target, frag = resolve_doc_path(page, href)
+        return self.make_ref(target, frag) if target in self._href_known else None
+
     @abstractmethod
     def resolve(self, rest: str) -> Tuple[str, Optional[str], Optional[Entry]]:
         """(page, anchor, the entry whose REF part is exactly rest or None)."""
@@ -240,6 +268,22 @@ class Docvol(ABC):
     @abstractmethod
     def data_dir(self) -> str:
         """Folder for derived files."""
+
+
+def resolve_doc_path(page, href):
+    """href resolved against the page's folder: '..' pops, a leading '/' is
+    the docvol root; returns (path, fragment or None)."""
+    rel, _, frag = href.partition("#")
+    segments = [] if rel.startswith("/") else page.split("/")[:-1]
+    for part in rel.split("/"):
+        if part in ("", "."):
+            continue
+        if part == "..":
+            if segments:
+                segments.pop()
+        else:
+            segments.append(part)
+    return "/".join(segments), frag or None
 
 
 def rank(query: str, name: str) -> Optional[int]:

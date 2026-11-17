@@ -13,7 +13,7 @@ from datetime import datetime, timezone
 from typing import Dict, List, Optional, Tuple
 from urllib.parse import urlsplit
 
-from shelf_core import VERSION, CLIError, Config, Docvol, Entry, pick_docvol
+from shelf_core import VERSION, CLIError, warn, Config, Docvol, Entry, pick_docvol
 
 DERIVED = ".docshelf"
 MANIFEST_URL = "https://devdocs.io/docs.json"
@@ -93,8 +93,7 @@ def read_span(db_path: str, span: Tuple[int, int]) -> str:
     return json.loads(raw.decode("utf-8"))
 
 
-def _warn(msg):
-    print("warning: " + msg, file=sys.stderr)
+_warn = warn
 
 
 def _load(path):
@@ -117,6 +116,8 @@ class DevDocsDocvol(Docvol):
         if not version and "~" in self.name:
             version = self.name.split("~", 1)[1].replace("_", " ")
         self.title = ("%s %s" % (base, version)).strip()
+        self.version = version
+        self.source = "devdocs"
         alias = meta.get("alias")
         self.aliases = (alias,) if alias else ()
         self.mtime = int(meta.get("mtime") or 0)

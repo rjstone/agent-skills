@@ -12,13 +12,12 @@ import time
 from urllib.parse import unquote
 from typing import Dict, List, Optional, Tuple
 
-import shelf_devdocs
+import shelf_backends
 import shelf_notes
-from shelf_devdocs import _warn
-from shelf_render import (_print_lines, _print_page_title, html_to_text,
+from shelf_render import (_print_lines, _print_page_title,
                           section_headings, section_lines)
 from shelf_core import (CLIError, Config, cap_lines, pick_docvol, rank,
-                        select_docvols, short_name)
+                        select_docvols, short_name, warn)
 
 FUZZY_SHOWN = 0  # fuzzy hits shown when exact, prefix or substring hits exist
 
@@ -111,7 +110,7 @@ def cmd_search(cfg: Config, args: argparse.Namespace) -> int:
     _join_query(args)
     if not args.query:
         raise CLIError("empty search query", 2)
-    docs = select_docvols(cfg, shelf_devdocs.installed_docvols(cfg),
+    docs = select_docvols(cfg, shelf_backends.installed_docvols(cfg),
                           args.docvol or [], args.all)
     words = args.query.lower().split()
     want_type = args.type.lower() if args.type else None
@@ -198,33 +197,11 @@ def _split_ref(ref):
     return name, rest
 
 
-def resolve_doc_path(page, href):
-    """href resolved against the page's folder: '..' pops, a leading '/' is
-    the docvol root; returns (path, fragment or None)."""
-    rel, _, frag = href.partition("#")
-    segments = [] if rel.startswith("/") else page.split("/")[:-1]
-    for part in rel.split("/"):
-        if part in ("", "."):
-            continue
-        if part == "..":
-            if segments:
-                segments.pop()
-        else:
-            segments.append(part)
-    return "/".join(segments), frag or None
-
-
 def cmd_show(cfg: Config, args: argparse.Namespace) -> int:
     name, rest = _split_ref(args.ref)
-    ds = pick_docvol(shelf_devdocs.installed_docvols(cfg), name)
+    ds = pick_docvol(shelf_backends.installed_docvols(cfg), name)
     page, anchor, entry = ds.resolve(rest)
-    known = set(ds.pages())
-
-    def link(href):
-        target, frag = resolve_doc_path(page, href)
-        return ds.make_ref(target, frag) if target in known else None
-
-    blocks = html_to_text(ds.page_html(page), link=link)
+    blocks = ds.page_blocks(page, link=lambda href: ds.resolve_href(page, href))
     if anchor:
         want = {anchor, unquote(anchor)}
         if not any(x in want or unquote(x) in want for b in blocks for x in b.ids):
@@ -325,7 +302,7 @@ def build_fts(cfg, ds) -> int:
         stamp = fts_stamp(ds)  # before reading, so a change mid-build is seen
         for page in ds.pages():
             try:
-                blocks = html_to_text(ds.page_html(page))
+                blocks = ds.page_blocks(page)
             except (CLIError, OSError):
                 continue
             con.execute("INSERT INTO pages(page, text) VALUES (?, ?)",
@@ -363,7 +340,7 @@ def ensure_fts(cfg, ds) -> None:
               file=sys.stderr)
     build_fts(cfg, ds)
     if stored is not None:
-        _warn("rebuilt index for %s" % ds.name)
+        warn("rebuilt index for %s" % ds.name)
 
 
 def fts_match_expr(query) -> str:
@@ -389,7 +366,7 @@ def match_anchor(ds, page, query, snippet="") -> Optional[List[str]]:
     """Ids of the nearest block with ids at or before the match (located via
     the FTS snippet, else the first block holding the query words), if any."""
     try:
-        blocks = html_to_text(ds.page_html(page))
+        blocks = ds.page_blocks(page)
     except (CLIError, OSError):
         return None
     words = [w.lower() for w in query.split()]
@@ -460,7 +437,7 @@ def fts_search(cfg, docvols, query, limit) -> List[dict]:
             finally:
                 con.close()
         except sqlite3.Error as e:
-            _warn("skipping %s: %s" % (ds.name, e))
+            warn("skipping %s: %s" % (ds.name, e))
     scored.sort(key=lambda h: h[:3])
     return [h[3] for h in scored[:limit]]
 
@@ -473,7 +450,7 @@ def _need_fts():
 
 def cmd_index_text(cfg: Config, args: argparse.Namespace) -> int:
     _need_fts()
-    all_docs = shelf_devdocs.installed_docvols(cfg)
+    all_docs = shelf_backends.installed_docvols(cfg)
     picked = {}
     for n in args.docvol:
         d = pick_docvol(all_docs, n)
@@ -488,7 +465,7 @@ def cmd_fts(cfg: Config, args: argparse.Namespace) -> int:
     if not args.query.strip():
         raise CLIError("empty search query", 2)
     _need_fts()
-    docs = select_docvols(cfg, shelf_devdocs.installed_docvols(cfg),
+    docs = select_docvols(cfg, shelf_backends.installed_docvols(cfg),
                           args.docvol or [], args.all)
     for ds in docs:
         ensure_fts(cfg, ds)

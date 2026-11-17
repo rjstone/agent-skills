@@ -7,6 +7,7 @@ from dataclasses import dataclass
 from typing import Any, Callable, List, Optional, Tuple
 
 import shelf_core
+import shelf_backends
 import shelf_devdocs
 import shelf_lookup
 import shelf_notes
@@ -51,7 +52,7 @@ def cmd_where(cfg: Config, args: argparse.Namespace) -> int:
 
 
 def cmd_list(cfg: Config, args: argparse.Namespace) -> int:
-    docvols = shelf_devdocs.installed_docvols(cfg)
+    docvols = shelf_backends.installed_docvols(cfg)
     if not docvols:
         print("no docvols installed (install NAME; sources QUERY finds names)")
         return 0

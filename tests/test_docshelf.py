@@ -2488,5 +2488,97 @@ class GrepDashValueTests(unittest.TestCase):
         self.assertIn("expected one argument", r.stderr)
 
 
+class _FakeDocvol(shelf_core.Docvol):
+    """In-memory docvol for backend-interface tests."""
+    HTML = "<h1 id='f'>f</h1><p>body</p>"
+
+    def __init__(self, data_dir, html=None):
+        self.name = "fake"
+        self.family = "fake"
+        self.title = "Fake"
+        self.release = "1"
+        self.source = "folder"
+        self._dir = data_dir
+        self._html = html or self.HTML
+        self.entry_count = 1
+
+    def entries(self):
+        return [shelf_core.Entry("f", "Function", "fake:p#f", "p", "f")]
+
+    def pages(self):
+        return ["p"]
+
+    def page_html(self, page):
+        if page != "p":
+            raise CLIError("no page %s" % page, 5)
+        return self._html
+
+    def resolve(self, rest):
+        page, _, anchor = rest.partition("#")
+        return page, anchor or None, self.entries()[0] if rest in ("p", "p#f") else None
+
+    def make_ref(self, page, anchor):
+        return "fake:%s%s" % (page, "#" + anchor if anchor else "")
+
+    def stamp(self):
+        return "1"
+
+    def data_dir(self):
+        return self._dir
+
+
+class BackendInterfaceTests(unittest.TestCase):
+    def setUp(self):
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        self.tmp = os.path.realpath(tmp.name)
+        self.env = {"HOME": self.tmp, "USERPROFILE": self.tmp,
+                    "DOCSHELF_CACHE_DIR": os.path.join(self.tmp, "cache"),
+                    "DOCSHELF_NOTES_DIR": os.path.join(self.tmp, "notes")}
+
+    def run_main(self, fake, *args):
+        import shelf_backends
+        out, err = io.StringIO(), io.StringIO()
+        with mock.patch.dict(os.environ, self.env), \
+                mock.patch.object(shelf_backends, "installed_docvols",
+                                  return_value=[fake]), \
+                contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
+            code = shelf_cli.main(list(args))
+        return code, out.getvalue(), err.getvalue()
+
+    def fake(self, cls=_FakeDocvol, html=None):
+        return cls(os.path.join(self.tmp, "fakedata"), html)
+
+    def test_commands_use_the_backend_aggregator(self):
+        f = self.fake()
+        for args, want in ((("list",), "fake"),
+                           (("search", "f", "-d", "fake"), "fake:p#f"),
+                           (("show", "fake:p"), "body")):
+            code, out, err = self.run_main(f, *args)
+            self.assertEqual(code, 0, err)
+            self.assertIn(want, out)
+
+    def test_show_link_uses_resolve_href(self):
+        class F(_FakeDocvol):
+            def resolve_href(self, page, href):
+                return "fake:other"
+        f = self.fake(F, "<h1 id='f'>f</h1><p><a href='x'>x</a></p>")
+        code, out, err = self.run_main(f, "show", "fake:p")
+        self.assertEqual(code, 0, err)
+        self.assertIn("[fake:other]", out)
+
+    def test_page_blocks_is_used_by_fts_and_headings(self):
+        class F(_FakeDocvol):
+            def page_blocks(self, page, link=None):
+                return [b for b in super().page_blocks(page, link)
+                        if "DROPME" not in b.text]
+        f = self.fake(F, "<h1 id='f'>f</h1><h2 id='d'>DROPME</h2><p>body</p>")
+        code, out, err = self.run_main(f, "fts", "DROPME", "-d", "fake")
+        self.assertIn("no matches", out)
+        code, out, err = self.run_main(f, "notes", "fake", "--check")
+        self.assertNotIn("DROPME", out)
+        self.assertEqual(f.page_blocks("p")[0].text.strip("# "), "f")
+
+
 if __name__ == "__main__":
     unittest.main()
