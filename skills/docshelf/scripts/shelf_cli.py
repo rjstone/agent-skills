@@ -8,6 +8,7 @@ from typing import Any, Callable, List, Optional, Tuple
 
 import shelf_core
 import shelf_backends
+import shelf_dash
 import shelf_devdocs
 import shelf_lookup
 import shelf_notes
@@ -48,6 +49,8 @@ def cmd_where(cfg: Config, args: argparse.Namespace) -> int:
     print("cache: %s %s" % (cfg.cache_dir, src(cfg.cache_source, "DOCSHELF_CACHE_DIR")))
     print("notes: %s %s" % (cfg.notes_dir, src(cfg.notes_source, "DOCSHELF_NOTES_DIR")))
     print("project: %s" % (cfg.project_file or "none"))
+    for line in shelf_dash.where_lines(cfg):
+        print(line)
     return 0
 
 
@@ -57,9 +60,10 @@ def cmd_list(cfg: Config, args: argparse.Namespace) -> int:
         print("no docvols installed (install NAME; sources QUERY finds names)")
         return 0
     for d in docvols:
-        print("%s  %s  %s  %d entries  %s" % (
+        print("%s  %s  %s  %d entries  %s  %s" % (
             d.name, d.display_name,
-            d.release, d.entry_count, "full" if d.full_size else "small"))
+            d.release, d.entry_count, "full" if d.full_size else "small",
+            d.source))
     return 0
 
 

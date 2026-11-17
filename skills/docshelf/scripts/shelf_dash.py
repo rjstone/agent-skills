@@ -9,6 +9,7 @@ import posixpath
 import re
 import shutil
 import sqlite3
+import sys
 import tarfile
 import zlib
 from typing import List, Optional, Tuple
@@ -85,6 +86,7 @@ class DashDocvol(Docvol):
         self.cache_dir = cache_dir
         self.source = source
         self.read_only = True
+        self.shadowed: List[str] = []  # later copies of this name, not used
         self.name = os.path.basename(self.path)[:-len(".docset")] \
             if self.path.endswith(".docset") else os.path.basename(self.path)
         self.family = dash_family(self.name)
@@ -303,3 +305,219 @@ def open_docset(path: str, source: str, cache_dir: str) -> Optional[DashDocvol]:
     except (sqlite3.Error, OSError, ValueError) as e:
         warn("skipping unreadable docset %s: %s" % (path, e))
         return None
+
+
+# Where Zeal keeps docsets (zealdocs/zeal src/libs/core/settings.cpp and
+# src/app/main.cpp, checked 2026-11-14): the "docsets/path" setting, else Qt's
+# AppLocalDataLocation for organization "Zeal", app "Zeal", plus "/docsets":
+#   Linux   $XDG_DATA_HOME/Zeal/Zeal/docsets (~/.local/share/...)
+#   macOS   ~/Library/Application Support/Zeal/Zeal/docsets
+#   Windows %LOCALAPPDATA%\Zeal\Zeal\docsets
+# Settings (Qt QSettings, organization domain zealdocs.org):
+#   Linux   $XDG_CONFIG_HOME/Zeal/Zeal.conf, [docsets] path=
+#   macOS   ~/Library/Preferences/org.zealdocs.Zeal.plist, key docsets.path
+#   Windows registry HKCU\Software\Zeal\Zeal\docsets, value path
+#   portable builds: zeal.ini beside zeal.exe; docsets default to ./docsets
+# Flatpak keeps both under ~/.var/app/org.zealdocs.Zeal/{data,config}.
+# Dash (macOS): ~/Library/Application Support/Dash/DocSets/<Name>/<Name>.docset.
+# Dash for Windows (Store package): %LOCALAPPDATA%\Packages\<Kapeli.Dash_...>,
+# docsets somewhere below it.
+# Every location comes from the env mapping given, never from the process.
+
+
+def _home(env) -> str:
+    return env.get("HOME") or env.get("USERPROFILE") or ""
+
+
+def _join(base: str, *parts: str) -> Optional[str]:
+    return os.path.join(base, *parts) if base else None
+
+
+def _ini_docsets_path(conf) -> Optional[str]:
+    import configparser
+    cp = configparser.ConfigParser(interpolation=None)
+    try:
+        if cp.read(conf, encoding="utf-8") and cp.has_option("docsets", "path"):
+            return cp.get("docsets", "path").strip().strip('"') or None
+    except (configparser.Error, OSError, UnicodeDecodeError):
+        pass
+    return None
+
+
+def _zeal_custom_paths(env, apps=()) -> List[str]:
+    """Docset folders set in Zeal's settings, on any OS, if any."""
+    home = _home(env)
+    out: List[Optional[str]] = []
+    conf_home = env.get("XDG_CONFIG_HOME") or _join(home, ".config")
+    if conf_home:
+        out.append(_ini_docsets_path(os.path.join(conf_home, "Zeal", "Zeal.conf")))
+    if home:
+        out.append(_ini_docsets_path(os.path.join(
+            home, ".var", "app", "org.zealdocs.Zeal", "config", "Zeal", "Zeal.conf")))
+        plist = os.path.join(home, "Library", "Preferences", "org.zealdocs.Zeal.plist")
+        try:
+            with open(plist, "rb") as f:
+                data = plistlib.load(f)
+            out.append(data.get("docsets.path") or (data.get("docsets") or {}).get("path"))
+        except (OSError, ValueError, AttributeError, plistlib.InvalidFileException):
+            pass
+    if sys.platform == "win32":
+        try:
+            import winreg
+            with winreg.OpenKey(winreg.HKEY_CURRENT_USER, r"Software\Zeal\Zeal\docsets") as k:
+                out.append(str(winreg.QueryValueEx(k, "path")[0]))
+        except OSError:
+            pass
+    for app, where in apps:  # portable Zeal: zeal.ini beside zeal.exe
+        if app == "Zeal" and where.lower().endswith(".exe"):
+            app_dir = os.path.dirname(where)
+            ini = os.path.join(app_dir, "zeal.ini")
+            if os.path.isfile(ini):
+                out.append(os.path.join(app_dir, _ini_docsets_path(ini) or "docsets"))
+    return [p for p in dict.fromkeys(out) if p]
+
+
+def _dash_windows_packages(env) -> List[str]:
+    """Dash for Windows package folders: names containing "dash" and "kapeli"."""
+    pkgs = _join(env.get("LOCALAPPDATA", ""), "Packages")
+    try:
+        names = sorted(os.listdir(pkgs)) if pkgs else []
+    except OSError:
+        return []
+    return [os.path.join(pkgs, n) for n in names
+            if "dash" in n.lower() and "kapeli" in n.lower()
+            and os.path.isdir(os.path.join(pkgs, n))]
+
+
+def viewer_apps(env) -> List[Tuple[str, str]]:
+    """Installed Dash or Zeal apps: (app, where found)."""
+    home = _home(env)
+    checks = [("Dash", p) for p in (
+        "/Applications/Dash.app", "/Applications/Setapp/Dash.app",
+        _join(home, "Applications", "Dash.app"))]
+    checks += [("Dash", p) for p in _dash_windows_packages(env)]
+    checks += [("Zeal", p) for p in (
+        "/Applications/Zeal.app",
+        _join(home, ".var", "app", "org.zealdocs.Zeal"),
+        "/var/lib/flatpak/app/org.zealdocs.Zeal")]
+    for var in ("ProgramFiles", "ProgramFiles(x86)", "LOCALAPPDATA"):
+        if env.get(var):
+            sub = ("Programs", "Zeal") if var == "LOCALAPPDATA" else ("Zeal",)
+            checks.append(("Zeal", os.path.join(env[var], *sub, "zeal.exe")))
+    found: List[Tuple[str, str]] = []
+    for app, path in checks:
+        if path and os.path.exists(path) and app not in [a for a, _ in found]:
+            found.append((app, path))
+    exe = shutil.which("zeal", path=env.get("PATH", ""))
+    if exe and "Zeal" not in [a for a, _ in found]:
+        found.append(("Zeal", exe))
+    return found
+
+
+def _search_folders(env) -> List[Tuple[str, str, int]]:
+    """Every folder docshelf looks in, existing or not: (folder, source,
+    depth), in priority order."""
+    home = _home(env)
+    data = env.get("XDG_DATA_HOME") or _join(home, ".local", "share")
+    out: List[Tuple[str, str, int]] = []
+    for d in (env.get("DOCSHELF_DOCSET_DIRS") or "").split(os.pathsep):
+        if d.strip():
+            out.append((d.strip(), "folder", 2))
+    candidates = [
+        (env.get("DASHT_DOCSETS_DIR"), "folder"),
+        (_join(data or "", "dasht", "docsets"), "folder"),
+        *[(p, "zeal") for p in _zeal_custom_paths(env, viewer_apps(env))],
+        (_join(data or "", "Zeal", "Zeal", "docsets"), "zeal"),
+        (_join(home, ".local", "share", "Zeal", "Zeal", "docsets"), "zeal"),
+        (_join(home, ".var", "app", "org.zealdocs.Zeal", "data", "Zeal", "Zeal",
+               "docsets"), "zeal"),
+        (_join(home, "Library", "Application Support", "Zeal", "Zeal", "docsets"),
+         "zeal"),
+        (_join(env.get("LOCALAPPDATA", ""), "Zeal", "Zeal", "docsets"), "zeal"),
+        (_join(home, "Library", "Application Support", "Dash", "DocSets"), "dash"),
+    ]
+    for folder, source in candidates:
+        if folder:
+            out.append((folder, source, 2))
+    for pkg in _dash_windows_packages(env):
+        out.append((pkg, "dash", 4))
+    seen, result = set(), []
+    for folder, source, depth in out:
+        if folder not in seen:
+            seen.add(folder)
+            result.append((folder, source, depth))
+    return result
+
+
+def docset_folders(env) -> List[Tuple[str, str]]:
+    """Existing docset folders, in priority order: (folder, source)."""
+    return [(f, s) for f, s, _ in _search_folders(env) if os.path.isdir(f)]
+
+
+def _docset_dirs(root, depth):
+    """*.docset folders directly in root, and down to `depth` levels."""
+    try:
+        names = sorted(os.listdir(root))
+    except OSError:
+        return
+    for n in names:
+        full = os.path.join(root, n)
+        if n.endswith(".docset"):
+            if os.path.isdir(full):
+                yield full
+        elif depth > 1 and os.path.isdir(full):
+            for sub in _docset_dirs(full, depth - 1):
+                yield sub
+
+
+def _scan(env):
+    """(folder, source, [docset paths]) for each existing folder."""
+    return [(f, s, list(_docset_dirs(f, d)))
+            for f, s, d in _search_folders(env) if os.path.isdir(f)]
+
+
+def _open_all(cfg, env):
+    """Open the docsets; return (docvols, {winner name: shadowed paths})."""
+    docvols, by_name = [], {}
+    for folder, source, paths in _scan(env):
+        for path in paths:
+            name = os.path.basename(path)[:-len(".docset")]
+            if name in by_name:
+                by_name[name].shadowed.append(path)
+                continue
+            d = open_docset(path, source, cfg.cache_dir)
+            if d is not None:
+                by_name[name] = d
+                docvols.append(d)
+    return docvols
+
+
+def installed_docsets(cfg, env=None) -> List[DashDocvol]:
+    """Docsets found in the known folders; the first folder wins a name."""
+    return _open_all(cfg, os.environ if env is None else env)
+
+
+def where_lines(cfg, env=None) -> List[str]:
+    """The 'docset folders:' and 'apps:' lines of `where`."""
+    env = os.environ if env is None else env
+    docsets = {d.path: d for d in installed_docsets(cfg, env)}
+    lines = ["docset folders:"]
+    shown = False
+    for folder, source, depth in _search_folders(env):
+        shown = True
+        if not os.path.isdir(folder):
+            lines.append("  %s (missing)" % folder)
+            continue
+        paths = list(_docset_dirs(folder, depth))
+        lines.append("  %s [%s] (found %d)" % (folder, source, len(paths)))
+        for p in paths:
+            d = docsets.get(os.path.abspath(p))
+            for sh in (d.shadowed if d else []):
+                lines.append("    shadowed: %s (%s) by %s" % (
+                    os.path.basename(sh)[:-len(".docset")], sh, d.path))
+    if not shown:
+        lines.append("  none")
+    apps = viewer_apps(env)
+    lines.append("apps: " + (", ".join("%s (%s)" % a for a in apps)
+                             if apps else "none found"))
+    return lines

@@ -2,6 +2,7 @@
 make_devdocs() in temp dirs. Run from the repo root:
 python3 -m unittest discover -s tests -v
 """
+import atexit
 import contextlib
 import io
 import json
@@ -41,10 +42,41 @@ LEAKY_ENV = ("DOCSHELF_CACHE_DIR", "DOCSHELF_NOTES_DIR", "APPDATA",
              "LOCALAPPDATA", "OLDPWD")
 
 
+# Variables that point discovery at real docset folders or a real Zeal/Dash
+# install; the test run replaces them with an empty temp folder (below).
+LOCATION_ENV = ("HOME", "USERPROFILE", "ProgramFiles", "ProgramFiles(x86)",
+                "DASHT_DOCSETS_DIR", "DOCSHELF_DOCSET_DIRS")
+_EMPTY = tempfile.mkdtemp(prefix="docshelf-empty-")
+atexit.register(shutil.rmtree, _EMPTY, ignore_errors=True)
+LEAKY_ENV = LEAKY_ENV + LOCATION_ENV[2:]
+
+
 def clean_env():
-    """os.environ without variables that would leak the real cache or notes."""
-    return {k: v for k, v in os.environ.items()
-            if k not in LEAKY_ENV and not k.startswith("XDG_")}
+    """os.environ without variables that would leak the real cache or notes,
+    and with PATH and the home folder pointing at an empty folder so a real
+    Zeal or Dash install is never found."""
+    env = {k: v for k, v in os.environ.items()
+           if k not in LEAKY_ENV and not k.startswith("XDG_")}
+    env.update({"PATH": _EMPTY, "HOME": _EMPTY, "USERPROFILE": _EMPTY})
+    return env
+
+
+_MODULE_ENV = None
+
+
+def setUpModule():
+    """In-process tests patch os.environ and discovery reads it: same
+    isolation as clean_env, undone afterwards (other test modules need PATH)."""
+    global _MODULE_ENV
+    _MODULE_ENV = mock.patch.dict(os.environ)
+    _MODULE_ENV.start()
+    os.environ.update({"PATH": _EMPTY, "HOME": _EMPTY, "USERPROFILE": _EMPTY})
+    for k in LEAKY_ENV:
+        os.environ.pop(k, None)
+
+
+def tearDownModule():
+    _MODULE_ENV.stop()
 
 
 def run_cli(*args, env=None, cwd=None, script=SCRIPT):
@@ -456,8 +488,8 @@ class DevDocsDiskTests(unittest.TestCase):
         r = run_cli("list", env=self.env, cwd=self.work)
         self.assertEqual(r.returncode, 0, r.stderr)
         self.assertEqual(r.stdout.splitlines(), [
-            "big~2  Big  2  500 entries  full",
-            "vite  Vite  5  1 entries  small"])
+            "big~2  Big  2  500 entries  full  devdocs",
+            "vite  Vite  5  1 entries  small  devdocs"])
 
     def test_pick_family_ambiguous(self):
         self.make("python~3.13", name="Python", release="3.13.8", alias="py")
@@ -2914,6 +2946,142 @@ class DashTarixTests(unittest.TestCase):
         with self.assertRaises(CLIError) as cm:
             self.dv.page_html("os.html")
         self.assertEqual(cm.exception.code, 7)
+
+
+class DashDiscoveryTests(unittest.TestCase):
+    ENTRIES = [("frobnicate", "Function", "api.html#frob")]
+    PAGES = {"api.html": "<h1 id=\"frob\">frobnicate</h1><p>Frobs it.</p>"}
+
+    def setUp(self):
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        self.tmp = os.path.realpath(tmp.name)
+        for d in ("home", "data", "config", "local", "path", "work"):
+            os.makedirs(os.path.join(self.tmp, d))
+        self.home = os.path.join(self.tmp, "home")
+        self.work = os.path.join(self.tmp, "work")
+        self.env = {
+            "HOME": self.home, "USERPROFILE": self.home,
+            "LOCALAPPDATA": os.path.join(self.tmp, "local"),
+            "XDG_DATA_HOME": os.path.join(self.tmp, "data"),
+            "XDG_CONFIG_HOME": os.path.join(self.tmp, "config"),
+            "PATH": os.path.join(self.tmp, "path"),
+            "DOCSHELF_CACHE_DIR": os.path.join(self.tmp, "cache"),
+            "DOCSHELF_NOTES_DIR": os.path.join(self.tmp, "notes")}
+
+    def docset(self, root, name="Lib"):
+        os.makedirs(root, exist_ok=True)
+        return make_docset(root, name, self.ENTRIES, self.PAGES)
+
+    def zeal_dir(self):
+        return os.path.join(self.env["XDG_DATA_HOME"], "Zeal", "Zeal", "docsets")
+
+    def cli(self, *args, **env):
+        return run_cli(*args, env=dict(self.env, **env), cwd=self.work)
+
+    def listed(self, **env):
+        r = self.cli("list", **env)
+        self.assertEqual(r.returncode, 0, r.stderr)
+        return [ln.split("  ") for ln in r.stdout.splitlines()]
+
+    def test_zeal_linux_default_folder(self):
+        self.docset(self.zeal_dir(), "Frob")
+        rows = self.listed()
+        self.assertEqual([(r[0], r[-1]) for r in rows], [("Frob", "zeal")])
+        s = self.cli("search", "frobnicate", "-d", "Frob")
+        self.assertEqual(s.returncode, 0, s.stderr)
+        self.assertIn("Frob:1", s.stdout)
+        sh = self.cli("show", "Frob:1")
+        self.assertEqual(sh.returncode, 0, sh.stderr)
+        self.assertIn("Frobs it.", sh.stdout)
+
+    def test_dash_macos_folder(self):
+        self.docset(os.path.join(self.home, "Library", "Application Support",
+                                 "Dash", "DocSets", "X"), "X")
+        rows = self.listed()
+        self.assertEqual([(r[0], r[-1]) for r in rows], [("X", "dash")])
+
+    def test_dash_windows_package(self):
+        pkg = os.path.join(self.env["LOCALAPPDATA"], "Packages",
+                           "Kapeli.Dash_abc123")
+        self.docset(os.path.join(pkg, "LocalState", "DocSets"), "Y")
+        os.makedirs(os.path.join(self.env["LOCALAPPDATA"], "Packages", "Other.App_1"))
+        rows = self.listed()
+        self.assertEqual([(r[0], r[-1]) for r in rows], [("Y", "dash")])
+        w = self.cli("where")
+        self.assertEqual(w.returncode, 0, w.stderr)
+        self.assertRegex(w.stdout, r"apps: .*Dash \(")
+        self.assertIn("Kapeli.Dash_abc123", w.stdout)
+
+    def test_zeal_custom_path_from_conf(self):
+        custom = os.path.join(self.tmp, "custom")
+        self.docset(custom, "Cust")
+        conf = os.path.join(self.env["XDG_CONFIG_HOME"], "Zeal")
+        os.makedirs(conf)
+        with open(os.path.join(conf, "Zeal.conf"), "w") as f:
+            f.write("[docsets]\npath=%s\n" % custom)
+        rows = self.listed()
+        self.assertEqual([(r[0], r[-1]) for r in rows], [("Cust", "zeal")])
+
+    def test_env_dirs_first_and_shadowing(self):
+        mine = os.path.join(self.tmp, "mine")
+        self.docset(mine)
+        zeal_copy = self.docset(self.zeal_dir())
+        rows = self.listed(DOCSHELF_DOCSET_DIRS=mine)
+        self.assertEqual([(r[0], r[-1]) for r in rows], [("Lib", "folder")])
+        w = self.cli("where", DOCSHELF_DOCSET_DIRS=mine)
+        self.assertEqual(w.returncode, 0, w.stderr)
+        self.assertIn("shadowed", w.stdout)
+        self.assertIn(zeal_copy, w.stdout)
+
+    def test_missing_env_dir_is_reported_not_fatal(self):
+        gone = os.path.join(self.tmp, "gone")
+        self.assertEqual(self.cli("list", DOCSHELF_DOCSET_DIRS=gone).returncode, 0)
+        w = self.cli("where", DOCSHELF_DOCSET_DIRS=gone)
+        self.assertEqual(w.returncode, 0, w.stderr)
+        self.assertIn("%s (missing)" % gone, w.stdout)
+
+    def test_where_reports_no_apps(self):
+        w = self.cli("where")
+        self.assertEqual(w.returncode, 0, w.stderr)
+        self.assertIn("apps: none found", w.stdout)
+        self.assertIn("docset folders:", w.stdout)
+
+    def test_docset_name_equal_to_devdocs_is_skipped_with_warning(self):
+        make_devdocs(self.env["DOCSHELF_CACHE_DIR"], "Lib", name="Lib", release="1",
+                     entries=self.ENTRIES, pages=self.PAGES)
+        self.docset(self.zeal_dir(), "Lib")
+        r = self.cli("list")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertEqual([x.split("  ")[-1] for x in r.stdout.splitlines()], ["devdocs"])
+        self.assertIn("Lib", r.stderr)
+        self.assertIn("same name", r.stderr)
+
+    def test_docset_over_mcp(self):
+        self.docset(self.zeal_dir(), "Frob")
+        proc = subprocess.Popen(
+            [sys.executable, SCRIPT, "--mcp"], stdin=subprocess.PIPE,
+            stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
+            encoding="utf-8", env=dict(clean_env(), **self.env), cwd=self.work)
+        self.addCleanup(lambda: (proc.stdin.close(), proc.wait(timeout=10),
+                                 proc.stdout.close(), proc.stderr.close()))
+        counter = [0]
+
+        def call(name, arguments):
+            counter[0] += 1
+            proc.stdin.write(json.dumps(
+                {"jsonrpc": "2.0", "id": counter[0], "method": "tools/call",
+                 "params": {"name": name, "arguments": arguments}}) + "\n")
+            proc.stdin.flush()
+            return json.loads(proc.stdout.readline())["result"]
+
+        found = call("search", {"query": ["frobnicate"], "docvols": ["Frob"]})
+        self.assertFalse(found["isError"], found)
+        cli = self.cli("search", "frobnicate", "-d", "Frob")
+        self.assertEqual(found["content"][0]["text"], cli.stdout)
+        shown = call("show", {"ref": "Frob:1"})
+        self.assertFalse(shown["isError"], shown)
+        self.assertIn("Frobs it.", shown["content"][0]["text"])
 
 
 if __name__ == "__main__":
