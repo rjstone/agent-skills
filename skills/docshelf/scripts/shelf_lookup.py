@@ -15,7 +15,7 @@ from typing import Dict, List, Optional, Tuple
 
 import shelf_backends
 import shelf_notes
-from shelf_render import (_print_lines, _print_page_title, page_title,
+from shelf_render import (_print_lines, _page_title_line, page_title,
                           section_headings, section_lines)
 from shelf_core import (CLIError, Config, cap_lines, pick_docvol, rank,
                         same_family_note, select_docvols, short_name, warn)
@@ -221,9 +221,9 @@ def cmd_show(cfg: Config, args: argparse.Namespace) -> int:
                        and short_name(b.text.lstrip("#").strip()) == want_name),
                       None)
     lines, def_ends = section_lines(blocks, anchor)
-    _print_page_title(blocks, lines)
-    _print_lines(lines, args, def_ends)
-    if not args.no_notes:
+    shown = _print_lines(lines, args, def_ends, _page_title_line(blocks, lines))
+    # notes go with the first page only: not past the end, not on a continuation
+    if shown and not args.no_notes and not (getattr(args, "offset", 0) or 0):
         heads = section_headings(blocks, anchor)
         if entry is not None:
             out = shelf_notes.notes_for(cfg, ds, entry.name, entry.type, heads)

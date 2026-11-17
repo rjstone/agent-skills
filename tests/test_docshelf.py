@@ -1076,6 +1076,37 @@ class ShowOffsetTests(unittest.TestCase):
         self.assertEqual(self.cli("show", "l:p#s", "--offset", "0").returncode, 0)
         self.assertEqual(self.cli("show", "l:p#s", "--offset", "-1").returncode, 2)
 
+    def titled_with_notes(self):
+        body = "".join("<p>row %d</p>" % i for i in range(20))
+        make_devdocs(self.cache, "t", name="T", release="1",
+                     entries=[("sec", "Section", "p#s")],
+                     pages={"p": "<h1>Big Page</h1><h2 id='s'>Sec</h2>" + body})
+        notes = os.path.join(self.tmp, "notes")
+        os.makedirs(notes, exist_ok=True)
+        with open(os.path.join(notes, "t.md"), "w", encoding="utf-8") as f:
+            f.write("General note here.\n")
+        r = self.cli("show", "t:p#s", "--full")
+        self.assertIn("(page: Big Page)", r.stdout)
+        self.assertIn("General note here.", r.stdout)
+        return len([l for l in r.stdout.splitlines()
+                    if not l.startswith(("(page:", "---", "## General", "General note"))])
+
+    def test_offset_past_end_prints_only_message(self):
+        total = self.titled_with_notes()
+        r = self.cli("show", "t:p#s", "--offset", "999")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertEqual(r.stdout,
+                         "nothing at --offset 999: the output has %d lines\n" % total)
+
+    def test_offset_continuation_skips_notes(self):
+        self.titled_with_notes()
+        r = self.cli("show", "t:p#s", "--offset", "3")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertNotIn("General note here.", r.stdout)
+        self.assertNotIn("--- notes", r.stdout)
+        r = self.cli("show", "t:p#s", "--offset", "0")
+        self.assertIn("General note here.", r.stdout)
+
 
 class ShowGrepTests(unittest.TestCase):
     PAGE = ("<html><body><h2 id='params'>Parameters</h2><p>Options for read_csv.</p>"
