@@ -692,6 +692,35 @@ class AnchorTests(unittest.TestCase):
                 '<p>After.</p><h2>Next</h2>')
         self.assertEqual(sec(html, "opt-a"), ["Option a", "About a.", "- one"])
 
+    def test_details_ends_before_idless_sibling_details(self):
+        html = ('<details id="a"><summary>A</summary><p>a body</p></details>'
+                '<details><summary>B</summary><p>b body</p></details>')
+        self.assertEqual(sec(html, "a"), ["A", "a body"])
+
+    def test_heading_inside_details_body_does_not_end_it(self):
+        html = ('<details id="a"><summary>A</summary><h4>Example</h4>'
+                '<p>x</p></details><p>After.</p>')
+        self.assertEqual(sec(html, "a"), ["A", "#### Example", "x"])
+
+    def test_heading_in_summary_ends_at_details_end(self):
+        html = ('<details id="a"><summary><h3>A</h3></summary><p>x</p>'
+                '</details><p>After.</p><h2>Next</h2>')
+        self.assertEqual(sec(html, "a"), ["### A", "x"])
+
+    def test_summary_id_with_heading_in_body(self):
+        html = ('<details><summary id="m">M</summary><h4>Ex</h4><p>x</p>'
+                '</details><p>After.</p>')
+        self.assertEqual(sec(html, "m"), ["M", "#### Ex", "x"])
+
+    def test_name_on_form_controls_is_not_an_anchor(self):
+        blocks = shelf_render.html_to_text(
+            '<input name="q"><p id="p1">para</p>')
+        self.assertEqual([b.ids for b in blocks], [["p1"]])
+        blocks = shelf_render.html_to_text(
+            '<p><button name="b">go</button><iframe name="f"></iframe>'
+            '<span name="s">x</span></p>')
+        self.assertEqual([b.ids for b in blocks], [["s"]])
+
     def test_first_block_in_page_order_wins(self):
         html = ('<a name="dup" class="dashAnchor"></a><h3>First</h3><p>1</p>'
                 '<h3 id="dup">Second</h3><p>2</p>')
