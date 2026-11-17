@@ -19,19 +19,23 @@ If an MCP server that reads docsets is configured and works, prefer it:
 `where` prints the folders found and the Dash/Zeal apps detected. Folders,
 searched in this order (the first docset of a name wins):
 
-- `DOCSHELF_DOCSET_DIRS`: extra folders (separated like `PATH`), first.
-- Zeal on Linux: `$XDG_DATA_HOME/Zeal/Zeal/docsets`, by default
-  `~/.local/share/Zeal/Zeal/docsets`; Flatpak:
-  `~/.var/app/org.zealdocs.Zeal/data/Zeal/Zeal/docsets`.
-- Zeal on macOS: `~/Library/Application Support/Zeal/Zeal/docsets`.
-- Zeal on Windows: `%LOCALAPPDATA%\Zeal\Zeal\docsets`.
-- A custom folder set in Zeal's settings (`Zeal.conf`, the macOS plist or the
-  Windows registry), and for portable Zeal the `docsets` folder beside the
-  program (or the path in its `zeal.ini`).
-- Dash on macOS: `~/Library/Application Support/Dash/DocSets`.
-- Dash for Windows (Microsoft Store app): somewhere under
-  `%LOCALAPPDATA%\Packages\<Kapeli Dash package>\`. The exact folder is
-  unverified; set `DOCSHELF_DOCSET_DIRS` if it isn't found.
+1. `DOCSHELF_DOCSET_DIRS`: extra folders (separated like `PATH`).
+2. dasht: `DASHT_DOCSETS_DIR`, then `$XDG_DATA_HOME/dasht/docsets` (by
+   default `~/.local/share/dasht/docsets`).
+3. A custom folder set in Zeal's settings: `Zeal.conf` (in
+   `$XDG_CONFIG_HOME/Zeal/`, then Flatpak's
+   `~/.var/app/org.zealdocs.Zeal/config/Zeal/`), the macOS plist, the
+   Windows registry, and for portable Zeal the `docsets` folder beside the
+   program (or the path in its `zeal.ini`).
+4. Zeal on Linux: `$XDG_DATA_HOME/Zeal/Zeal/docsets`, then
+   `~/.local/share/Zeal/Zeal/docsets`, then Flatpak's
+   `~/.var/app/org.zealdocs.Zeal/data/Zeal/Zeal/docsets`.
+5. Zeal on macOS: `~/Library/Application Support/Zeal/Zeal/docsets`.
+6. Zeal on Windows: `%LOCALAPPDATA%\Zeal\Zeal\docsets`.
+7. Dash on macOS: `~/Library/Application Support/Dash/DocSets`.
+8. Dash for Windows (Microsoft Store app): somewhere under
+   `%LOCALAPPDATA%\Packages\<Kapeli Dash package>\`. The exact folder is
+   unverified; set `DOCSHELF_DOCSET_DIRS` if it isn't found.
 
 ## REFs
 
@@ -42,10 +46,10 @@ searched in this order (the first docset of a name wins):
 
 ## Read-only
 
-docshelf opens a docset's index read-only and never writes into a docset
-folder; its own indexes and notes live in the cache and notes folders.
-Docsets with a WAL index work: SQLite may use the docset's existing `-shm`
-coordination file, as Dash and Zeal do.
+docshelf never writes into a docset folder: it opens a docset's index
+read-only, and reads a WAL-mode index (one with a `docSet.dsidx-wal` file)
+from a copy in its cache, refreshed when the docset changes. Its own indexes
+and notes live in the cache and notes folders.
 
 ## When the docset isn't on disk
 

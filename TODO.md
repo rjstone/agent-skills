@@ -76,6 +76,33 @@
   - tests: expected "skipping" warning leaks to test stderr; no tests for
     `name=`-only anchors, CRLF notes, no-command help exit 2
   - `show` reads the notes file twice via private `_read_notes`
+- [ ] `docshelf`: deferred from the Dash/Zeal backend (0.4.0) reviews:
+  - WAL stamp uses whole-second mtimes; the stamp test only checks for "-"
+  - containment tests cover `..` only (no absolute or backslash paths);
+    `resolve()` scans entries linearly per id
+  - plist and `_index_page` reads catch bare `Exception`
+  - tarix: no tests for symlink/dir members or a truncated archive; the
+    containment-before-lookup test isn't discriminating; `resolve_href`
+    turns exit-7 errors into None silently; the tarix index is opened and
+    its prefix probed per lookup (cache the prefix per docvol)
+  - `where` prints `[source]` only for existing folders; `where_lines` and
+    `installed_docvols` each open every docset
+  - `footer.json` items not type-checked on read; `FOOTER_FORMAT` bumps
+    don't invalidate the fts/headings indexes (bump `FTS_FORMAT` and
+    `HEADINGS_FORMAT` by hand); no tests for its cache reuse, stamp
+    rebuild, plist keeper page or write-failure warning
+  - a bare `update` with only docsets prints "no docvols installed" (say
+    no DevDocs docvols); lazy `import shelf_backends` in 3 functions; no
+    test for remove/update with a family name matching both kinds; `list`
+    repeats "also as" per pair
+  - Zeal catalog fetched and noted once per label when both lists fall
+    back; one malformed `versions` entry discards the whole catalog with an
+    unclear note; unused loop variables in `cached_catalog_match`; no tests
+    for catalog cache expiry, malformed JSON or the MCP text of the new
+    NetError; a stale GitHub cache isn't reused when a refetch fails
+  - a WAL-mode `tarixIndex.db` would be opened in place (mode=ro
+    writes its -shm); copy it like `docSet.dsidx` if one turns up
+  - the long first line of SKILL.md's body
 
 ## Automation
 
