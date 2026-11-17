@@ -53,5 +53,6 @@ download leaves nothing half-written.
 (https://devdocs.io/about) has a table of every documentation with links
 to its original sources and its copyright and licence. The same text is
 in the `attribution` field per documentation in DevDocs' list
-(`docs.json` in the cache).
+(`docs.json` in the cache). `show` and `fts` leave out the copy of it
+that DevDocs puts at the end of every page.
 Read one of them when you need to cite or redistribute a docvol.
