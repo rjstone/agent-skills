@@ -1010,6 +1010,72 @@ class ShowTests(unittest.TestCase):
         self.assertEqual(r.returncode, 0, r.stderr)
 
 
+class ShowOffsetTests(unittest.TestCase):
+    def setUp(self):
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        self.tmp = os.path.realpath(tmp.name)
+        self.cache = os.path.join(self.tmp, "cache")
+        self.env = {"HOME": self.tmp, "USERPROFILE": self.tmp,
+                    "DOCSHELF_CACHE_DIR": self.cache,
+                    "DOCSHELF_NOTES_DIR": os.path.join(self.tmp, "notes")}
+        body = "".join("<p>row %d</p>" % i for i in range(399))
+        make_devdocs(self.cache, "l", name="L", release="1",
+                     entries=[("sec", "Section", "p#s")],
+                     pages={"p": "<h2 id='s'>Sec</h2>" + body})
+
+    def cli(self, *args):
+        return run_cli(*args, env=self.env, cwd=self.tmp)
+
+    def full(self):
+        return self.cli("show", "l:p#s", "--full", "--no-notes").stdout.splitlines()
+
+    def test_offset_skips_lines(self):
+        full = self.full()
+        self.assertEqual(len(full), 400)
+        r = self.cli("show", "l:p#s", "--offset", "150", "--no-notes")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        out = r.stdout.splitlines()
+        self.assertEqual(out[0], full[150])
+        self.assertEqual(out[149], full[299])
+
+    def test_cut_line_names_next_offset(self):
+        r = self.cli("show", "l:p#s", "--no-notes")
+        self.assertEqual(r.stdout.splitlines()[-1],
+                         "... 250 more lines; --offset 150 continues (or --full)")
+        r = self.cli("show", "l:p#s", "--offset", "150", "--no-notes")
+        self.assertEqual(r.stdout.splitlines()[-1],
+                         "... 100 more lines; --offset 300 continues (or --full)")
+
+    def test_offset_with_full_prints_rest(self):
+        full = self.full()
+        r = self.cli("show", "l:p#s", "--offset", "150", "--full", "--no-notes")
+        self.assertEqual(r.stdout.splitlines(), full[150:])
+
+    def test_offset_past_end(self):
+        for n in ("400", "999"):
+            r = self.cli("show", "l:p#s", "--offset", n, "--no-notes")
+            self.assertEqual(r.returncode, 0, r.stderr)
+            self.assertEqual(r.stdout.strip(),
+                             "nothing at --offset %s: the output has 400 lines" % n)
+
+    def test_offset_with_grep(self):
+        r = self.cli("show", "l:p#s", "--grep", "row 1", "--full", "--no-notes")
+        hits = r.stdout.splitlines()[:-1]
+        self.assertGreater(len(hits), 30)
+        r = self.cli("show", "l:p#s", "--grep", "row 1", "--offset", "5",
+                     "--max-lines", "3", "--no-notes")
+        out = r.stdout.splitlines()
+        self.assertEqual(out[:3], hits[5:8])
+        self.assertEqual(out[3], "... %d more lines; --offset 8 continues (or --full)"
+                         % (len(hits) - 8))
+        self.assertTrue(out[4].startswith("(all "))
+
+    def test_offset_zero_ok_negative_rejected(self):
+        self.assertEqual(self.cli("show", "l:p#s", "--offset", "0").returncode, 0)
+        self.assertEqual(self.cli("show", "l:p#s", "--offset", "-1").returncode, 2)
+
+
 class ShowGrepTests(unittest.TestCase):
     PAGE = ("<html><body><h2 id='params'>Parameters</h2><p>Options for read_csv.</p>"
             "<table><tr><th>Name</th><th>Type</th><th>Default</th></tr>"
@@ -1868,7 +1934,7 @@ Get and manage docvols (references/getting-docvols.md):
 
 Only if you need these, see `<command> --help`:
   search     --type --all --max-lines --json
-  show       --full --max-lines --no-notes
+  show       --full --max-lines --offset --no-notes
   toc        --max-lines
   fts        --all --max-lines --json
   sources    --refresh

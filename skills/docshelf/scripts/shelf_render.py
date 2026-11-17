@@ -6,7 +6,6 @@ from html.parser import HTMLParser
 from typing import Callable, Dict, List, Optional, Tuple
 from urllib.parse import unquote
 
-from shelf_core import cap_lines
 
 
 @dataclass
@@ -362,9 +361,18 @@ def _print_lines(lines, args, def_ends=None):
                   % (matched, wanted, total))
         if with_def:
             footer = footer[:-1] + "; a matching term is shown with its definition)"
-    if not args.full:
-        lines = cap_lines(lines, args.max_lines,
-                          "raise --max-lines or use --full for the whole section")
+    offset = getattr(args, "offset", 0) or 0
+    if offset:
+        if offset >= len(lines):
+            print("nothing at --offset %d: the output has %d lines"
+                  % (offset, len(lines)))
+            return
+        lines = lines[offset:]
+    if not args.full and len(lines) > args.max_lines:
+        more = len(lines) - args.max_lines
+        lines = lines[:args.max_lines] + [
+            "... %d more lines; --offset %d continues (or --full)"
+            % (more, offset + args.max_lines)]
     for line in lines:
         print(line)
     if footer:

@@ -20,7 +20,7 @@ from shelf_core import CLIError, Config
 class Param:
     flags: Tuple[str, ...]
     help: str
-    kind: str = "str"  # "str", "int", "posint" (>= 1) or "flag"
+    kind: str = "str"  # "str", "int", "posint" (>= 1), "nonneg" (>= 0) or "flag"
     nargs: Optional[str] = None
     repeat: bool = False
     rare: bool = False
@@ -93,6 +93,8 @@ COMMANDS: List[Command] = [
         Param(("--full",), "No line cap.", kind="flag", rare=True),
         Param(("--max-lines",), "Output line cap.", kind="posint", rare=True,
               default=150),
+        Param(("--offset",), "Skip this many lines first (continue after the cap).",
+              kind="nonneg", rare=True, default=0),
         Param(("--no-notes",), "Do not print notes.", kind="flag", rare=True),
     ]),
     Command("toc", "List a page's headings with their REFs.",
@@ -229,6 +231,16 @@ def positive_int(text):
     return n
 
 
+def nonneg_int(text):
+    try:
+        n = int(text)
+    except ValueError:
+        n = -1
+    if n < 0:
+        raise argparse.ArgumentTypeError("%r: must be an integer >= 0" % text)
+    return n
+
+
 def _add_param(parser, p: Param):
     kwargs = {"help": p.help}
     if p.kind == "flag":
@@ -238,6 +250,8 @@ def _add_param(parser, p: Param):
             kwargs["type"] = int
         elif p.kind == "posint":
             kwargs["type"] = positive_int
+        elif p.kind == "nonneg":
+            kwargs["type"] = nonneg_int
         if p.nargs:
             kwargs["nargs"] = p.nargs
         if p.repeat:
