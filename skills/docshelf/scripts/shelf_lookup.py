@@ -1,5 +1,6 @@
 """docshelf lookup commands: search, show, fts, index-text."""
 import argparse
+import collections
 import contextlib
 import json
 import os
@@ -14,7 +15,7 @@ from typing import Dict, List, Optional, Tuple
 
 import shelf_backends
 import shelf_notes
-from shelf_render import (_print_lines, _print_page_title,
+from shelf_render import (_print_lines, _page_title_line, page_title,
                           section_headings, section_lines)
 from shelf_core import (CLIError, Config, cap_lines, pick_docvol, rank,
                         same_family_note, select_docvols, short_name, warn)
@@ -220,9 +221,9 @@ def cmd_show(cfg: Config, args: argparse.Namespace) -> int:
                        and short_name(b.text.lstrip("#").strip()) == want_name),
                       None)
     lines, def_ends = section_lines(blocks, anchor)
-    _print_page_title(blocks, lines)
-    _print_lines(lines, args, def_ends)
-    if not args.no_notes:
+    shown = _print_lines(lines, args, def_ends, _page_title_line(blocks, lines))
+    # notes go with the first page only: not past the end, not on a continuation
+    if shown and not args.no_notes and not (getattr(args, "offset", 0) or 0):
         heads = section_headings(blocks, anchor)
         if entry is not None:
             out = shelf_notes.notes_for(cfg, ds, entry.name, entry.type, heads)
@@ -236,11 +237,35 @@ def cmd_show(cfg: Config, args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_toc(cfg: Config, args: argparse.Namespace) -> int:
+    """The whole page's headings, indented by level, each with its REF."""
+    name, rest = _split_ref(args.ref)
+    ds = pick_docvol(shelf_backends.installed_docvols(cfg), name)
+    page, _anchor, _entry = ds.resolve(rest)
+    blocks = ds.page_blocks(page, link=lambda href: ds.resolve_href(page, href))
+    heads = [b for b in blocks if b.level]
+    out = []
+    title = page_title(blocks)
+    if title:
+        print("(page: %s)" % title)
+    if heads:
+        top = min(b.level for b in heads)
+        refs = shelf_notes.heading_refs(blocks)
+        for b, (text, anchor) in zip(heads, refs):
+            out.append("%s%s  %s" % ("  " * (b.level - top), text,
+                                     ds.make_ref(page, anchor)))
+    for line in cap_lines(out, args.max_lines,
+                          "use show REF for a section, or raise --max-lines"):
+        print(line)
+    return 0
+
+
 # --- full-text search ---------------------------------------------------------
 
 FTS_SNIPPET_TOKENS = 14
 # Bump when what the index stores changes, so existing indexes are rebuilt.
-FTS_FORMAT = 5  # 3: docset footers left out; 4: headers; 5: header at block 1
+FTS_FORMAT = 6  # 3: docset footers left out; 4: headers; 5: header at block 1;
+#                 6: `ids` column with code identifiers joined
 FTS_MAX_LINES = 11  # 5 hits (two lines each) plus the "more hits cut" line
 
 
@@ -284,6 +309,36 @@ def _stored_stamp(db):
     return row[0] if row else None
 
 
+_IDENT_RE = re.compile(
+    r"[A-Za-z_][A-Za-z0-9_]*(?:(?:\.|::)[A-Za-z_][A-Za-z0-9_]*)*")
+_CAMEL_RE = re.compile(r"[a-z0-9][A-Z]")
+_SEP_RE = re.compile(r"\.|::|_")
+_CAMEL_SPLIT_RE = re.compile(r"[A-Z]+(?![a-z])|[A-Z]?[a-z0-9]+|[A-Z]")
+
+
+def _ident_forms(tok):
+    """Joined lowercase form of an identifier-like token (and, for camelCase,
+    its pieces), or None when the token is a plain word."""
+    if not (_SEP_RE.search(tok) or _CAMEL_RE.search(tok)):
+        return None
+    joined = _SEP_RE.sub("", tok).lower()
+    pieces = []
+    if _CAMEL_RE.search(tok):
+        pieces = [w.lower() for w in _CAMEL_SPLIT_RE.findall(_SEP_RE.sub(" ", tok))]
+    return joined, pieces
+
+
+def page_identifiers(text) -> str:
+    """Space-separated joined forms of the code identifiers in a page."""
+    out = []
+    for tok in _IDENT_RE.findall(text):
+        forms = _ident_forms(tok)
+        if forms and len(forms[0]) > 1:
+            out.append(forms[0])
+            out.extend(forms[1])
+    return " ".join(dict.fromkeys(out))
+
+
 def build_fts(cfg, ds) -> int:
     """(Re)build the docvol's full-text index; return the pages indexed."""
     refs_on = {}  # page -> [entry REFs]
@@ -302,7 +357,7 @@ def build_fts(cfg, ds) -> int:
     count = 0
     try:
         con.executescript(
-            "CREATE VIRTUAL TABLE pages USING fts5(page UNINDEXED, text, "
+            "CREATE VIRTUAL TABLE pages USING fts5(page UNINDEXED, text, ids, "
             "tokenize='unicode61');"
             "CREATE TABLE page_entries(page TEXT, ref TEXT);"
             "CREATE TABLE meta(key TEXT PRIMARY KEY, value TEXT);")
@@ -312,8 +367,9 @@ def build_fts(cfg, ds) -> int:
                 blocks = ds.page_blocks(page)
             except (CLIError, OSError):
                 continue
-            con.execute("INSERT INTO pages(page, text) VALUES (?, ?)",
-                        (page, "\n".join(b.text for b in blocks)))
+            text = "\n".join(b.text for b in blocks)
+            con.execute("INSERT INTO pages(page, text, ids) VALUES (?, ?, ?)",
+                        (page, text, page_identifiers(text)))
             con.executemany("INSERT INTO page_entries VALUES (?, ?)",
                             [(page, r) for r in refs_on.get(page, [])])
             count += 1
@@ -350,9 +406,27 @@ def ensure_fts(cfg, ds) -> None:
         warn("rebuilt index for %s" % ds.name)
 
 
-def fts_match_expr(query) -> str:
-    """Quote each token as an FTS5 phrase and AND them (user text is data)."""
-    return " AND ".join('"%s"' % t.replace('"', '""') for t in query.split())
+def _quote(t):
+    return '"%s"' % t.replace('"', '""')
+
+
+def _query_tokens(query):
+    """The query words that contain a letter or digit."""
+    return [t for t in query.split() if re.search(r"[^\W_]", t)]
+
+
+def fts_match_expr(query, mode="all") -> str:
+    """Quote each token as an FTS5 string (user text is data) and AND (or, for
+    mode "any", OR) them. Identifier-like tokens also match the `ids` column
+    by their joined form. Tokens with no letter or digit are dropped."""
+    terms = []
+    for tok in _query_tokens(query):
+        term = _quote(tok)
+        forms = _ident_forms(tok) if _IDENT_RE.fullmatch(tok) else None
+        # plain words also try `ids`, which holds camelCase pieces
+        term = "(%s OR ids:%s)" % (term, _quote(forms[0] if forms else tok.lower()))
+        terms.append(term)
+    return (" OR " if mode == "any" else " AND ").join(terms)
 
 
 def _snippet_phrases(snippet) -> List[str]:
@@ -413,8 +487,8 @@ def _anchor_entries(ds) -> dict:
     return found
 
 
-def fts_search(cfg, docvols, query, limit) -> List[dict]:
-    expr = fts_match_expr(query)
+def fts_search(cfg, docvols, query, limit, mode="all") -> List[dict]:
+    expr = fts_match_expr(query, mode)
     if not expr:
         return []
     scored = []
@@ -425,8 +499,8 @@ def fts_search(cfg, docvols, query, limit) -> List[dict]:
             try:
                 rows = con.execute(
                     "SELECT page, snippet(pages, 1, char(2), char(3), '...', %d), "
-                    "bm25(pages) FROM pages WHERE pages MATCH ? "
-                    "ORDER BY bm25(pages) LIMIT ?" % FTS_SNIPPET_TOKENS,
+                    "bm25(pages, 0, 1.0, 0.5) FROM pages WHERE pages MATCH ? "
+                    "ORDER BY bm25(pages, 0, 1.0, 0.5) LIMIT ?" % FTS_SNIPPET_TOKENS,
                     (expr, limit)).fetchall()
                 for page, snip, score in rows:
                     ids = match_anchor(ds, page, query, snip)  # \x02 marks matches
@@ -467,6 +541,18 @@ def cmd_index_text(cfg: Config, args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_types(cfg: Config, args: argparse.Namespace) -> int:
+    docs = select_docvols(cfg, shelf_backends.installed_docvols(cfg),
+                          args.docvol or [], args.all)
+    _print_family_note(docs, args)
+    for ds in docs:
+        counts = collections.Counter(e.type or "(no type)" for e in ds.entries())
+        print(ds.name)
+        for t, n in sorted(counts.items(), key=lambda kv: (-kv[1], kv[0].lower(), kv[0])):
+            print("  %d  %s" % (n, t))
+    return 0
+
+
 def cmd_fts(cfg: Config, args: argparse.Namespace) -> int:
     _join_query(args)
     if not args.query.strip():
@@ -475,23 +561,38 @@ def cmd_fts(cfg: Config, args: argparse.Namespace) -> int:
     docs = select_docvols(cfg, shelf_backends.installed_docvols(cfg),
                           args.docvol or [], args.all)
     _print_family_note(docs, args)
+    if not fts_match_expr(args.query):  # before any index is built
+        print("no searchable words in '%s'" % args.query)
+        return 0
     for ds in docs:
         ensure_fts(cfg, ds)
     # text output takes two lines per hit: fetch enough hits to reach the line cap
     limit = args.max_lines if args.json else args.max_lines // 2 + 1
     hits = fts_search(cfg, docs, args.query, limit)
+    lines = []
+    if not hits and len(_query_tokens(args.query)) > 1:
+        hits = fts_search(cfg, docs, args.query, limit, mode="any")
+        if hits:
+            note = "note: no page has all the words; showing pages with any of them"
+            if args.json:
+                print(note, file=sys.stderr)
+            else:
+                lines.append(note)  # counts toward --max-lines
     if args.json:
         print(json.dumps(hits, indent=2))
         return 0
     if not hits:
         print("no matches for %r" % args.query)
         return 0
-    room = (max(1, (args.max_lines - 1) // 2)
-            if len(hits) * 2 > args.max_lines else len(hits))
+    cap = args.max_lines - len(lines)
+    room = (max(1, (cap - 1) // 2) if len(hits) * 2 > cap else len(hits))
     for h in hits[:room]:
-        print(h["ref"])
-        print("    " + h["snippet"])
+        lines.append(h["ref"])
+        lines.append("    " + h["snippet"])
     if len(hits) > room:
-        print("... more hits cut; add words (e.g. the function name), -d, or "
-              "raise --max-lines")
+        lines.append("... more hits cut; add words (e.g. the function name), "
+                     "-d, or raise --max-lines")
+    # a cap too small for one hit plus the cut line still holds: REF line first
+    for line in lines[:max(1, args.max_lines)]:
+        print(line)
     return 0

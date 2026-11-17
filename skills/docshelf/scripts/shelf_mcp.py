@@ -76,10 +76,10 @@ def _schema(c: shelf_cli.Command) -> dict:
         name = _prop_name(p)
         if p.kind == "flag":
             prop: Dict[str, Any] = {"type": "boolean"}
-        elif p.kind in ("int", "posint"):
+        elif p.kind in ("int", "posint", "nonneg"):
             prop = {"type": "integer"}
-            if p.kind == "posint":
-                prop["minimum"] = 1
+            if p.kind in ("posint", "nonneg"):
+                prop["minimum"] = 1 if p.kind == "posint" else 0
         else:
             prop = {"type": "string"}
         if p.nargs in ("+", "*") or p.repeat:
@@ -137,11 +137,13 @@ def _build_namespace(c: shelf_cli.Command, arguments: dict) -> argparse.Namespac
             raise ValueError("argument %s must not be an array" % name)
         conv = []
         for item in items:
-            if p.kind in ("int", "posint"):
+            if p.kind in ("int", "posint", "nonneg"):
                 if isinstance(item, bool) or not isinstance(item, int):
                     raise ValueError("argument %s must be an integer" % name)
                 if p.kind == "posint" and item < 1:
                     raise ValueError("argument %s must be >= 1" % name)
+                if p.kind == "nonneg" and item < 0:
+                    raise ValueError("argument %s must be >= 0" % name)
             elif not isinstance(item, str):
                 raise ValueError("argument %s must be a string" % name)
             conv.append(item)

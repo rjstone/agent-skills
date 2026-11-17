@@ -6,7 +6,6 @@ from html.parser import HTMLParser
 from typing import Callable, Dict, List, Optional, Tuple
 from urllib.parse import unquote
 
-from shelf_core import cap_lines
 
 
 @dataclass
@@ -34,9 +33,18 @@ VOID_TAGS = {"area", "base", "br", "col", "embed", "hr", "img", "input", "link",
 NO_REF_PREFIXES = ("#", "http://", "https://", "mailto:", "javascript:")
 
 
+STRUCTURE_TAGS = {"html", "body", "main", "article"}
+
+
 def _skippable(tag, a) -> bool:
-    return (tag in SKIP_TAGS or "hidden" in a or a.get("role") in SKIP_ROLES
+    if tag in SKIP_TAGS:
+        return True
+    if tag in STRUCTURE_TAGS:  # page structure is never chrome
+        return False
+    return ("hidden" in a or a.get("role") in SKIP_ROLES
             or bool(SKIP_CLASSES.intersection((a.get("class") or "").split())))
+
+
 CONTAINER_TAGS = {"dl", "table", "ul", "ol"}
 BLOCK_TAGS = {"p", "div", "li", "dt", "dd", "tr", "pre", "ul", "ol", "dl", "table",
               "section", "article", "blockquote", "caption", "details", "summary",
@@ -325,16 +333,20 @@ def page_title(blocks) -> Optional[str]:
     return next(b.text for b in heads if b.level == top).lstrip("#").strip() or None
 
 
-def _print_page_title(blocks, lines):
-    """'(page: Title)' when the section's heading isn't the page's own, so a
-    generic heading like '## Parameters' says what it belongs to."""
+def _page_title_line(blocks, lines) -> List[str]:
+    """['(page: Title)'] when the section's heading isn't the page's own, so a
+    generic heading like '## Parameters' says what it belongs to; else []."""
     title = page_title(blocks)
     if title and lines and lines[0].startswith("#") \
             and lines[0].lstrip("#").strip() != title:
-        print("(page: %s)" % title)
+        return ["(page: %s)" % title]
+    return []
 
 
-def _print_lines(lines, args, def_ends=None):
+def _print_lines(lines, args, def_ends=None, header=()) -> bool:
+    """Print `header`, then the lines after --grep, --offset and the cap.
+    Returns False (and prints only the one-line message, no header) when
+    --offset is past the end."""
     footer = None
     if getattr(args, "grep", None):
         total = len(lines)
@@ -346,18 +358,30 @@ def _print_lines(lines, args, def_ends=None):
                        range(1, DEFINITION_MAX_LINES + 1) for i in hits)
         lines = grep_lines(lines, args.grep, def_ends)
         if not lines:
+            for line in header:
+                print(line)
             print("no lines match %s in this section (%d lines); drop --grep to "
                   "see it" % (wanted, total))
-            return
+            return True
         footer = ("(all %d lines containing %s are shown; the section has %d lines)"
                   % (matched, wanted, total))
         if with_def:
             footer = footer[:-1] + "; a matching term is shown with its definition)"
-    if not args.full:
-        lines = cap_lines(lines, args.max_lines,
-                          "raise --max-lines or use --full for the whole section")
-    for line in lines:
+    offset = getattr(args, "offset", 0) or 0
+    if offset:
+        if offset >= len(lines):
+            print("nothing at --offset %d: the output has %d lines"
+                  % (offset, len(lines)))
+            return False
+        lines = lines[offset:]
+    if not args.full and len(lines) > args.max_lines:
+        more = len(lines) - args.max_lines
+        lines = lines[:args.max_lines] + [
+            "... %d more lines; --offset %d continues (or --full)"
+            % (more, offset + args.max_lines)]
+    for line in list(header) + lines:
         print(line)
     if footer:
         print(footer)
+    return True
 

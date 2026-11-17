@@ -20,7 +20,7 @@ from shelf_core import CLIError, Config
 class Param:
     flags: Tuple[str, ...]
     help: str
-    kind: str = "str"  # "str", "int", "posint" (>= 1) or "flag"
+    kind: str = "str"  # "str", "int", "posint" (>= 1), "nonneg" (>= 0) or "flag"
     nargs: Optional[str] = None
     repeat: bool = False
     rare: bool = False
@@ -93,7 +93,15 @@ COMMANDS: List[Command] = [
         Param(("--full",), "No line cap.", kind="flag", rare=True),
         Param(("--max-lines",), "Output line cap.", kind="posint", rare=True,
               default=150),
+        Param(("--offset",), "Skip this many lines first (continue after the cap).",
+              kind="nonneg", rare=True, default=0),
         Param(("--no-notes",), "Do not print notes.", kind="flag", rare=True),
+    ]),
+    Command("toc", "List a page's headings with their REFs.",
+            shelf_lookup.cmd_toc, [
+        Param(("ref",), "REF from search: <docvol>:<path>[#anchor]."),
+        Param(("--max-lines",), "Output line cap.", kind="posint", rare=True,
+              default=150),
     ]),
     Command("fts", "Full-text search inside pages (SQLite FTS5).",
             shelf_lookup.cmd_fts, [
@@ -103,6 +111,11 @@ COMMANDS: List[Command] = [
         Param(("--max-lines",), "Output line cap.", kind="posint", rare=True,
               default=shelf_lookup.FTS_MAX_LINES),
         Param(("--json",), "Print JSON.", kind="flag", rare=True),
+    ]),
+    Command("types", "List each docvol's entry types with counts.",
+            shelf_lookup.cmd_types, [
+        Param(("-d", "--docvol"), "Docvol or family to list (repeatable).", repeat=True),
+        Param(("--all",), "List every installed docvol.", kind="flag", rare=True),
     ]),
     Command("index-text", "Build the full-text index of docvols ahead of fts.",
             shelf_lookup.cmd_index_text, [
@@ -115,8 +128,8 @@ COMMANDS: List[Command] = [
     ]),
     Command("install", "Download documentations from DevDocs.",
             shelf_devdocs.cmd_install, [
-        Param(("names",), "Slug, alias or family (python, python~3.14).",
-              nargs="+"),
+        Param(("names",), "Slug, alias or family (python, python~3.14); "
+              "default: the project file's \"docvols\" list.", nargs="*"),
         Param(("--force",), "Download even when a Dash/Zeal docset has the "
               "same documentation.", kind="flag", rare=True),
     ]),
@@ -129,13 +142,17 @@ COMMANDS: List[Command] = [
             shelf_devdocs.cmd_remove, [
         Param(("name",), "Docvol name."),
     ]),
-    Command("notes", "Find, print or check a docvol's notes file.",
+    Command("notes", "Find, print, check or write a docvol's notes file.",
             shelf_notes.cmd_notes, [
         Param(("docvol",), "Docvol name or family (python for python~3.13)."),
         Param(("--path",), "Print the notes file path (creates its folder).",
               kind="flag"),
         Param(("--check",), "List which REFs show each section; warn on "
               "oversized notes and headings matching no entry.", kind="flag"),
+        Param(("--set",), "Write the section with this heading (exact text "
+              "after '## '; General for the general notes); needs --text."),
+        Param(("--text",), "Body of the section for --set (no '## ' lines)."),
+        Param(("--delete",), "Delete the section with this heading."),
     ]),
 ]
 
@@ -170,21 +187,28 @@ Look up (usual order):
                                  heading, table header row, and a matching
                                  term's definition (repeatable; plain text,
                                  not a pattern, case-insensitive)
+  toc REF                        the page's headings, indented, each with
+                                 its REF (to show one section)
   fts QUERY... [-d NAME]         words inside pages, 5 best hits with REFs;
                                  include the function name: fts read_csv skip
+  types [-d NAME]                each docvol's entry types with counts, most
+                                 frequent first (the names `search --type` takes)
 
 Notes (format: references/notes.md in the skill folder):
   notes DOCVOL --path            the notes file to edit
   notes DOCVOL --check           after editing: which REFs show each section,
                                  then "ok"
+  notes DOCVOL --set HEADING --text TEXT   write a section (--delete HEADING
+                                 removes it), then the --check report
 
 Get and manage docvols (references/getting-docvols.md):
   list                           docvols, versions, source (devdocs, zeal,
                                  dash) and "also as" redundancy flags
   sources QUERY...               documentations DevDocs offers, with sizes;
                                  docsets Dash or Zeal could download
-  install NAME... [--force]      download one (NAME without a version = the
-                                 newest); refuses documentation already on
+  install [NAME...] [--force]    download one (NAME without a version = the
+                                 newest; no NAME = the project's docvols
+                                 list); refuses documentation already on
                                  disk as a docset unless --force; update
                                  [NAME...]; remove NAME (DevDocs docvols
                                  only: Dash or Zeal manages docsets)
@@ -221,6 +245,16 @@ def positive_int(text):
     return n
 
 
+def nonneg_int(text):
+    try:
+        n = int(text)
+    except ValueError:
+        n = -1
+    if n < 0:
+        raise argparse.ArgumentTypeError("%r: must be an integer >= 0" % text)
+    return n
+
+
 def _add_param(parser, p: Param):
     kwargs = {"help": p.help}
     if p.kind == "flag":
@@ -230,6 +264,8 @@ def _add_param(parser, p: Param):
             kwargs["type"] = int
         elif p.kind == "posint":
             kwargs["type"] = positive_int
+        elif p.kind == "nonneg":
+            kwargs["type"] = nonneg_int
         if p.nargs:
             kwargs["nargs"] = p.nargs
         if p.repeat:

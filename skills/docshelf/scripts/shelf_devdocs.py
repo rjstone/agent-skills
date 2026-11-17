@@ -534,15 +534,49 @@ def _refuse_read_only(d: Docvol) -> None:
                        % d.name, 2)
 
 
+def _installed_note(cfg: Config, name: str) -> Optional[str]:
+    """The line for a project-list name already on disk (any backend), or None."""
+    import shelf_backends
+    low = name.lower()
+    hits = [d for d in shelf_backends.installed_docvols(cfg)
+            if low in (d.name.lower(), d.family.lower())]
+    if any(not d.read_only for d in hits):
+        return "%s: installed" % name
+    if hits:
+        return "%s: Dash/Zeal docset %s, not installed from DevDocs" % (
+            name, hits[0].name)
+    return None
+
+
 def cmd_install(cfg, args) -> int:
+    names = list(args.names or [])
+    from_project = not names
+    if from_project:
+        names = list(cfg.project_docvols)
+        if not names:
+            raise CLIError('install needs NAME (or a "docvols" list in '
+                           '.docshelf.json)', 2)
     rows = get_manifest(cfg)
-    for name in args.names:
-        row = resolve_install(rows, name)
-        if not getattr(args, "force", False):
-            _refuse_redundant(cfg, row)
+    failed = False
+    for name in names:
+        try:
+            if from_project:
+                note = _installed_note(cfg, name)
+                if note:
+                    print(note)
+                    continue
+            row = resolve_install(rows, name)
+            if not getattr(args, "force", False):
+                _refuse_redundant(cfg, row)
+        except CLIError as e:
+            if not from_project:
+                raise
+            print(str(e), file=sys.stderr)
+            failed = True
+            continue
         status = install(cfg, row)
         print(_describe(cfg, status, row["slug"]))
-    return 0
+    return 5 if failed else 0
 
 
 def cmd_update(cfg, args) -> int:

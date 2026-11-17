@@ -10,6 +10,7 @@ import os
 import plistlib
 import shutil
 import sqlite3
+import stat
 import subprocess
 import sys
 import tempfile
@@ -1010,6 +1011,103 @@ class ShowTests(unittest.TestCase):
         self.assertEqual(r.returncode, 0, r.stderr)
 
 
+class ShowOffsetTests(unittest.TestCase):
+    def setUp(self):
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        self.tmp = os.path.realpath(tmp.name)
+        self.cache = os.path.join(self.tmp, "cache")
+        self.env = {"HOME": self.tmp, "USERPROFILE": self.tmp,
+                    "DOCSHELF_CACHE_DIR": self.cache,
+                    "DOCSHELF_NOTES_DIR": os.path.join(self.tmp, "notes")}
+        body = "".join("<p>row %d</p>" % i for i in range(399))
+        make_devdocs(self.cache, "l", name="L", release="1",
+                     entries=[("sec", "Section", "p#s")],
+                     pages={"p": "<h2 id='s'>Sec</h2>" + body})
+
+    def cli(self, *args):
+        return run_cli(*args, env=self.env, cwd=self.tmp)
+
+    def full(self):
+        return self.cli("show", "l:p#s", "--full", "--no-notes").stdout.splitlines()
+
+    def test_offset_skips_lines(self):
+        full = self.full()
+        self.assertEqual(len(full), 400)
+        r = self.cli("show", "l:p#s", "--offset", "150", "--no-notes")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        out = r.stdout.splitlines()
+        self.assertEqual(out[0], full[150])
+        self.assertEqual(out[149], full[299])
+
+    def test_cut_line_names_next_offset(self):
+        r = self.cli("show", "l:p#s", "--no-notes")
+        self.assertEqual(r.stdout.splitlines()[-1],
+                         "... 250 more lines; --offset 150 continues (or --full)")
+        r = self.cli("show", "l:p#s", "--offset", "150", "--no-notes")
+        self.assertEqual(r.stdout.splitlines()[-1],
+                         "... 100 more lines; --offset 300 continues (or --full)")
+
+    def test_offset_with_full_prints_rest(self):
+        full = self.full()
+        r = self.cli("show", "l:p#s", "--offset", "150", "--full", "--no-notes")
+        self.assertEqual(r.stdout.splitlines(), full[150:])
+
+    def test_offset_past_end(self):
+        for n in ("400", "999"):
+            r = self.cli("show", "l:p#s", "--offset", n, "--no-notes")
+            self.assertEqual(r.returncode, 0, r.stderr)
+            self.assertEqual(r.stdout.strip(),
+                             "nothing at --offset %s: the output has 400 lines" % n)
+
+    def test_offset_with_grep(self):
+        r = self.cli("show", "l:p#s", "--grep", "row 1", "--full", "--no-notes")
+        hits = r.stdout.splitlines()[:-1]
+        self.assertGreater(len(hits), 30)
+        r = self.cli("show", "l:p#s", "--grep", "row 1", "--offset", "5",
+                     "--max-lines", "3", "--no-notes")
+        out = r.stdout.splitlines()
+        self.assertEqual(out[:3], hits[5:8])
+        self.assertEqual(out[3], "... %d more lines; --offset 8 continues (or --full)"
+                         % (len(hits) - 8))
+        self.assertTrue(out[4].startswith("(all "))
+
+    def test_offset_zero_ok_negative_rejected(self):
+        self.assertEqual(self.cli("show", "l:p#s", "--offset", "0").returncode, 0)
+        self.assertEqual(self.cli("show", "l:p#s", "--offset", "-1").returncode, 2)
+
+    def titled_with_notes(self):
+        body = "".join("<p>row %d</p>" % i for i in range(20))
+        make_devdocs(self.cache, "t", name="T", release="1",
+                     entries=[("sec", "Section", "p#s")],
+                     pages={"p": "<h1>Big Page</h1><h2 id='s'>Sec</h2>" + body})
+        notes = os.path.join(self.tmp, "notes")
+        os.makedirs(notes, exist_ok=True)
+        with open(os.path.join(notes, "t.md"), "w", encoding="utf-8") as f:
+            f.write("General note here.\n")
+        r = self.cli("show", "t:p#s", "--full")
+        self.assertIn("(page: Big Page)", r.stdout)
+        self.assertIn("General note here.", r.stdout)
+        return len([l for l in r.stdout.splitlines()
+                    if not l.startswith(("(page:", "---", "## General", "General note"))])
+
+    def test_offset_past_end_prints_only_message(self):
+        total = self.titled_with_notes()
+        r = self.cli("show", "t:p#s", "--offset", "999")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertEqual(r.stdout,
+                         "nothing at --offset 999: the output has %d lines\n" % total)
+
+    def test_offset_continuation_skips_notes(self):
+        self.titled_with_notes()
+        r = self.cli("show", "t:p#s", "--offset", "3")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertNotIn("General note here.", r.stdout)
+        self.assertNotIn("--- notes", r.stdout)
+        r = self.cli("show", "t:p#s", "--offset", "0")
+        self.assertIn("General note here.", r.stdout)
+
+
 class ShowGrepTests(unittest.TestCase):
     PAGE = ("<html><body><h2 id='params'>Parameters</h2><p>Options for read_csv.</p>"
             "<table><tr><th>Name</th><th>Type</th><th>Default</th></tr>"
@@ -1463,7 +1561,7 @@ class FtsTests(unittest.TestCase):
         lines = r.stdout.splitlines()
         self.assertTrue(lines[0].startswith("py:"))
         self.assertTrue(lines[1].startswith("    "))
-        self.assertIn("more hits cut", lines[2])
+        self.assertEqual(len(lines), 2)  # the cut line does not fit the cap
 
     def test_max_lines_must_be_positive(self):
         r = self.cli("fts", "gather", "-d", "py", "--max-lines", "0")
@@ -1564,6 +1662,133 @@ class FtsTests(unittest.TestCase):
                     contextlib.redirect_stderr(io.StringIO()):
                 shelf_cli.main(["fts", "word", "-d", "py"] + argv)
             self.assertEqual(seen[-1], want)
+
+
+class FtsIdentifierTests(unittest.TestCase):
+    def setUp(self):
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        self.tmp = os.path.realpath(tmp.name)
+        self.cache = os.path.join(self.tmp, "cache")
+        self.env = {"HOME": self.tmp, "USERPROFILE": self.tmp,
+                    "DOCSHELF_CACHE_DIR": self.cache,
+                    "DOCSHELF_NOTES_DIR": os.path.join(self.tmp, "notes")}
+        make_devdocs(
+            self.cache, "py", name="Py", release="1",
+            entries=[("A", "Guide", "pa"), ("B", "Guide", "pb"),
+                     ("C", "Guide", "pc"), ("D", "Guide", "pd")],
+            pages={"pa": "<h1>A</h1><p>Pass return_exceptions to collect errors.</p>",
+                   "pb": "<h1>B</h1><p>Return the value. Many words later, "
+                         "exceptions are raised.</p>",
+                   "pc": "<h1>C</h1><p>Use getElementById to find nodes.</p>",
+                   "pd": "<h1>D</h1><p>Call os.path.join for paths.</p>"})
+
+    def cli(self, *args):
+        return run_cli(*args, env=self.env, cwd=self.tmp)
+
+    def db(self):
+        return os.path.join(self.cache, "devdocs", "py", ".docshelf", "fts.sqlite")
+
+    def test_identifier_with_underscore_ranks_first(self):
+        r = self.cli("fts", "return_exceptions", "-d", "py", "--json")
+        self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+        self.assertEqual(json.loads(r.stdout)[0]["page"], "pa")
+
+    def test_camelcase_identifier(self):
+        for q in ("getElementById", "getelementbyid", "get element by id"):
+            r = self.cli("fts", q, "-d", "py", "--json")
+            self.assertEqual([h["page"] for h in json.loads(r.stdout)][:1],
+                             ["pc"], q)
+
+    def test_dotted_identifier(self):
+        for q in ("os.path.join", "ospathjoin"):
+            r = self.cli("fts", q, "-d", "py", "--json")
+            self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+            self.assertEqual(json.loads(r.stdout)[0]["page"], "pd", q)
+
+    def test_punctuation_only_query(self):
+        r = self.cli("fts", "-", "()", "-d", "py")
+        self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+        self.assertEqual(r.stdout.strip(), "no searchable words in '- ()'")
+
+    def test_any_word_retry_note(self):
+        r = self.cli("fts", "collect", "nodes", "-d", "py")
+        self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+        self.assertEqual(r.stdout.splitlines()[0],
+                         "note: no page has all the words; showing pages "
+                         "with any of them")
+        self.assertIn("py:pa", r.stdout)
+        r = self.cli("fts", "collect", "nodes", "-d", "py", "--json")
+        self.assertIn("note: no page has all", r.stderr)
+        self.assertEqual(len(json.loads(r.stdout)), 2)
+
+    def test_any_word_retry_note_counts_toward_max_lines(self):
+        for n in (1, 2):
+            r = self.cli("fts", "collect", "nodes", "-d", "py", "--max-lines", str(n))
+            self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+            lines = r.stdout.splitlines()
+            self.assertTrue(1 <= len(lines) <= n, (n, r.stdout))
+            self.assertTrue(lines[0].startswith("note: no page has all"), r.stdout)
+        self.assertTrue(lines[1].startswith("py:"), r.stdout)
+
+    def test_no_searchable_words_builds_no_index(self):
+        r = self.cli("fts", "-", "()", "-d", "py")
+        self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+        self.assertFalse(os.path.exists(self.db()))
+
+    def test_no_note_when_all_words_match(self):
+        r = self.cli("fts", "collect", "errors", "-d", "py")
+        self.assertNotIn("note:", r.stdout)
+
+    def test_plain_word_prefers_prose(self):
+        make_devdocs(
+            self.cache, "el", name="El", release="1",
+            entries=[("PA", "Guide", "pa"), ("PB", "Guide", "pb")],
+            pages={"pa": "<h1>PA</h1><p>getElementById setElementValue ElementTree "
+                         "getElementById setElementValue ElementTree</p>",
+                   "pb": "<h1>PB</h1><p>An element is a node. Each element has "
+                         "a name; element names matter.</p>"})
+        r = self.cli("fts", "element", "-d", "el", "--json")
+        self.assertEqual(json.loads(r.stdout)[0]["page"], "pb", r.stdout)
+
+    def test_ids_deduplicated(self):
+        ids = shelf_lookup.page_identifiers("self.x " * 50 + "getFoo getFoo")
+        self.assertEqual(ids.split(), ["selfx", "getfoo", "get", "foo"])
+
+    def test_existing_index_rebuilt(self):
+        self.cli("fts", "getElementById", "-d", "py")
+        con = sqlite3.connect(self.db())
+        con.execute("UPDATE meta SET value=? WHERE key='docvol_version'",
+                    ("old|fts5",))
+        con.commit()
+        con.close()
+        r = self.cli("fts", "getElementById", "-d", "py")
+        self.assertIn("rebuilt index", r.stderr)
+        self.assertIn("py:pc", r.stdout)
+
+
+class FtsMaxLinesTests(unittest.TestCase):
+    def setUp(self):
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        self.tmp = os.path.realpath(tmp.name)
+        self.cache = os.path.join(self.tmp, "cache")
+        self.env = {"HOME": self.tmp, "USERPROFILE": self.tmp,
+                    "DOCSHELF_CACHE_DIR": self.cache,
+                    "DOCSHELF_NOTES_DIR": os.path.join(self.tmp, "notes")}
+        make_devdocs(self.cache, "many", name="Many", release="1",
+                     entries=[("p%d" % i, "Guide", "p%d" % i) for i in range(8)],
+                     pages={"p%d" % i: "<h1>P%d</h1><p>zebra zebra %d</p>" % (i, i)
+                            for i in range(8)})
+
+    def test_max_lines_never_exceeded(self):
+        for n in (1, 2, 3):
+            r = run_cli("fts", "zebra", "-d", "many", "--max-lines", str(n),
+                        env=self.env, cwd=self.tmp)
+            self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+            lines = r.stdout.splitlines()
+            self.assertTrue(1 <= len(lines) <= n, (n, r.stdout))
+            self.assertTrue(lines[0].startswith("many:"), r.stdout)
 
 
 class FakeNet:
@@ -1818,21 +2043,28 @@ Look up (usual order):
                                  heading, table header row, and a matching
                                  term's definition (repeatable; plain text,
                                  not a pattern, case-insensitive)
+  toc REF                        the page's headings, indented, each with
+                                 its REF (to show one section)
   fts QUERY... [-d NAME]         words inside pages, 5 best hits with REFs;
                                  include the function name: fts read_csv skip
+  types [-d NAME]                each docvol's entry types with counts, most
+                                 frequent first (the names `search --type` takes)
 
 Notes (format: references/notes.md in the skill folder):
   notes DOCVOL --path            the notes file to edit
   notes DOCVOL --check           after editing: which REFs show each section,
                                  then "ok"
+  notes DOCVOL --set HEADING --text TEXT   write a section (--delete HEADING
+                                 removes it), then the --check report
 
 Get and manage docvols (references/getting-docvols.md):
   list                           docvols, versions, source (devdocs, zeal,
                                  dash) and "also as" redundancy flags
   sources QUERY...               documentations DevDocs offers, with sizes;
                                  docsets Dash or Zeal could download
-  install NAME... [--force]      download one (NAME without a version = the
-                                 newest); refuses documentation already on
+  install [NAME...] [--force]    download one (NAME without a version = the
+                                 newest; no NAME = the project's docvols
+                                 list); refuses documentation already on
                                  disk as a docset unless --force; update
                                  [NAME...]; remove NAME (DevDocs docvols
                                  only: Dash or Zeal manages docsets)
@@ -1842,8 +2074,10 @@ Get and manage docvols (references/getting-docvols.md):
 
 Only if you need these, see `<command> --help`:
   search     --type --all --max-lines --json
-  show       --full --max-lines --no-notes
+  show       --full --max-lines --offset --no-notes
+  toc        --max-lines
   fts        --all --max-lines --json
+  types      --all
   sources    --refresh
   install    --force
 Global: --version, --mcp (run as a stdio MCP server; references/mcp.md).
@@ -1886,6 +2120,141 @@ class HelpTests(unittest.TestCase):
                     text = f.read()
                 for bad in ("dash-docvol", "docvol.py", ".dash-docvol"):
                     self.assertNotIn(bad, text, path)
+
+
+class TocTests(unittest.TestCase):
+    PAGE = ("<h1 id='t'>T</h1><h2 id='a'>A</h2><h3 id='b'>B</h3>"
+            "<h2 id='c'>C</h2>")
+    WANT = ["(page: T)", "T  lib:p#t", "  A  lib:p#a", "    B  lib:p#b",
+            "  C  lib:p#c"]
+
+    def setUp(self):
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        self.tmp = os.path.realpath(tmp.name)
+        self.cache = os.path.join(self.tmp, "cache")
+        self.env = {"HOME": self.tmp, "DOCSHELF_CACHE_DIR": self.cache,
+                    "DOCSHELF_NOTES_DIR": os.path.join(self.tmp, "notes")}
+        make_devdocs(self.cache, "lib", name="Lib", release="1",
+                     entries=[("fb", "Function", "p#b")],
+                     pages={"p": self.PAGE})
+
+    def toc(self, *args):
+        r = run_cli("toc", *args, env=self.env, cwd=self.tmp)
+        self.assertEqual(r.returncode, 0, r.stderr)
+        return r.stdout
+
+    def test_toc_lists_headings_with_refs(self):
+        self.assertEqual(self.toc("lib:p").splitlines(), self.WANT)
+
+    def test_toc_from_entry_ref_lists_whole_page(self):
+        self.assertEqual(self.toc("lib:p#b").splitlines(), self.WANT)
+
+    def test_toc_anchorless_heading_uses_enclosing_anchor(self):
+        make_devdocs(self.cache, "lib2", name="Lib2", release="1",
+                     entries=[("x", "Function", "q")],
+                     pages={"q": "<h1 id='t'>T</h1><h2>A</h2>"})
+        self.assertEqual(self.toc("lib2:q").splitlines(),
+                         ["(page: T)", "T  lib2:q#t", "  A  lib2:q#t"])
+
+    def test_toc_max_lines_caps(self):
+        lines = self.toc("lib:p", "--max-lines", "2").splitlines()
+        self.assertEqual(lines[:3], self.WANT[:3])
+        self.assertEqual(len(lines), 4)
+        self.assertIn("more lines cut", lines[3])
+
+    def test_toc_docset_refs(self):
+        make_docset(self.tmp, "Dset", [("fb", "Function", "p.html")],
+                    {"p.html": self.PAGE})
+        env = dict(self.env, DOCSHELF_DOCSET_DIRS=self.tmp,
+                   XDG_DATA_HOME=os.path.join(self.tmp, "data"),
+                   PATH=os.path.join(self.tmp, "path"))
+        r = run_cli("toc", "Dset:page:p.html", env=env, cwd=self.tmp)
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertEqual(r.stdout.splitlines(), [
+            "(page: T)", "T  Dset:page:p.html#t", "  A  Dset:page:p.html#a",
+            "    B  Dset:page:p.html#b", "  C  Dset:page:p.html#c"])
+
+    def test_toc_over_mcp(self):
+        mcp = McpTests("test_initialize_and_list")
+        mcp.setUp()
+        self.addCleanup(mcp.doCleanups)
+        make_devdocs(mcp.cache, "lib", name="Lib", release="1",
+                     entries=[("fb", "Function", "p#b")],
+                     pages={"p": self.PAGE})
+        r = mcp.call("toc", {"ref": "lib:p"})
+        self.assertFalse(r["isError"], r)
+        cli = run_cli("toc", "lib:p", env=mcp.env, cwd=mcp.tmp)
+        self.assertEqual(r["content"][0]["text"], cli.stdout)
+        self.assertEqual(cli.stdout.splitlines(), self.WANT)
+
+
+class TypesTests(unittest.TestCase):
+    def setUp(self):
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        self.tmp = os.path.realpath(tmp.name)
+        self.cache = os.path.join(self.tmp, "cache")
+        self.env = {"HOME": self.tmp, "USERPROFILE": self.tmp,
+                    "DOCSHELF_CACHE_DIR": self.cache,
+                    "DOCSHELF_NOTES_DIR": os.path.join(self.tmp, "notes")}
+
+    def add(self, slug, types):
+        entries = [("e%d" % i, t, "p") for i, t in enumerate(types)]
+        make_devdocs(self.cache, slug, name=slug.capitalize(), release="1",
+                     entries=entries, pages={"p": "<p>t</p>"})
+
+    def test_types_counts_sorted(self):
+        self.add("lib", ["Function"] * 3 + ["Class"] + ["Method"] * 3)
+        r = run_cli("types", "-d", "lib", env=self.env, cwd=self.tmp)
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertEqual(r.stdout.splitlines(), [
+            "lib", "  3  Function", "  3  Method", "  1  Class"])
+
+    def test_types_empty_type_is_no_type(self):
+        self.add("lib", ["", "", "Class"])
+        r = run_cli("types", "-d", "lib", env=self.env, cwd=self.tmp)
+        self.assertEqual(r.stdout.splitlines(),
+                         ["lib", "  2  (no type)", "  1  Class"])
+
+    def test_types_two_docvols(self):
+        self.add("alpha", ["Function", "Function", "Class"])
+        self.add("beta", ["Macro"])
+        r = run_cli("types", "-d", "alpha", "-d", "beta", env=self.env,
+                    cwd=self.tmp)
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertEqual(r.stdout.splitlines(), [
+            "alpha", "  2  Function", "  1  Class", "beta", "  1  Macro"])
+        r = run_cli("types", "--all", env=self.env, cwd=self.tmp)
+        self.assertEqual(r.stdout.splitlines()[0], "alpha")
+
+    def test_types_docset(self):
+        make_docset(self.tmp, "Dset", [("a", "Function", "p.html"),
+                                       ("b", "Function", "p.html"),
+                                       ("c", "Class", "p.html")],
+                    {"p.html": "<p>t</p>"})
+        env = dict(self.env, DOCSHELF_DOCSET_DIRS=self.tmp,
+                   XDG_DATA_HOME=os.path.join(self.tmp, "data"),
+                   PATH=os.path.join(self.tmp, "path"))
+        r = run_cli("types", "-d", "Dset", env=env, cwd=self.tmp)
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertEqual(r.stdout.splitlines(),
+                         ["Dset", "  2  Function", "  1  Class"])
+
+    def test_types_over_mcp(self):
+        mcp = McpTests("test_initialize_and_list")
+        mcp.setUp()
+        self.addCleanup(mcp.doCleanups)
+        make_devdocs(mcp.cache, "lib", name="Lib", release="1",
+                     entries=[("a", "Function", "p"), ("b", "Class", "p"),
+                              ("c", "Function", "p")],
+                     pages={"p": "<p>t</p>"})
+        r = mcp.call("types", {"docvols": ["lib"]})
+        self.assertFalse(r["isError"], r)
+        cli = run_cli("types", "-d", "lib", env=mcp.env, cwd=mcp.tmp)
+        self.assertEqual(r["content"][0]["text"], cli.stdout)
+        self.assertEqual(cli.stdout.splitlines(),
+                         ["lib", "  2  Function", "  1  Class"])
 
 
 class McpTests(unittest.TestCase):
@@ -1945,7 +2314,8 @@ class McpTests(unittest.TestCase):
         tools = self.rpc("tools/list")["result"]["tools"]
         by_name = {t["name"]: t for t in tools}
         self.assertEqual(sorted(by_name), ["fts", "install", "list", "notes",
-                                           "remove", "search", "show", "sources"])
+                                           "remove", "search", "show", "sources",
+                                           "toc", "types"])
         q = by_name["search"]["inputSchema"]
         self.assertEqual(q["properties"]["query"]["type"], "array")
         self.assertEqual(q["properties"]["query"]["items"], {"type": "string"})
@@ -1954,7 +2324,23 @@ class McpTests(unittest.TestCase):
         self.assertEqual(q["properties"]["all"]["type"], "boolean")
         self.assertEqual(q["properties"]["docvols"]["type"], "array")
         self.assertEqual(sorted(by_name["notes"]["inputSchema"]["properties"]),
-                         ["check", "docvol"])
+                         ["check", "delete", "docvol", "set", "text"])
+
+    def test_set_over_mcp(self):
+        r = self.call("notes", {"docvol": "alpha", "set": "frobnicate",
+                                "text": "Prefer frob2."})
+        self.assertFalse(r.get("isError"), r)
+        path = os.path.join(self.tmp, "notes", "alpha.md")
+        with open(path, encoding="utf-8") as f:
+            self.assertEqual(f.read(), "## frobnicate\nPrefer frob2.\n")
+        r = self.call("notes", {"docvol": "alpha", "delete": "nope"})
+        self.assertTrue(r["isError"])
+
+    def test_notes_path_with_set_refused_over_mcp(self):
+        r = self.call("notes", {"docvol": "alpha", "path": True, "set": "x",
+                                "text": "y"})
+        self.assertTrue(r["isError"], r)
+        self.assertFalse(os.path.exists(os.path.join(self.tmp, "notes", "alpha.md")))
 
     def test_not_installed_docvol_names_the_install_tool(self):
         add_listed_only(self.cache, "duckdb", "DuckDB")
@@ -2315,6 +2701,186 @@ class FinalReviewTests(unittest.TestCase):
                            capture_output=True, env={**clean_env(), **env})
         self.assertEqual(r.returncode, 0, r.stderr)
         self.assertIn("a \u2192 b".encode("utf-8"), r.stdout)
+
+
+class NotesWriteTests(unittest.TestCase):
+    def setUp(self):
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        self.tmp = os.path.realpath(tmp.name)
+        self.cache = os.path.join(self.tmp, "cache")
+        self.notes = os.path.join(self.tmp, "notes")
+        self.env = {"HOME": self.tmp, "USERPROFILE": self.tmp,
+                    "DOCSHELF_CACHE_DIR": self.cache,
+                    "DOCSHELF_NOTES_DIR": self.notes}
+        make_devdocs(self.cache, "python~3.13", name="Python", release="1",
+                     entries=[("asyncio.gather", "Function", "a#asyncio.gather"),
+                              ("Guide", "Guide", "guide")],
+                     pages={"a": "<h2 id='asyncio.gather'>asyncio.gather</h2><p>x</p>",
+                            "guide": "<h1>Guide</h1><p>Text.</p>"})
+        self.file = os.path.join(self.notes, "python.md")
+
+    def cli(self, *args):
+        return run_cli(*args, env=self.env, cwd=self.tmp)
+
+    def put(self, text):
+        os.makedirs(self.notes, exist_ok=True)
+        with open(self.file, "w", encoding="utf-8", newline="\n") as f:
+            f.write(text)
+
+    def read(self):
+        with open(self.file, encoding="utf-8", newline="") as f:
+            return f.read()
+
+    def test_set_adds_section_creates_file(self):
+        r = self.cli("notes", "python", "--set", "asyncio.gather", "--text", "Use TaskGroup.")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertEqual(self.read(), "## asyncio.gather\nUse TaskGroup.\n")
+        self.assertIn("wrote " + self.file, r.stdout)
+        self.assertIn("ok", r.stdout)
+        r = self.cli("notes", "python", "--set", "Guide", "--text", "a\nb")
+        self.assertEqual(self.read(), "## asyncio.gather\nUse TaskGroup.\n\n## Guide\na\nb\n")
+
+    def test_set_replaces_existing_section(self):
+        src = "intro\n\n## a\nold\nmore\n\n## b\nkeep\n\n## c\nkeep2\n"
+        self.put(src)
+        r = self.cli("notes", "python", "--set", "b", "--text", "new")
+        self.assertEqual(r.returncode, 0, r.stderr)  # a --check warning does not fail the write
+        self.assertIn("warning:", r.stdout)
+        self.assertEqual(self.read(),
+                         "intro\n\n## a\nold\nmore\n\n## b\nnew\n\n## c\nkeep2\n")
+        self.cli("notes", "python", "--set", "General", "--text", "hi")
+        self.assertEqual(self.read(),
+                         "hi\n\n## a\nold\nmore\n\n## b\nnew\n\n## c\nkeep2\n")
+
+    def test_set_general_creates_at_top(self):
+        self.put("## a\nx\n")
+        self.cli("notes", "python", "--set", "General", "--text", "g")
+        self.assertEqual(self.read(), "## General\ng\n\n## a\nx\n")
+        self.cli("notes", "python", "--set", "General", "--text", "g2")
+        self.assertEqual(self.read(), "## General\ng2\n\n## a\nx\n")
+
+    def test_set_typed_heading(self):
+        self.put("## open\nplain\n\n## open (Function)\nfn\n")
+        self.cli("notes", "python", "--set", "open (Function)", "--text", "fn2")
+        self.assertEqual(self.read(), "## open\nplain\n\n## open (Function)\nfn2\n")
+        self.cli("notes", "python", "--set", "open (Class)", "--text", "c")
+        self.assertTrue(self.read().endswith("\n\n## open (Class)\nc\n"))
+
+    def test_delete_section(self):
+        self.put("## a\n1\n\n## b\n2\n\n## c\n3\n")
+        r = self.cli("notes", "python", "--delete", "b")
+        self.assertEqual(r.returncode, 0, r.stderr)  # a --check warning does not fail the write
+        self.assertIn("warning:", r.stdout)
+        self.assertEqual(self.read(), "## a\n1\n\n## c\n3\n")
+        self.cli("notes", "python", "--delete", "c")
+        self.assertEqual(self.read(), "## a\n1\n")
+
+    def test_delete_missing_exit_5(self):
+        self.put("## a\n1\n")
+        r = self.cli("notes", "python", "--delete", "zzz")
+        self.assertEqual(r.returncode, 5)
+        self.assertEqual(self.read(), "## a\n1\n")
+
+    def test_set_text_with_heading_line_refused(self):
+        self.put("## a\n1\n")
+        r = self.cli("notes", "python", "--set", "b", "--text", "x\n## c\ny")
+        self.assertEqual(r.returncode, 2)
+        self.assertEqual(self.read(), "## a\n1\n")
+
+    def test_flag_combinations_exit_2(self):
+        for args in (["--set", "a"], ["--text", "a"],
+                     ["--set", "a", "--text", "b", "--delete", "a"]):
+            self.assertEqual(self.cli("notes", "python", *args).returncode, 2, args)
+
+    def test_set_over_limit_refused_file_unchanged(self):
+        self.put("## a\n1\n")
+        r = self.cli("notes", "python", "--set", "b",
+                     "--text", "\n".join("l%d" % i for i in range(150)))
+        self.assertEqual(r.returncode, 2)
+        self.assertIn("limit", r.stderr)
+        self.assertEqual(self.read(), "## a\n1\n")
+
+    def test_invalid_utf8_refused_file_unchanged(self):
+        os.makedirs(self.notes, exist_ok=True)
+        raw = b"## a\ncaf\xe9\n\n## b\nkeep\n"
+        with open(self.file, "wb") as f:
+            f.write(raw)
+        for args in (["--set", "b", "--text", "new"], ["--delete", "b"]):
+            r = self.cli("notes", "python", *args)
+            self.assertEqual(r.returncode, 2, r.stdout + r.stderr)
+            self.assertIn("not valid UTF-8", r.stderr)
+            self.assertIn("not written", r.stderr)
+            with open(self.file, "rb") as f:
+                self.assertEqual(f.read(), raw)
+
+    def test_unreadable_notes_path_refused(self):
+        os.makedirs(self.file)  # a directory where the notes file should be
+        marker = os.path.join(self.file, "keep")
+        with open(marker, "w") as f:
+            f.write("x")
+        r = self.cli("notes", "python", "--set", "a", "--text", "b")
+        self.assertEqual(r.returncode, 2, r.stdout + r.stderr)
+        self.assertIn("cannot read", r.stderr)
+        self.assertIn("not written", r.stderr)
+        self.assertTrue(os.path.isdir(self.file))
+        self.assertTrue(os.path.exists(marker))
+
+    @unittest.skipUnless(hasattr(os, "symlink") and os.name == "posix",
+                         "symlinks need POSIX here")
+    def test_symlinked_notes_file_stays_symlink(self):
+        real_dir = os.path.join(self.tmp, "real")
+        os.makedirs(real_dir)
+        real = os.path.join(real_dir, "python.md")
+        with open(real, "w", encoding="utf-8") as f:
+            f.write("## a\n1\n")
+        os.makedirs(self.notes, exist_ok=True)
+        os.symlink(real, self.file)
+        r = self.cli("notes", "python", "--set", "b", "--text", "2")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertTrue(os.path.islink(self.file))
+        with open(real, encoding="utf-8") as f:
+            self.assertEqual(f.read(), "## a\n1\n\n## b\n2\n")
+        self.assertEqual([n for n in os.listdir(self.notes)], ["python.md"])
+
+    @unittest.skipUnless(os.name == "posix", "file modes are POSIX")
+    def test_write_keeps_file_mode(self):
+        self.put("## a\n1\n")
+        os.chmod(self.file, 0o644)
+        self.cli("notes", "python", "--set", "b", "--text", "2")
+        self.assertEqual(stat.S_IMODE(os.stat(self.file).st_mode), 0o644)
+        os.chmod(self.file, 0o640)
+        self.cli("notes", "python", "--set", "b", "--text", "3")
+        self.assertEqual(stat.S_IMODE(os.stat(self.file).st_mode), 0o640)
+
+    @unittest.skipUnless(os.name == "posix", "file modes are POSIX")
+    def test_new_file_mode_follows_umask(self):
+        old = os.umask(0o022)
+        self.addCleanup(os.umask, old)
+        self.cli("notes", "python", "--set", "a", "--text", "1")
+        self.assertEqual(stat.S_IMODE(os.stat(self.file).st_mode), 0o644)
+
+    def test_path_with_write_flags_exit_2(self):
+        self.put("## a\n1\n")
+        for args in (["--set", "b", "--text", "x"], ["--delete", "a"], ["--text", "x"]):
+            r = self.cli("notes", "python", "--path", *args)
+            self.assertEqual(r.returncode, 2, args)
+            self.assertIn("--path", r.stderr)
+            self.assertEqual(self.read(), "## a\n1\n")
+
+    def test_set_heading_with_hashes_stripped(self):
+        self.cli("notes", "python", "--set", "## foo", "--text", "x")
+        self.assertEqual(self.read(), "## foo\nx\n")
+        self.cli("notes", "python", "--set", "  ##  foo ", "--text", "y")
+        self.assertEqual(self.read(), "## foo\ny\n")
+        r = self.cli("notes", "python", "--delete", "## foo")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertEqual(self.read(), "")
+
+    def test_crlf_text_and_file_stay_lf(self):
+        self.put("## a\n1\n")
+        self.cli("notes", "python", "--set", "b", "--text", "x\r\ny")
+        self.assertEqual(self.read(), "## a\n1\n\n## b\nx\ny\n")
 
 
 class NotesPageHeadingTests(unittest.TestCase):
@@ -3323,6 +3889,85 @@ class DashFooterTests(unittest.TestCase):
         self.assertIn("Menu", bare)
 
 
+class InstallProjectListTests(unittest.TestCase):
+    def setUp(self):
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        self.tmp = os.path.realpath(tmp.name)
+        self.cache = os.path.join(self.tmp, "cache")
+        self.docs = os.path.join(self.tmp, "docsets")
+        self.work = os.path.join(self.tmp, "work")
+        for d in (os.path.join(self.cache, "devdocs"), self.docs, self.work):
+            os.makedirs(d)
+        env = mock.patch.dict(os.environ, {
+            "HOME": self.tmp, "USERPROFILE": self.tmp,
+            "XDG_DATA_HOME": os.path.join(self.tmp, "data"),
+            "XDG_CONFIG_HOME": os.path.join(self.tmp, "config"),
+            "LOCALAPPDATA": os.path.join(self.tmp, "local"),
+            "PATH": os.path.join(self.tmp, "path"),
+            "DOCSHELF_DOCSET_DIRS": self.docs,
+            "DOCSHELF_CACHE_DIR": self.cache,
+            "DOCSHELF_NOTES_DIR": os.path.join(self.tmp, "notes")})
+        env.start()
+        self.addCleanup(env.stop)
+        old = os.getcwd()
+        os.chdir(self.work)
+        self.addCleanup(os.chdir, old)
+        entries = [("Intro", "Guide", "intro")]
+        pages = {"intro": "<h1>Intro</h1>"}
+        rows = [row("Lua", "lua~5.4", "5.4.6", version="5.4"),
+                row("Python", "python~3.12", "3.12.1", version="3.12")]
+        allp = {shelf_devdocs.MANIFEST_URL: json.dumps(rows)}
+        for r in rows:
+            allp.update(remote_docvol(r["slug"], entries, pages))
+        self.net = FakeNet(self, allp)
+
+    def main(self, *argv):
+        out, err = io.StringIO(), io.StringIO()
+        with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
+            code = shelf_cli.main(list(argv))
+        return code, out.getvalue(), err.getvalue()
+
+    def project(self, names):
+        with open(os.path.join(self.work, ".docshelf.json"), "w") as f:
+            json.dump({"docvols": names}, f)
+
+    def have(self):
+        return sorted(os.listdir(os.path.join(self.cache, "devdocs")))
+
+    def test_install_project_list(self):
+        self.main("install", "python~3.12")
+        self.project(["lua", "python"])
+        code, out, err = self.main("install")
+        self.assertEqual((code, err), (0, ""))
+        self.assertIn("installed lua~5.4", out)
+        self.assertIn("python: installed\n", out)
+        self.assertIn("lua~5.4", self.have())
+
+    def test_install_project_list_skips_docset(self):
+        make_docset(self.docs, "HTTP", [("frob", "Function", "api.html")],
+                    {"api.html": "<h1>frob</h1>"}, meta_version="1.0")
+        self.project(["http"])
+        code, out, err = self.main("install")
+        self.assertEqual((code, err), (0, ""))
+        self.assertEqual(out, "http: Dash/Zeal docset HTTP, "
+                              "not installed from DevDocs\n")
+
+    def test_install_project_list_unknown_name_continues(self):
+        self.project(["nosuchdoc", "lua"])
+        code, out, err = self.main("install")
+        self.assertEqual(code, 5)
+        self.assertIn("nosuchdoc", err)
+        self.assertIn("installed lua~5.4", out)
+        self.assertIn("lua~5.4", self.have())
+
+    def test_install_no_names_no_project_list(self):
+        code, out, err = self.main("install")
+        self.assertEqual(code, 2)
+        self.assertIn('install needs NAME (or a "docvols" list in '
+                      '.docshelf.json)', err)
+
+
 class DashReadOnlyTests(unittest.TestCase):
     def setUp(self):
         tmp = tempfile.TemporaryDirectory()
@@ -3760,6 +4405,48 @@ class EnvIsolationTests(unittest.TestCase):
                                  [("Zeal", app)])
                 self.assertEqual(shelf_dash.viewer_apps(
                     {"PATH": _EMPTY, "DOCSHELF_NO_SYSTEM_APPS": "1"}), [])
+
+
+class StructureNotSkippedTests(unittest.TestCase):
+    """html, body, main and article are page structure: a skip class, a
+    navigation role or the hidden attribute on them must not empty the page."""
+
+    def text(self, html):
+        return [b.text for b in shelf_render.html_to_text(html)]
+
+    def test_body_with_skip_class_keeps_content(self):
+        html = '<body class="sidebar-drawer"><h1 id="a">A</h1><p>text</p></body>'
+        self.assertIn("text", " ".join(self.text(html)))
+
+    def test_main_with_navigation_role_keeps_content(self):
+        html = '<main role="navigation"><h1 id="a">A</h1><p>text</p></main>'
+        self.assertIn("text", " ".join(self.text(html)))
+
+    def test_article_hidden_keeps_content(self):
+        html = '<article hidden><h1 id="a">A</h1><p>text</p></article>'
+        self.assertIn("text", " ".join(self.text(html)))
+
+    def test_div_with_skip_class_still_skipped(self):
+        html = '<div class="sphinxsidebar">nav</div><p>x</p>'
+        out = " ".join(self.text(html))
+        self.assertIn("x", out)
+        self.assertNotIn("nav", out)
+
+    def test_show_body_with_skip_class_keeps_content(self):
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        tmp_dir = os.path.realpath(tmp.name)
+        cache = os.path.join(tmp_dir, "cache")
+        make_devdocs(cache, "b", name="B", release="1",
+                     entries=[("Page", "Guide", "p")],
+                     pages={"p": '<body class="sidebar-drawer"><h1 id="a">A</h1>'
+                                 "<p>text</p></body>"})
+        env = {"HOME": tmp_dir, "USERPROFILE": tmp_dir,
+               "DOCSHELF_CACHE_DIR": cache,
+               "DOCSHELF_NOTES_DIR": os.path.join(tmp_dir, "notes")}
+        r = run_cli("show", "b:p", "--no-notes", env=env, cwd=tmp_dir)
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertIn("text", r.stdout)
 
 
 if __name__ == "__main__":
