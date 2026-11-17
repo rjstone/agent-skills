@@ -32,12 +32,18 @@ docsets Dash or Zeal could download, when one of them is present.
 `python scripts/docshelf.py suggest` reads the project's build and version
 files (`package.json`, `pyproject.toml`, `requirements*.txt`,
 `CMakeLists.txt`, `Cargo.toml`, `go.mod`, `Gemfile`, `composer.json`,
-Dockerfiles, compose files, `.nvmrc` and similar) in the project root, its
-direct child folders and those of `packages/` and `apps/`. It uses no
-network: it matches them against installed docvols and the cached DevDocs
-list. Each line is `installed`, `docset` or `available` (`install` fetches
-it). It ends with a `"docvols": [...]` list to paste into `.docshelf.json`;
-it never writes that file.
+`Dockerfile`, `Dockerfile.*`, `*.Dockerfile`, compose files, `.nvmrc` and
+similar) in the scanned folder, its direct child folders and those of
+`packages/` and `apps/`. The scanned folder is the one holding
+`.docshelf.json` when that file is in or above the current folder within
+the same git work tree; else the current folder. A note names it. It uses
+no network: it matches the files against installed docvols and the cached
+DevDocs list; versions in the files pick the matching docvol version. Each
+line is `installed`, `docset` or `available`. It ends with a
+`"docvols": [...]` list to paste into `.docshelf.json`; it never writes
+that file. Searches naming an `available` entry exit 4 until it is
+installed: after pasting, `install` with no NAME fetches them (check sizes
+with `sources` first).
 
 ## Sizes
 

@@ -34,6 +34,14 @@ nothing written, say the question will come up again in later sessions.
   No preferred tool; choose per task.
   ```
 
+- Another tool by default:
+
+  ```markdown
+  ## Documentation lookups
+
+  Use <tool> for documentation lookups; docshelf when it has no answer.
+  ```
+
 - An order: a numbered list of the tools in the user's order, with the
   snippet's last paragraph (on versions and downloads).
 - docshelf (or docshelf first): the snippet below.

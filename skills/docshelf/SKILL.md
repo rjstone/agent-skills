@@ -29,7 +29,8 @@ Use for exact, version-pinned reference (signatures, options, return values)
 quoted from the docs. A `## Documentation lookups` section in AGENTS.md or
 CLAUDE.md takes precedence over what follows. Default when none exists:
 prefer Context7 or web search when the library has no docvol or you need
-the very latest release, and a per-library skill when one covers the task. Docvols can be stale: `list` shows versions.
+the very latest release, and a per-library skill when one covers the task.
+Docvols can be stale: `list` shows versions.
 
 The documentation comes from DevDocs (https://devdocs.io); docshelf is not
 affiliated with DevDocs, and each documentation keeps its own licence:
