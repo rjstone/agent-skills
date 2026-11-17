@@ -40,6 +40,7 @@ import shelf_devdocs  # noqa: E402
 import shelf_lookup  # noqa: E402
 import shelf_notes  # noqa: E402
 import shelf_render  # noqa: E402
+import shelf_suggest  # noqa: E402
 
 _EMPTY = tempfile.mkdtemp(prefix="docshelf-empty-")
 atexit.register(shutil.rmtree, _EMPTY, ignore_errors=True)
@@ -644,6 +645,130 @@ class RenderGrepTests(unittest.TestCase):
         lines, ends = self.lines(self.DL)
         out = shelf_render.grep_lines(lines, ["long_one"], ends)
         self.assertFalse(any("long line" in l for l in out))
+
+
+def sec(html, anchor):
+    return shelf_render.section_lines(shelf_render.html_to_text(html), anchor)[0]
+
+
+class AnchorTests(unittest.TestCase):
+    def test_dash_anchor_before_heading(self):
+        html = ('<a name="//apple_ref/cpp/Function/foo" class="dashAnchor"></a>'
+                '<h3>foo()</h3><p>does foo</p><h3>bar()</h3><p>bar</p>')
+        self.assertEqual(sec(html, "//apple_ref/cpp/Function/foo"),
+                         ["### foo()", "does foo"])
+
+    def test_doc2dash_anchor_before_dt(self):
+        html = ('<dl><a name="//apple_ref/cpp/Function/os.path.join" class="dashAnchor"></a>'
+                '<dt id="os.path.join">os.path.join(a, *p)</dt><dd>Join paths.</dd>'
+                '<dt id="os.path.split">os.path.split(p)</dt><dd>Split.</dd></dl>')
+        self.assertEqual(sec(html, "//apple_ref/cpp/Function/os.path.join"),
+                         ["os.path.join(a, *p)", "Join paths."])
+
+    def test_stacked_anchors_all_attach(self):
+        html = ('<a name="//dash_ref_1/Section/Intro/0" class="dashAnchor"></a>'
+                '<a name="intro"></a><h2 id="top">Intro</h2><p>x</p><h2>Next</h2>')
+        for a in ("//dash_ref_1/Section/Intro/0", "intro", "top"):
+            self.assertEqual(sec(html, a), ["## Intro", "x"])
+
+    def test_encoded_once_and_twice(self):
+        html = ('<a name="//dash_ref_1/Section/Intro/0" class="dashAnchor"></a>'
+                '<h2>Intro</h2><p>x</p><h2>Next</h2>')
+        for a in ("%2F%2Fdash_ref_1%2FSection%2FIntro%2F0",
+                  "%252F%252Fdash_ref_1%252FSection%252FIntro%252F0"):
+            self.assertEqual(sec(html, a), ["## Intro", "x"])
+
+    def test_space_in_anchor(self):
+        html = '<h2 id="read csv">read csv</h2><p>x</p><h2>Next</h2>'
+        self.assertEqual(sec(html, "read%20csv"), ["## read csv", "x"])
+
+    def test_name_on_any_tag(self):
+        html = '<h2 name="setup">Setup</h2><p>x</p><h2>Other</h2>'
+        self.assertEqual(sec(html, "setup"), ["## Setup", "x"])
+
+    def test_details_is_one_section(self):
+        html = ('<p>Before.</p><details id="opt-a"><summary>Option a</summary>'
+                '<p>About a.</p><ul><li>one</li></ul></details>'
+                '<p>After.</p><h2>Next</h2>')
+        self.assertEqual(sec(html, "opt-a"), ["Option a", "About a.", "- one"])
+
+    def test_details_ends_before_idless_sibling_details(self):
+        html = ('<details id="a"><summary>A</summary><p>a body</p></details>'
+                '<details><summary>B</summary><p>b body</p></details>')
+        self.assertEqual(sec(html, "a"), ["A", "a body"])
+
+    def test_heading_inside_details_body_does_not_end_it(self):
+        html = ('<details id="a"><summary>A</summary><h4>Example</h4>'
+                '<p>x</p></details><p>After.</p>')
+        self.assertEqual(sec(html, "a"), ["A", "#### Example", "x"])
+
+    def test_heading_in_summary_ends_at_details_end(self):
+        html = ('<details id="a"><summary><h3>A</h3></summary><p>x</p>'
+                '</details><p>After.</p><h2>Next</h2>')
+        self.assertEqual(sec(html, "a"), ["### A", "x"])
+
+    def test_summary_id_with_heading_in_body(self):
+        html = ('<details><summary id="m">M</summary><h4>Ex</h4><p>x</p>'
+                '</details><p>After.</p>')
+        self.assertEqual(sec(html, "m"), ["M", "#### Ex", "x"])
+
+    def test_name_on_form_controls_is_not_an_anchor(self):
+        blocks = shelf_render.html_to_text(
+            '<input name="q"><p id="p1">para</p>')
+        self.assertEqual([b.ids for b in blocks], [["p1"]])
+        blocks = shelf_render.html_to_text(
+            '<p><button name="b">go</button><iframe name="f"></iframe>'
+            '<span name="s">x</span></p>')
+        self.assertEqual([b.ids for b in blocks], [["s"]])
+
+    def test_first_block_in_page_order_wins(self):
+        html = ('<a name="dup" class="dashAnchor"></a><h3>First</h3><p>1</p>'
+                '<h3 id="dup">Second</h3><p>2</p>')
+        self.assertEqual(sec(html, "dup"), ["### First", "1"])
+
+    def test_unknown_anchor_whole_page_with_note(self):
+        lines = sec('<h2>A</h2><p>x</p>', "//apple_ref/cpp/Function/nope")
+        self.assertTrue(lines[0].startswith("note: anchor not found"))
+        self.assertIn("## A", lines)
+
+    def test_summary_id_promotes_to_details(self):
+        # rustdoc: the id sits on <summary>; the section is the whole <details>
+        html = ('<p>B</p><details><summary id="m"><code>set_len</code></summary>'
+                '<p>About.</p></details><h2>N</h2>')
+        self.assertEqual(sec(html, "m"), ["set_len", "About."])
+
+    def test_empty_marker_inside_dt_and_li(self):
+        # texinfo + Dash markers: an empty <a name> inside the <dt> / <li>
+        dl = ('<dl><dt><a name="//apple_ref/Builtin/mapfile" class="dashAnchor"></a>'
+              'mapfile</dt><dd>Read.</dd><dt><a name="//apple_ref/Builtin/n" '
+              'class="dashAnchor"></a>next</dt><dd>n</dd></dl>')
+        self.assertEqual(sec(dl, "//apple_ref/Builtin/mapfile"), ["mapfile", "Read."])
+        ul = '<ul><li><a name="x"></a>item x</li><li><a name="y"></a>item y</li></ul>'
+        self.assertEqual(sec(ul, "x"), ["- item x"])
+
+    def test_doxygen_anchor_inside_heading(self):
+        html = '<h2><a class="anchor" id="grp"></a> Title</h2><p>body</p><h2>Other</h2>'
+        self.assertEqual(sec(html, "grp"), ["## Title", "body"])
+
+    def test_show_docset_apple_ref_anchor(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp = os.path.realpath(tmp)
+            html = ('<a name="//apple_ref/cpp/Function/foo" class="dashAnchor"></a>'
+                    '<h3>foo()</h3><p>does foo</p><h3>bar()</h3><p>bar</p>')
+            make_docset(tmp, "Foo", [("foo", "Function",
+                                      "api.html#//apple_ref/cpp/Function/foo")],
+                        {"api.html": html})
+            env = {"HOME": tmp, "USERPROFILE": tmp, "DOCSHELF_DOCSET_DIRS": tmp,
+                   "DOCSHELF_CACHE_DIR": os.path.join(tmp, "cache"),
+                   "DOCSHELF_NOTES_DIR": os.path.join(tmp, "notes")}
+            s = run_cli("search", "foo", "--json", env=env, cwd=tmp)
+            self.assertEqual(s.returncode, 0, s.stderr)
+            ref = json.loads(s.stdout)[0]["ref"]
+            r = run_cli("show", ref, env=env, cwd=tmp)
+            self.assertEqual(r.returncode, 0, r.stderr)
+            self.assertIn("### foo()", r.stdout)
+            self.assertIn("does foo", r.stdout)
+            self.assertNotIn("bar", r.stdout)
 
 
 class RankTests(unittest.TestCase):
@@ -1543,9 +1668,9 @@ class FtsTests(unittest.TestCase):
         self.assertEqual(r.stdout.splitlines()[0], "duck:p#Out%20of%20Memory")
 
     def test_unquote_all(self):
-        self.assertEqual(shelf_lookup._unquote_all("Guide/Out%2520of%2520Memory"),
+        self.assertEqual(shelf_render.unquote_all("Guide/Out%2520of%2520Memory"),
                          "Guide/Out of Memory")
-        self.assertEqual(shelf_lookup._unquote_all("plain"), "plain")
+        self.assertEqual(shelf_render.unquote_all("plain"), "plain")
 
     def test_snippet_phrases(self):
         self.assertEqual(shelf_lookup._snippet_phrases(
@@ -2060,6 +2185,9 @@ Notes (format: references/notes.md in the skill folder):
 Get and manage docvols (references/getting-docvols.md):
   list                           docvols, versions, source (devdocs, zeal,
                                  dash) and "also as" redundancy flags
+  suggest                        docvols for the project's build files
+                                 and version files, then a "docvols"
+                                 list to paste (no network)
   sources QUERY...               documentations DevDocs offers, with sizes;
                                  docsets Dash or Zeal could download
   install [NAME...] [--force]    download one (NAME without a version = the
@@ -2315,7 +2443,7 @@ class McpTests(unittest.TestCase):
         by_name = {t["name"]: t for t in tools}
         self.assertEqual(sorted(by_name), ["fts", "install", "list", "notes",
                                            "remove", "search", "show", "sources",
-                                           "toc", "types"])
+                                           "suggest", "toc", "types"])
         q = by_name["search"]["inputSchema"]
         self.assertEqual(q["properties"]["query"]["type"], "array")
         self.assertEqual(q["properties"]["query"]["items"], {"type": "string"})
@@ -4447,6 +4575,529 @@ class StructureNotSkippedTests(unittest.TestCase):
         r = run_cli("show", "b:p", "--no-notes", env=env, cwd=tmp_dir)
         self.assertEqual(r.returncode, 0, r.stderr)
         self.assertIn("text", r.stdout)
+
+
+class SuggestScanTests(unittest.TestCase):
+    def setUp(self):
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        self.root = os.path.realpath(tmp.name)
+
+    def write(self, rel, text):
+        path = os.path.join(self.root, *rel.split("/"))
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        with open(path, "w", encoding="utf-8") as f:
+            f.write(text)
+
+    def scan(self):
+        return shelf_suggest.scan_project(self.root)
+
+    def of(self, findings, kind, names=None, source=None):
+        return [f for f in findings if f.kind == kind
+                and (names is None or f.names == names)
+                and (source is None or f.source == source)]
+
+    def libs(self, findings):
+        return [f.names for f in findings if f.kind == "lib"]
+
+    def test_package_json(self):
+        self.write("package.json", json.dumps({
+            "dependencies": {"react": "^18", "@types/node": "*",
+                             "@angular/core": "17", "@sentry/node": "8",
+                             "@testing-library/react": "16",
+                             "@TanStack/React-Query": "5"},
+            "engines": {"node": ">=20.11"}}))
+        findings, notes = self.scan()
+        self.assertEqual(notes, [])
+        self.assertEqual(self.libs(findings),
+                         [("react",), ("node",), ("angular",), ("sentry",),
+                          ("testing-library",), ("tanstack/react-query",)])
+        self.assertEqual(len(self.of(findings, "lang", ("javascript",))), 1)
+        node = self.of(findings, "lang", ("node",))
+        self.assertEqual([f.version for f in node], ["20.11"])
+        self.assertEqual(node[0].source, "package.json")
+
+    @unittest.skipIf(sys.version_info < (3, 11), "tomllib needs Python 3.11")
+    def test_pyproject_pep621_and_poetry(self):
+        self.write("pyproject.toml",
+                   '[project]\nrequires-python = ">=3.10"\n'
+                   'dependencies = ["Django>=5", "numpy[extra]"]\n'
+                   '[project.optional-dependencies]\ndev = ["pytest"]\n')
+        findings, _ = self.scan()
+        self.assertEqual(self.libs(findings),
+                         [("django",), ("numpy",), ("pytest",)])
+        self.assertEqual([f.version for f in self.of(findings, "lang",
+                                                     ("python",))], [""])
+        self.write("pyproject.toml",
+                   '[tool.poetry.dependencies]\npython = "3.12"\n'
+                   'requests = "*"\n')
+        findings, _ = self.scan()
+        self.assertEqual(self.libs(findings), [("requests",)])
+        self.assertEqual([f.version for f in self.of(findings, "lang",
+                                                     ("python",))], ["3.12"])
+
+    def test_requirements(self):
+        self.write("requirements.txt",
+                   "# c\nFlask==3.0  # web\n-r other.txt\n\n"
+                   "SQLAlchemy[asyncio]>=2\n")
+        findings, _ = self.scan()
+        self.assertEqual(self.libs(findings), [("flask",), ("sqlalchemy",)])
+        self.assertEqual(len(self.of(findings, "lang", ("python",))), 1)
+
+    def test_cmake(self):
+        self.write("CMakeLists.txt",
+                   "find_package(Qt6 REQUIRED)\nFIND_PACKAGE(OpenGL)\n"
+                   "set(CMAKE_CXX_STANDARD 20)")
+        findings, _ = self.scan()
+        self.assertEqual([f.names for f in findings if f.kind == "lang"],
+                         [("cmake",), ("cpp",)])
+        self.assertEqual(self.libs(findings), [("qt6",), ("opengl",)])
+
+    def test_cargo_go_gemfile_composer(self):
+        self.write("Cargo.toml", '[dependencies]\nserde = "1"\n')
+        self.write("go.mod", "module x\n\ngo 1.22\n")
+        self.write("Gemfile", "ruby \"3.3\"\ngem 'rails'\n")
+        self.write("composer.json", json.dumps(
+            {"require": {"php": ">=8", "ext-json": "*",
+                         "laravel/framework": "^11"}}))
+        findings, notes = self.scan()
+        if shelf_suggest.tomllib is not None:
+            self.assertEqual(notes, [])
+            self.assertEqual(len(self.of(findings, "lang", ("rust",))), 1)
+            self.assertEqual(len(self.of(findings, "lib", ("serde",))), 1)
+        self.assertEqual([f.version for f in
+                          self.of(findings, "lang", ("go",))], ["1.22"])
+        self.assertEqual([f.version for f in
+                          self.of(findings, "lang", ("ruby",))], ["3.3"])
+        self.assertEqual(len(self.of(findings, "lib", ("rails",))), 1)
+        self.assertEqual(len(self.of(findings, "lang", ("php",))), 1)
+        self.assertEqual(len(self.of(findings, "lib",
+                                     ("framework", "laravel"))), 1)
+        self.assertEqual(len(self.of(findings, "lib", ("php",))), 0)
+
+    def test_docker(self):
+        self.write("Dockerfile",
+                   "FROM docker.io/library/node:20-alpine AS build\n"
+                   "FROM build\nFROM scratch\nFROM nginx@sha256:abc\n")
+        self.write("compose.yaml",
+                   "services:\n  db:\n    image: postgres:16\n")
+        findings, _ = self.scan()
+        by_source = {(f.source, f.names): f.version
+                     for f in findings if f.kind == "lib"}
+        self.assertEqual(by_source, {
+            ("Dockerfile", ("node",)): "20",
+            ("Dockerfile", ("nginx",)): "",
+            ("compose.yaml", ("postgres",)): "16"})
+
+    def test_version_files(self):
+        self.write(".nvmrc", "v20.11.0\n")
+        self.write(".python-version", "system\n")
+        self.write(".tool-versions", "nodejs 22.1.0\ngolang 1.23\n")
+        findings, _ = self.scan()
+        self.assertEqual(
+            [(f.source, f.names[0], f.version) for f in findings],
+            [(".nvmrc", "node", "20.11.0"),
+             (".python-version", "python", ""),
+             (".tool-versions", "node", "22.1.0"),
+             (".tool-versions", "go", "1.23")])
+        self.write(".nvmrc", "lts/iron\n")
+        findings, _ = self.scan()
+        self.assertEqual(self.of(findings, "lang", ("node",),
+                                 ".nvmrc")[0].version, "")
+
+    def test_child_folders_and_skips(self):
+        deps = json.dumps({"dependencies": {"vue": "3"}})
+        self.write("packages/web/package.json", deps)
+        self.write("node_modules/x/package.json", deps)
+        self.write(".git/package.json", deps)
+        self.write("node_modules/package.json", deps)
+        findings, _ = self.scan()
+        self.assertEqual({f.source for f in findings},
+                         {"packages/web/package.json"})
+        self.write("web/package.json", deps)
+        findings, _ = self.scan()
+        self.assertEqual(
+            {f.source for f in findings if f.names == ("vue",)},
+            {"web/package.json", "packages/web/package.json"})
+
+    def test_only_monorepo_grandchildren(self):
+        self.write("docs/examples/x/package.json", "{}")
+        self.write("apps/api/pyproject.toml", '[project]\nname = "a"\n')
+        findings, _ = self.scan()
+        sources = {f.source for f in findings}
+        self.assertNotIn("docs/examples/x/package.json", sources)
+        if shelf_suggest.tomllib is not None:
+            self.assertIn("apps/api/pyproject.toml", sources)
+
+    @unittest.skipIf(sys.version_info < (3, 11), "tomllib needs Python 3.11")
+    def test_wrong_shapes_do_not_crash(self):
+        self.write("pyproject.toml",
+                   '[project]\ndependencies = 3\n'
+                   '[project.optional-dependencies]\ndev = "x"\n'
+                   '[tool.poetry]\ndependencies = "x"\n')
+        self.write("Cargo.toml", "dependencies = 3\n")
+        findings, _ = self.scan()
+        self.assertEqual(self.libs(findings), [])
+
+    def test_bom_files(self):
+        self.write("package.json",
+                   "\ufeff" + json.dumps({"dependencies": {"vue": "3"}}))
+        self.write("requirements.txt", "\ufeffFlask==3\n")
+        findings, notes = self.scan()
+        self.assertEqual(notes, [])
+        self.assertEqual(self.libs(findings), [("vue",), ("flask",)])
+
+    def test_requirements_skips_urls(self):
+        self.write("requirements.txt",
+                   "git+https://github.com/x/y.git\n"
+                   "https://example.com/a.whl\nflask\n")
+        findings, _ = self.scan()
+        self.assertEqual(self.libs(findings), [("flask",)])
+
+    def test_cmake_comments_ignored(self):
+        self.write("CMakeLists.txt",
+                   "# find_package(Old)\nfind_package(New) # find_package(X)\n")
+        findings, _ = self.scan()
+        self.assertEqual(self.libs(findings), [("new",)])
+
+    def test_malformed_file_is_noted(self):
+        self.write("package.json", "{bad")
+        findings, notes = self.scan()
+        self.assertEqual(findings, [])
+        self.assertEqual(len(notes), 1)
+        self.assertTrue(notes[0].startswith("note: skipped package.json:"))
+
+    def test_no_tomllib(self):
+        self.write("pyproject.toml", '[project]\nname = "x"\n')
+        with mock.patch.object(shelf_suggest, "tomllib", None):
+            findings, notes = self.scan()
+        self.assertEqual(findings, [])
+        self.assertEqual(len(notes), 1)
+        self.assertIn("3.11", notes[0])
+
+    def test_normalize(self):
+        self.assertEqual(shelf_suggest.normalize("Foo__Bar.baz-Q"),
+                         "foo-bar-baz-q")
+
+    def versions(self, findings):
+        return {f.names[0]: f.version for f in findings if f.kind == "lib"}
+
+    def test_npm_and_composer_versions(self):
+        self.write("package.json", json.dumps({"dependencies": {
+            "vue": "^2.7.0", "node-x": "~18", "lodash": ">=4 <5",
+            "react": "*", "a": "latest", "b": "workspace:^1.2",
+            "c": "file:../c", "d": "git+https://x.org/d.git#v1.2",
+            "e": "github:user/e#1.0", "f": "user/f", "g": "npm:h@1.0",
+            "i": "1.x"}}))
+        self.write("composer.json", json.dumps({"require": {
+            "laravel/framework": "^11.2", "x/y": "dev-main"}}))
+        findings, _ = self.scan()
+        self.assertEqual(self.versions(findings), {
+            "vue": "2.7.0", "node-x": "18", "lodash": "4", "react": "",
+            "a": "", "b": "", "c": "", "d": "", "e": "", "f": "", "g": "",
+            "i": "1", "framework": "11.2", "y": ""})
+
+    def test_requirements_versions(self):
+        self.write("requirements.txt",
+                   "django==4.2.7\nnumpy>=1.26,<2\nflask!=2.0,>=2.3\n"
+                   "requests ; python_version < '3.8'\nattrs~=23.1  # c\n"
+                   "rich[jupyter]==13.7 --hash=sha256:abc\n")
+        findings, _ = self.scan()
+        self.assertEqual(self.versions(findings), {
+            "django": "4.2.7", "numpy": "1.26", "flask": "2.3",
+            "requests": "", "attrs": "23.1", "rich": "13.7"})
+
+    def test_requirements_direct_reference(self):
+        self.write("requirements.txt",
+                   "foo @ https://example.com/foo-1.0.whl\n"
+                   "bar@git+https://x.org/bar.git\n")
+        findings, _ = self.scan()
+        self.assertEqual(self.versions(findings), {"foo": "", "bar": ""})
+
+    def test_gemfile_versions(self):
+        self.write("Gemfile", "gem 'rails', '~> 7.1'\ngem \"pg\"\n"
+                   "gem 'x', github: 'a/x'\n")
+        findings, _ = self.scan()
+        self.assertEqual(self.versions(findings),
+                         {"rails": "7.1", "pg": "", "x": ""})
+
+    @unittest.skipIf(sys.version_info < (3, 11), "tomllib needs Python 3.11")
+    def test_toml_versions_and_groups(self):
+        self.write("pyproject.toml",
+                   '[project]\ndependencies = ["Django>=4.2,<5"]\n'
+                   '[dependency-groups]\ndev = ["pytest==8.1", '
+                   '{include-group = "x"}]\n'
+                   '[tool.poetry.dependencies]\nrequests = "^2.31"\n'
+                   'httpx = {version = "0.27"}\n'
+                   '[tool.poetry.group.docs.dependencies]\nsphinx = "7.2"\n')
+        self.write("Cargo.toml",
+                   '[dependencies]\nserde = "1.0"\n'
+                   'tokio = {version = "1.37", features = ["full"]}\n'
+                   'local = {path = "../local"}\n'
+                   '[workspace.dependencies]\nclap = "4.5"\n')
+        findings, notes = self.scan()
+        self.assertEqual(notes, [])
+        self.assertEqual(self.versions(findings), {
+            "django": "4.2", "pytest": "8.1", "requests": "2.31",
+            "httpx": "0.27", "sphinx": "7.2", "serde": "1.0",
+            "tokio": "1.37", "local": "", "clap": "4.5"})
+
+    def test_dockerfile_variants(self):
+        self.write("Dockerfile.dev", "FROM python:3.12-slim\n")
+        self.write("api.Dockerfile", "FROM node:20\n")
+        findings, _ = self.scan()
+        self.assertEqual(
+            sorted((f.source, f.names, f.version) for f in findings
+                   if f.kind == "lib"),
+            [("Dockerfile.dev", ("python",), "3.12"),
+             ("api.Dockerfile", ("node",), "20")])
+
+
+class SuggestTests(unittest.TestCase):
+    def setUp(self):
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        self.tmp = os.path.realpath(tmp.name)
+        self.cache = os.path.join(self.tmp, "cache")
+        self.proj = os.path.join(self.tmp, "proj")
+        os.makedirs(self.proj)
+        self.env = {"DOCSHELF_CACHE_DIR": self.cache}
+
+    def write(self, name, text, folder=None):
+        with open(os.path.join(folder or self.proj, name), "w") as f:
+            f.write(text)
+
+    def installed(self, slug, name="X", **kw):
+        make_devdocs(self.cache, slug, name=name, release="1",
+                     entries=[("e", "Function", "p#e")], pages={"p": "<h1>e</h1>"},
+                     **kw)
+
+    def listed(self, *rows):
+        """Rows appended to docs.json, in the order given (newest first)."""
+        path = os.path.join(self.cache, "devdocs", "docs.json")
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        data = []
+        if os.path.isfile(path):
+            with open(path, encoding="utf-8") as f:
+                data = json.load(f)
+        with open(path, "w", encoding="utf-8") as f:
+            json.dump(data + list(rows), f)
+
+    def suggest(self, *args, cwd=None, env=None):
+        return run_cli("suggest", *args, cwd=cwd or self.proj,
+                       env=dict(self.env, **(env or {})))
+
+    def test_installed_and_available(self):
+        self.installed("python~3.12", "Python")
+        self.listed(row("Python", "python~3.14", "3.14.0", version="3.14"),
+                    row("CMake", "cmake~3.30", "3.30", version="3.30"))
+        # DevDocs lists newest first: python~3.14 before the installed 3.12
+        path = os.path.join(self.cache, "devdocs", "docs.json")
+        with open(path, encoding="utf-8") as f:
+            rows = json.load(f)
+        rows.sort(key=lambda r: r["slug"] != "python~3.14")
+        with open(path, "w", encoding="utf-8") as f:
+            json.dump(rows, f)
+        self.write(".python-version", "3.12.4\n")
+        self.write("CMakeLists.txt", "find_package(Foo)\n")
+        r = self.suggest()
+        self.assertEqual(r.returncode, 0, r.stderr)
+        lines = r.stdout.splitlines()
+        self.assertIn("installed python~3.12  (.python-version)", lines)
+        self.assertIn("available cmake~3.30  (CMakeLists.txt)", lines)
+        self.assertIn('"docvols": ["python~3.12", "cmake~3.30"]', lines)
+
+    def test_version_without_docs_takes_newest_with_note(self):
+        self.listed(row("Python", "python~3.14", "3.14.0", version="3.14"))
+        self.write(".python-version", "3.9\n")
+        r = self.suggest()
+        line = next(x for x in r.stdout.splitlines() if "python~3.14" in x)
+        self.assertIn("no 3.9 docs; newest is 3.14", line)
+
+    def test_alias_and_scoped_names(self):
+        self.listed(row("React", "react", "18"), row("Node.js", "node", "22"))
+        self.write("package.json", json.dumps({"dependencies": {
+            "react-dom": "^18", "@types/node": "^22"}}))
+        r = self.suggest()
+        lines = r.stdout.splitlines()
+        self.assertEqual(sum("available react " in x for x in lines), 1, lines)
+        self.assertEqual(sum("available node " in x for x in lines), 1, lines)
+        self.assertIn("(package.json)", " ".join(lines))
+
+    def test_docset_status(self):
+        docs = os.path.join(self.tmp, "docsets")
+        os.makedirs(docs)
+        make_docset(docs, "Flask", [("fb", "Function", "p.html")],
+                    {"p.html": "<h1>x</h1>"})
+        self.write("requirements.txt", "flask\n")
+        r = self.suggest(env={"DOCSHELF_DOCSET_DIRS": docs})
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertIn("docset    Flask  (requirements.txt)", r.stdout)
+
+    def test_unmatched_count(self):
+        self.listed(row("Flask", "flask", "3"))
+        self.write("requirements.txt", "flask\nleft-pad-xyz\n")
+        r = self.suggest()
+        self.assertIn("1 dependencies matched no docvol", r.stdout)
+
+    def test_nothing_cached(self):
+        self.write("go.mod", "module x\n\ngo 1.22\n")
+        r = self.suggest()
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertIn("sources", r.stderr)
+        self.assertIn('"docvols": []', r.stdout)
+
+    def test_nonnumeric_version(self):
+        self.listed(row("Node.js", "node", "26"),
+                    row("Node.js", "node~20_lts", "20", version="20 LTS"))
+        self.write(".nvmrc", "lts/iron\n")
+        r = self.suggest()
+        line = next(x for x in r.stdout.splitlines() if x.startswith("available"))
+        self.assertEqual(line, "available node  (.nvmrc)")
+
+    def test_json(self):
+        self.listed(row("Flask", "flask", "3"))
+        self.write("requirements.txt", "flask\n")
+        data = json.loads(self.suggest("--json").stdout)
+        self.assertEqual(sorted(data), ["docvols", "notes", "suggestions",
+                                        "unmatched"])
+        self.assertEqual(data["docvols"], ["flask"])
+        self.assertEqual(data["suggestions"][0], {
+            "name": "flask", "status": "available",
+            "sources": ["requirements.txt"], "note": ""})
+
+    def test_uses_project_root(self):
+        self.listed(row("Flask", "flask", "3"))
+        self.write("requirements.txt", "flask\n")
+        self.write(".docshelf.json", "{}")
+        sub = os.path.join(self.proj, "sub")
+        os.makedirs(sub)
+        os.makedirs(os.path.join(self.proj, ".git"))
+        r = self.suggest(cwd=sub)
+        self.assertIn('"docvols": ["flask"]', r.stdout)
+        self.assertIn("note: scanned %s" % self.proj, r.stderr)
+
+    def test_project_file_above_non_git_folder_scans_current(self):
+        self.listed(row("Flask", "flask", "3"), row("Django", "django", "5"))
+        self.write(".docshelf.json", "{}", folder=self.tmp)
+        self.write("requirements.txt", "django\n", folder=self.tmp)
+        self.write("requirements.txt", "flask\n")
+        r = self.suggest()
+        self.assertIn('"docvols": ["flask"]', r.stdout)
+        self.assertIn("note: scanned %s" % self.proj, r.stderr)
+
+    def test_fallback_project_file_scans_current(self):
+        self.listed(row("Flask", "flask", "3"), row("Django", "django", "5"))
+        other = os.path.join(self.tmp, "other")
+        os.makedirs(other)
+        self.write(".docshelf.json", "{}", folder=other)
+        self.write("requirements.txt", "django\n", folder=other)
+        self.write("requirements.txt", "flask\n")
+        w = run_cli("where", cwd=self.proj,
+                    env=dict(self.env, OLDPWD=other))
+        self.assertIn("OLDPWD", w.stderr)  # the fallback found it
+        r = self.suggest(env={"OLDPWD": other})
+        self.assertIn('"docvols": ["flask"]', r.stdout)
+        self.assertIn("note: scanned %s" % self.proj, r.stderr)
+
+    def test_json_notes_only_in_json(self):
+        self.write("go.mod", "module x\n\ngo 1.22\n")
+        r = self.suggest("--json")
+        data = json.loads(r.stdout)
+        self.assertIn("note: scanned %s" % self.proj, data["notes"])
+        self.assertNotIn("note:", r.stderr)
+
+    def test_one_family_one_version(self):
+        self.listed(row("Python", "python~3.14", "3.14", version="3.14"),
+                    row("Python", "python~3.12", "3.12", version="3.12"))
+        self.write(".python-version", "3.12\n")
+        self.write("pyproject.toml",
+                   '[project]\nname = "x"\nrequires-python = ">=3.10"\n')
+        self.write("requirements.txt", "\n")
+        self.write("Dockerfile", "FROM python:3.12-slim\n")
+        r = self.suggest()
+        lines = [x for x in r.stdout.splitlines() if "python~" in x]
+        self.assertEqual(lines, [
+            "available python~3.12  (.python-version, Dockerfile, "
+            "pyproject.toml, requirements.txt)",
+            '"docvols": ["python~3.12"]'], r.stdout)
+
+    def test_library_versions_pick_docvol_version(self):
+        self.listed(row("Django", "django~5.2", "5.2", version="5.2"),
+                    row("Django", "django~4.2", "4.2", version="4.2"),
+                    row("Vue", "vue~3", "3", version="3"),
+                    row("Vue", "vue~2", "2", version="2"),
+                    row("React", "react", "19"))
+        self.write("requirements.txt", "django==4.2.7\n")
+        self.write("package.json", json.dumps({"dependencies": {
+            "vue": "^2.7.0", "react": "*"}}))
+        lines = self.suggest().stdout.splitlines()
+        self.assertIn("available django~4.2  (requirements.txt)", lines)
+        self.assertIn("available vue~2  (package.json)", lines)
+        self.assertIn("available react  (package.json)", lines)
+
+    def test_scoped_npm_names(self):
+        self.listed(row("React", "react", "19"), row("Node.js", "node", "22"),
+                    row("Angular", "angular", "17"))
+        self.write("package.json", json.dumps({"dependencies": {
+            "@sentry/node": "8", "@testing-library/react": "16"}}))
+        self.assertIn('"docvols": []', self.suggest().stdout)
+        self.write("package.json", json.dumps({"dependencies": {
+            "@angular/core": "17", "@types/node": "22"}}))
+        self.assertIn('"docvols": ["angular", "node"]', self.suggest().stdout)
+
+    def test_tanstack_alias(self):
+        self.listed(row("TanStack Query", "tanstack_query", "5"))
+        self.write("package.json", json.dumps({"dependencies": {
+            "@tanstack/react-query": "5"}}))
+        self.assertIn('"docvols": ["tanstack_query"]', self.suggest().stdout)
+
+    def test_fallback_picks_newest_installed(self):
+        self.installed("python~3.8", "Python")
+        self.installed("python~3.12", "Python")
+        self.write(".python-version", "3.9\n")
+        r = self.suggest()
+        line = next(x for x in r.stdout.splitlines() if "python~" in x)
+        self.assertIn("installed python~3.12", line)
+        self.assertIn("no 3.9 docs; newest is 3.12", line)
+
+    def test_same_name_merges_sources(self):
+        self.listed(row("Django", "django", "5"))
+        self.write("requirements.txt", "django\n")
+        self.write("pyproject.toml",
+                   '[project]\nname = "x"\ndependencies = ["django"]\n')
+        r = self.suggest()
+        lines = [x for x in r.stdout.splitlines() if " django " in x]
+        self.assertEqual(lines, [
+            "available django  (pyproject.toml, requirements.txt)"])
+
+    def test_available_agreeing_beats_disagreeing_installed(self):
+        self.installed("python~3.12", "Python")
+        self.listed(row("Python", "python~3.14", "3.14.0", version="3.14"))
+        self.write(".python-version", "3.14\n")
+        r = self.suggest()
+        self.assertIn("available python~3.14  (.python-version)", r.stdout)
+        self.assertNotIn("python~3.12", r.stdout)
+
+    def test_json_notes_name_missing_list(self):
+        self.write("go.mod", "module x\n\ngo 1.22\n")
+        data = json.loads(self.suggest("--json").stdout)
+        self.assertTrue(any("no DevDocs list cached" in n for n in data["notes"]))
+
+    def test_mcp_tool(self):
+        import shelf_mcp
+        self.assertIn("suggest", [t["name"] for t in shelf_mcp.tool_schemas()])
+        self.listed(row("Flask", "flask", "3"))
+        self.write("requirements.txt", "flask\n")
+        env = dict(clean_env(), **self.env)
+        call = {"jsonrpc": "2.0", "id": 1, "method": "tools/call",
+                "params": {"name": "suggest", "arguments": {}}}
+        r = subprocess.run([sys.executable, SCRIPT, "--mcp"],
+                           input=json.dumps(call) + "\n", capture_output=True,
+                           text=True, env=env, cwd=self.proj, timeout=30)
+        result = json.loads(r.stdout.splitlines()[0])["result"]
+        self.assertFalse(result.get("isError"), result)
+        self.assertIn('"docvols": ["flask"]', result["content"][0]["text"])
 
 
 if __name__ == "__main__":

@@ -15,6 +15,8 @@ class Block:
     text: str         # one or more lines
     tag: str          # element that started the block (the id carrier if any)
     depth: int        # open dl/table/ul/ol containers
+    owner: int = 0    # serial of the <details> whose id (or summary's) it carries
+    details: Tuple[int, ...] = ()  # serials of the <details> it is inside
 
 
 SKIP_TAGS = {"script", "style", "nav", "header", "footer", "form", "select",
@@ -28,6 +30,9 @@ SKIP_CLASSES = {"related", "mobile-nav", "sphinxsidebar", "sphinxsidebarwrapper"
                 "skip-link"}
 
 
+# name= on these is a form or frame name, not an anchor
+NAME_NOT_ANCHOR = {"input", "button", "select", "textarea", "iframe", "object",
+                   "param", "map", "output", "form", "meta", "link"}
 VOID_TAGS = {"area", "base", "br", "col", "embed", "hr", "img", "input", "link",
              "meta", "source", "track", "wbr"}
 NO_REF_PREFIXES = ("#", "http://", "https://", "mailto:", "javascript:")
@@ -45,7 +50,7 @@ def _skippable(tag, a) -> bool:
             or bool(SKIP_CLASSES.intersection((a.get("class") or "").split())))
 
 
-CONTAINER_TAGS = {"dl", "table", "ul", "ol"}
+CONTAINER_TAGS = {"dl", "table", "ul", "ol", "details"}
 BLOCK_TAGS = {"p", "div", "li", "dt", "dd", "tr", "pre", "ul", "ol", "dl", "table",
               "section", "article", "blockquote", "caption", "details", "summary",
               "figure", "figcaption", "body", "main", "aside", "address", "form",
@@ -74,6 +79,9 @@ class _TextParser(HTMLParser):
         self.start_depth = 0
         self.skip_tag = ""
         self.cell = None  # (buf index, colspan) of the open table cell
+        self.open_details: List[int] = []  # serials of the open <details>
+        self.serial = 0
+        self.owner = 0  # set when a pending id came from a <details>/<summary>
 
     def _top(self):
         return self.stack[-1] if self.stack else ""
@@ -99,8 +107,10 @@ class _TextParser(HTMLParser):
         else:
             tag = self.id_tag or self._top()
             text = self.prefix + text
-        self.blocks.append(Block(self.level, self.ids, text, tag, self.start_depth))
+        self.blocks.append(Block(self.level, self.ids, text, tag, self.start_depth,
+                                 self.owner, tuple(self.open_details)))
         self.ids, self.id_tag, self.level, self.prefix = [], "", 0, ""
+        self.owner = 0
 
     def handle_starttag(self, tag, attrs):
         if self.skip:
@@ -120,7 +130,14 @@ class _TextParser(HTMLParser):
                 self.stack.pop()
             if tag in CONTAINER_TAGS:
                 self.depth += 1
+            parent = self._top()
             self.stack.append(tag)
+            if tag == "details":
+                self.serial += 1
+                self.open_details.append(self.serial)
+            if a.get("id") and not self.owner and (
+                    tag == "details" or (tag == "summary" and parent == "details")):
+                self.owner = self.open_details[-1] if self.open_details else 0
             self.start_depth = self.depth
             if tag in HEADINGS:
                 self.level = HEADINGS[tag]
@@ -151,7 +168,7 @@ class _TextParser(HTMLParser):
             self.ids.append(a["id"])
             if tag in BLOCK_TAGS and not self.id_tag:
                 self.id_tag = tag
-        if tag == "a" and a.get("name"):
+        if a.get("name") and tag not in NAME_NOT_ANCHOR:
             self.ids.append(a["name"])
         if not self.buf:
             self.start_depth = self.depth
@@ -183,6 +200,8 @@ class _TextParser(HTMLParser):
                     pass
             if tag in CONTAINER_TAGS and self.depth:
                 self.depth -= 1
+            if tag == "details" and self.open_details:
+                self.open_details.pop()
             self.start_depth = self.depth
 
     def handle_data(self, data):
@@ -234,15 +253,25 @@ def definition_ends(blocks: List[Block], offset=0) -> dict:
     return ends
 
 
+def unquote_all(s: str) -> str:
+    """URL-decode until stable (anchors are sometimes encoded twice)."""
+    for _ in range(3):
+        decoded = unquote(s)
+        if decoded == s:
+            break
+        s = decoded
+    return s
+
+
 def _section_slice(blocks: List[Block], anchor: Optional[str]) -> Optional[Tuple[int, int]]:
     """(start, end) block indexes of the section the anchor names; None if
     there is no anchor or it isn't found."""
     if not anchor:
         return None
-    want = {anchor, unquote(anchor)}
+    want = unquote_all(anchor)
     start = None
     for i, b in enumerate(blocks):
-        if any(x in want or unquote(x) in want for x in b.ids):
+        if any(unquote_all(x) == want for x in b.ids):
             start = i
             break
     if start is None:
@@ -251,7 +280,9 @@ def _section_slice(blocks: List[Block], anchor: Optional[str]) -> Optional[Tuple
     end = len(blocks)
     for j in range(start + 1, len(blocks)):
         b = blocks[j]
-        if first.level:
+        if first.owner:  # a <details>: up to its end, headings inside included
+            stop = first.owner not in b.details
+        elif first.level:
             stop = b.level and b.level <= first.level
         else:
             stop = (b.level or b.depth < first.depth

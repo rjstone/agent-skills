@@ -13,6 +13,7 @@ import shelf_dash
 import shelf_devdocs
 import shelf_lookup
 import shelf_notes
+import shelf_suggest
 from shelf_core import CLIError, Config
 
 
@@ -126,6 +127,11 @@ COMMANDS: List[Command] = [
         Param(("query",), "Words in the slug or name.", nargs="+"),
         Param(("--refresh",), "Fetch the list again now.", kind="flag", rare=True),
     ]),
+    Command("suggest", "Suggest docvols from the project's build files "
+            "(package.json, pyproject.toml, CMakeLists.txt, ...).",
+            shelf_suggest.cmd_suggest, [
+        Param(("--json",), "Print JSON.", kind="flag"),
+    ]),
     Command("install", "Download documentations from DevDocs.",
             shelf_devdocs.cmd_install, [
         Param(("names",), "Slug, alias or family (python, python~3.14); "
@@ -204,6 +210,9 @@ Notes (format: references/notes.md in the skill folder):
 Get and manage docvols (references/getting-docvols.md):
   list                           docvols, versions, source (devdocs, zeal,
                                  dash) and "also as" redundancy flags
+  suggest                        docvols for the project's build files
+                                 and version files, then a "docvols"
+                                 list to paste (no network)
   sources QUERY...               documentations DevDocs offers, with sizes;
                                  docsets Dash or Zeal could download
   install [NAME...] [--force]    download one (NAME without a version = the

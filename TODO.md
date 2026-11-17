@@ -29,10 +29,7 @@ items are done.
 
 #### 1. Features
 
-- [ ] 1.5 Suggest docvols from a project's dependency names
-      (`package.json`, `pyproject.toml`); a light version of
-      @madhan-g-p/devdocs-mcp-server's version pinning, without full
-      manifest parsing.
+(none open)
 
 #### 2. Dash/Zeal docsets
 
@@ -40,10 +37,6 @@ items are done.
       on a real install, and pin the exact path in `shelf_dash.py` and
       `references/dash-zeal.md` (marked unverified there; discovery searches
       `%LOCALAPPDATA%\Packages\<Kapeli Dash package>\` up to 4 levels deep).
-- [ ] 2.2 Sturdier anchors: Dash's `//dash_ref_...` and `//apple_ref/...`
-      fragments, `name=` anchors (untested today), `<details>` blocks, with
-      the whole page as fallback (andreas-mausch/docset-mcp, ZDocsetMCP);
-      use docset-mcp's tested-docsets table as a regression list.
 - [ ] 2.3 (low priority) Some docsets' `Info.plist` has a full-text-search
       flag (keys to verify; possibly `DashDocSetDefaultFTSEnabled` /
       `DashDocSetFTSNotSupported`): do such docsets ship a text index `fts`
@@ -61,8 +54,6 @@ items are done.
 
 #### 5. Agents and docs
 
-- [ ] 5.1 Ship a ~10-line paste-in AGENTS.md / CLAUDE.md snippet that
-      teaches the lookup habit (devdocs-mcp's README does this).
 - [ ] 5.2 Agent trials as dash-docset ran them (no-skill baseline, Haiku,
       the opencode model set, CLI vs `--mcp`), DevDocs and docsets
       (the user, 2026-11-16).
@@ -134,7 +125,7 @@ items are done.
 - [ ] 6.8 Tests and small cleanups
   - [ ] 6.8.1 An expected "skipping" warning leaks into test stderr.
   - [ ] 6.8.2 No tests for CRLF notes files or exit 2 for help with no
-        command (`name=` anchors are in 2.2).
+        command.
   - [ ] 6.8.3 `show` reads the notes file twice, through the private
         `_read_notes`.
   - [ ] 6.8.4 The first line of SKILL.md's body is very long.

@@ -6,7 +6,7 @@ license: MIT
 metadata:
   author: Robert Stone
   source: https://github.com/rjstone/agent-skills
-  version: "0.5.0"
+  version: "0.6.0"
   credits: "DevDocs, devdocs-mcp, Zeal"
 ---
 
@@ -26,9 +26,23 @@ A docvol is a DevDocs documentation, or a Dash/Zeal docset found on disk
 (read-only), plus docshelf's own metadata, indexes and notes.
 
 Use for exact, version-pinned reference (signatures, options, return values)
-quoted from the docs. Prefer Context7 or web search when the library has no
-docvol or you need the very latest release, and a per-library skill when one
-covers the task. Docvols can be stale: `list` shows versions.
+quoted from the docs. A `## Documentation lookups` section in AGENTS.md or
+CLAUDE.md takes precedence over what follows. Default when none exists:
+prefer Context7 or web search when the library has no docvol or you need
+the very latest release, and a per-library skill when one covers the task.
+Docvols can be stale: `list` shows versions.
+
+## First lookup in a project
+
+Do these before the first lookup, once per project:
+
+1. No AGENTS.md or CLAUDE.md you can see (project or user) has a
+   `## Documentation lookups` section: read
+   [references/lookup-defaults.md](references/lookup-defaults.md) now and
+   follow it. It asks the user once and records the answer.
+2. No `"docvols"` list in a `.docshelf.json`: run `suggest` (not `list`)
+   and show the user its `"docvols"` line, offering to add it to
+   `.docshelf.json` (if you can't ask now, put the offer in your reply).
 
 The documentation comes from DevDocs (https://devdocs.io); docshelf is not
 affiliated with DevDocs, and each documentation keeps its own licence:
@@ -61,7 +75,6 @@ User-contributed docsets carry their own licences.
 
 - Docsets, their folders, REF forms or the message for step 3:
   [references/dash-zeal.md](references/dash-zeal.md).
-
 - A needed docvol is missing, or before `sources`, `install`, `update` or
   `remove`, or on exit 7 (network):
   [references/getting-docvols.md](references/getting-docvols.md). `sources`,
@@ -91,8 +104,9 @@ User-contributed docsets carry their own licences.
 - Notes: write a lesson with `notes NAME --set HEADING --text TEXT` (or
   `--delete HEADING`); see [references/notes.md](references/notes.md).
 - Scope: a project `"docvols"` list in `.docshelf.json` limits searches to
-  those docvols. Without one, searches cover every installed docvol unless
-  more than 4 are full-size; then (exit 4) narrow with `-d NAME`, set the
+  those docvols. No list: run `suggest` and offer its list to the user;
+  until one is set, searches cover every installed docvol unless more
+  than 4 are full-size; then (exit 4) narrow with `-d NAME`, set the
   list, or pass `--all`. The first `fts` on a docvol builds its index
   (seconds for large docvols); `index-text DOCVOL` builds it ahead.
 
