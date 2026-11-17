@@ -90,6 +90,10 @@ vendors' plugin formats):
   unit tests and the skills CLI check (`npx skills add . --list`) only for
   the selected skills (`SKILLS=<list>`; unset locally = all). No network in
   the tests.
+- `.github/pull_request_template.md` - every PR fills it in: Kind and
+  What changed always; Skill and version, Public-repo checklist and
+  Testing for skills; Docs touched if it applies; Follow-ups optional
+  (the user, 2026-11-17).
 - `skills/index.json` - generated opencode HTTP skill catalog (every skill's
   `name`, `metadata.version` and file list). Never hand-edit it:
   `python3 scripts/build_skills_index.py` writes it, `--check` reports a
