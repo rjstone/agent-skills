@@ -43,6 +43,11 @@
 - [ ] `docshelf`: agent trials as dash-docset ran them (no-skill baseline,
       Haiku, the opencode model set, CLI vs `--mcp`): fine-tuning after v1
       (the user, 2026-11-16).
+- [ ] `docshelf`: verify where Dash for Windows (Microsoft Store app) keeps
+      docsets on a real install, and pin the exact path in `shelf_dash.py`
+      and `references/dash-zeal.md` (marked unverified there; discovery
+      searches `%LOCALAPPDATA%\Packages\<Kapeli Dash package>\` up to 4
+      levels deep).
 - [ ] `docshelf`: writing notes over MCP (v1's `notes` tool is read-only).
 - [ ] `docshelf` (low priority, with the Dash/Zeal backend): some docsets'
       `Info.plist` has a full-text-search flag (keys to verify; possibly
