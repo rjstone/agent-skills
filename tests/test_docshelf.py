@@ -1632,6 +1632,80 @@ class FtsTests(unittest.TestCase):
             self.assertEqual(seen[-1], want)
 
 
+class FtsIdentifierTests(unittest.TestCase):
+    def setUp(self):
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        self.tmp = os.path.realpath(tmp.name)
+        self.cache = os.path.join(self.tmp, "cache")
+        self.env = {"HOME": self.tmp, "USERPROFILE": self.tmp,
+                    "DOCSHELF_CACHE_DIR": self.cache,
+                    "DOCSHELF_NOTES_DIR": os.path.join(self.tmp, "notes")}
+        make_devdocs(
+            self.cache, "py", name="Py", release="1",
+            entries=[("A", "Guide", "pa"), ("B", "Guide", "pb"),
+                     ("C", "Guide", "pc"), ("D", "Guide", "pd")],
+            pages={"pa": "<h1>A</h1><p>Pass return_exceptions to collect errors.</p>",
+                   "pb": "<h1>B</h1><p>Return the value. Many words later, "
+                         "exceptions are raised.</p>",
+                   "pc": "<h1>C</h1><p>Use getElementById to find nodes.</p>",
+                   "pd": "<h1>D</h1><p>Call os.path.join for paths.</p>"})
+
+    def cli(self, *args):
+        return run_cli(*args, env=self.env, cwd=self.tmp)
+
+    def db(self):
+        return os.path.join(self.cache, "devdocs", "py", ".docshelf", "fts.sqlite")
+
+    def test_identifier_with_underscore_ranks_first(self):
+        r = self.cli("fts", "return_exceptions", "-d", "py", "--json")
+        self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+        self.assertEqual(json.loads(r.stdout)[0]["page"], "pa")
+
+    def test_camelcase_identifier(self):
+        for q in ("getElementById", "getelementbyid", "get element by id"):
+            r = self.cli("fts", q, "-d", "py", "--json")
+            self.assertEqual([h["page"] for h in json.loads(r.stdout)][:1],
+                             ["pc"], q)
+
+    def test_dotted_identifier(self):
+        for q in ("os.path.join", "ospathjoin"):
+            r = self.cli("fts", q, "-d", "py", "--json")
+            self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+            self.assertEqual(json.loads(r.stdout)[0]["page"], "pd", q)
+
+    def test_punctuation_only_query(self):
+        r = self.cli("fts", "-", "()", "-d", "py")
+        self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+        self.assertEqual(r.stdout.strip(), "no searchable words in '- ()'")
+
+    def test_any_word_retry_note(self):
+        r = self.cli("fts", "collect", "nodes", "-d", "py")
+        self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+        self.assertEqual(r.stdout.splitlines()[0],
+                         "note: no page has all the words; showing pages "
+                         "with any of them")
+        self.assertIn("py:pa", r.stdout)
+        r = self.cli("fts", "collect", "nodes", "-d", "py", "--json")
+        self.assertIn("note: no page has all", r.stderr)
+        self.assertEqual(len(json.loads(r.stdout)), 2)
+
+    def test_no_note_when_all_words_match(self):
+        r = self.cli("fts", "collect", "errors", "-d", "py")
+        self.assertNotIn("note:", r.stdout)
+
+    def test_existing_index_rebuilt(self):
+        self.cli("fts", "getElementById", "-d", "py")
+        con = sqlite3.connect(self.db())
+        con.execute("UPDATE meta SET value=? WHERE key='docvol_version'",
+                    ("old|fts5",))
+        con.commit()
+        con.close()
+        r = self.cli("fts", "getElementById", "-d", "py")
+        self.assertIn("rebuilt index", r.stderr)
+        self.assertIn("py:pc", r.stdout)
+
+
 class FtsMaxLinesTests(unittest.TestCase):
     def setUp(self):
         tmp = tempfile.TemporaryDirectory()

@@ -264,7 +264,8 @@ def cmd_toc(cfg: Config, args: argparse.Namespace) -> int:
 
 FTS_SNIPPET_TOKENS = 14
 # Bump when what the index stores changes, so existing indexes are rebuilt.
-FTS_FORMAT = 5  # 3: docset footers left out; 4: headers; 5: header at block 1
+FTS_FORMAT = 6  # 3: docset footers left out; 4: headers; 5: header at block 1;
+#                 6: `ids` column with code identifiers joined
 FTS_MAX_LINES = 11  # 5 hits (two lines each) plus the "more hits cut" line
 
 
@@ -308,6 +309,36 @@ def _stored_stamp(db):
     return row[0] if row else None
 
 
+_IDENT_RE = re.compile(
+    r"[A-Za-z_][A-Za-z0-9_]*(?:(?:\.|::)[A-Za-z_][A-Za-z0-9_]*)*")
+_CAMEL_RE = re.compile(r"[a-z0-9][A-Z]")
+_SEP_RE = re.compile(r"\.|::|_")
+_CAMEL_SPLIT_RE = re.compile(r"[A-Z]+(?![a-z])|[A-Z]?[a-z0-9]+|[A-Z]")
+
+
+def _ident_forms(tok):
+    """Joined lowercase form of an identifier-like token (and, for camelCase,
+    its pieces), or None when the token is a plain word."""
+    if not (_SEP_RE.search(tok) or _CAMEL_RE.search(tok)):
+        return None
+    joined = _SEP_RE.sub("", tok).lower()
+    pieces = []
+    if _CAMEL_RE.search(tok):
+        pieces = [w.lower() for w in _CAMEL_SPLIT_RE.findall(_SEP_RE.sub(" ", tok))]
+    return joined, pieces
+
+
+def page_identifiers(text) -> str:
+    """Space-separated joined forms of the code identifiers in a page."""
+    out = []
+    for tok in _IDENT_RE.findall(text):
+        forms = _ident_forms(tok)
+        if forms and len(forms[0]) > 1:
+            out.append(forms[0])
+            out.extend(forms[1])
+    return " ".join(out)
+
+
 def build_fts(cfg, ds) -> int:
     """(Re)build the docvol's full-text index; return the pages indexed."""
     refs_on = {}  # page -> [entry REFs]
@@ -326,7 +357,7 @@ def build_fts(cfg, ds) -> int:
     count = 0
     try:
         con.executescript(
-            "CREATE VIRTUAL TABLE pages USING fts5(page UNINDEXED, text, "
+            "CREATE VIRTUAL TABLE pages USING fts5(page UNINDEXED, text, ids, "
             "tokenize='unicode61');"
             "CREATE TABLE page_entries(page TEXT, ref TEXT);"
             "CREATE TABLE meta(key TEXT PRIMARY KEY, value TEXT);")
@@ -336,8 +367,9 @@ def build_fts(cfg, ds) -> int:
                 blocks = ds.page_blocks(page)
             except (CLIError, OSError):
                 continue
-            con.execute("INSERT INTO pages(page, text) VALUES (?, ?)",
-                        (page, "\n".join(b.text for b in blocks)))
+            text = "\n".join(b.text for b in blocks)
+            con.execute("INSERT INTO pages(page, text, ids) VALUES (?, ?, ?)",
+                        (page, text, page_identifiers(text)))
             con.executemany("INSERT INTO page_entries VALUES (?, ?)",
                             [(page, r) for r in refs_on.get(page, [])])
             count += 1
@@ -374,9 +406,24 @@ def ensure_fts(cfg, ds) -> None:
         warn("rebuilt index for %s" % ds.name)
 
 
-def fts_match_expr(query) -> str:
-    """Quote each token as an FTS5 phrase and AND them (user text is data)."""
-    return " AND ".join('"%s"' % t.replace('"', '""') for t in query.split())
+def _quote(t):
+    return '"%s"' % t.replace('"', '""')
+
+
+def fts_match_expr(query, mode="all") -> str:
+    """Quote each token as an FTS5 string (user text is data) and AND (or, for
+    mode "any", OR) them. Identifier-like tokens also match the `ids` column
+    by their joined form. Tokens with no letter or digit are dropped."""
+    terms = []
+    for tok in query.split():
+        if not re.search(r"[^\W_]", tok):
+            continue
+        term = _quote(tok)
+        forms = _ident_forms(tok) if _IDENT_RE.fullmatch(tok) else None
+        # plain words also try `ids`, which holds camelCase pieces
+        term = "(%s OR ids:%s)" % (term, _quote(forms[0] if forms else tok.lower()))
+        terms.append(term)
+    return (" OR " if mode == "any" else " AND ").join(terms)
 
 
 def _snippet_phrases(snippet) -> List[str]:
@@ -437,8 +484,8 @@ def _anchor_entries(ds) -> dict:
     return found
 
 
-def fts_search(cfg, docvols, query, limit) -> List[dict]:
-    expr = fts_match_expr(query)
+def fts_search(cfg, docvols, query, limit, mode="all") -> List[dict]:
+    expr = fts_match_expr(query, mode)
     if not expr:
         return []
     scored = []
@@ -449,8 +496,8 @@ def fts_search(cfg, docvols, query, limit) -> List[dict]:
             try:
                 rows = con.execute(
                     "SELECT page, snippet(pages, 1, char(2), char(3), '...', %d), "
-                    "bm25(pages) FROM pages WHERE pages MATCH ? "
-                    "ORDER BY bm25(pages) LIMIT ?" % FTS_SNIPPET_TOKENS,
+                    "bm25(pages, 0, 1.0, 3.0) FROM pages WHERE pages MATCH ? "
+                    "ORDER BY bm25(pages, 0, 1.0, 3.0) LIMIT ?" % FTS_SNIPPET_TOKENS,
                     (expr, limit)).fetchall()
                 for page, snip, score in rows:
                     ids = match_anchor(ds, page, query, snip)  # \x02 marks matches
@@ -515,7 +562,15 @@ def cmd_fts(cfg: Config, args: argparse.Namespace) -> int:
         ensure_fts(cfg, ds)
     # text output takes two lines per hit: fetch enough hits to reach the line cap
     limit = args.max_lines if args.json else args.max_lines // 2 + 1
+    if not fts_match_expr(args.query):
+        print("no searchable words in '%s'" % args.query)
+        return 0
     hits = fts_search(cfg, docs, args.query, limit)
+    if not hits and len(fts_match_expr(args.query, "any").split(" OR (")) > 1:
+        hits = fts_search(cfg, docs, args.query, limit, mode="any")
+        if hits:
+            print("note: no page has all the words; showing pages with any "
+                  "of them", file=sys.stderr if args.json else sys.stdout)
     if args.json:
         print(json.dumps(hits, indent=2))
         return 0
