@@ -293,35 +293,40 @@ def _has_parser_file(folder: str) -> bool:
         return False
 
 
-MAX_DEPTH = 2  # root's children and grandchildren (monorepo packages/*)
+MONOREPO_DIRS = ("packages", "apps")  # their children are scanned too
 
 
-def _walk(folder: str, rel: str, depth: int, findings: List[Finding],
-          notes: List[str]) -> None:
+def _subdirs(folder: str) -> List[str]:
+    """Sorted names of folders in folder that a scan may enter."""
     try:
         names = sorted(os.listdir(folder))
-    except OSError as e:
-        notes.append("note: skipped %s: %s" % (rel or ".", e))
-        return
-    for name in names:
-        child = os.path.join(folder, name)
-        if (name.startswith(".") or name in SKIP_DIRS
-                or not os.path.isdir(child)):
-            continue
+    except OSError:
+        return []
+    return [n for n in names
+            if not n.startswith(".") and n not in SKIP_DIRS
+            and os.path.isdir(os.path.join(folder, n))]
+
+
+def _walk(root: str, findings: List[Finding], notes: List[str]) -> None:
+    for name in _subdirs(root):
+        child = os.path.join(root, name)
         if _has_parser_file(child):
-            _scan_dir(child, rel + name + "/", findings, notes)
-        if depth < MAX_DEPTH:
-            _walk(child, rel + name + "/", depth + 1, findings, notes)
+            _scan_dir(child, name + "/", findings, notes)
+        if name in MONOREPO_DIRS:
+            for sub in _subdirs(child):
+                if _has_parser_file(os.path.join(child, sub)):
+                    _scan_dir(os.path.join(child, sub),
+                              "%s/%s/" % (name, sub), findings, notes)
 
 
 def scan_project(root: str) -> Tuple[List[Finding], List[str]]:
-    """Findings from the build files in root and in the folders up to two
-    levels below it, plus notes about files that were skipped."""
+    """Findings from the build files in root, its direct child folders and
+    the children of packages/ and apps/, plus notes about skipped files."""
     findings: List[Finding] = []
     notes: List[str] = []
     try:
         _scan_dir(root, "", findings, notes)
     except OSError as e:
         return findings, ["note: skipped %s: %s" % (root, e)]
-    _walk(root, "", 1, findings, notes)
+    _walk(root, findings, notes)
     return findings, notes

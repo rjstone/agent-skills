@@ -4685,6 +4685,15 @@ class SuggestScanTests(unittest.TestCase):
             {f.source for f in findings if f.names == ("vue",)},
             {"web/package.json", "packages/web/package.json"})
 
+    def test_only_monorepo_grandchildren(self):
+        self.write("docs/examples/x/package.json", "{}")
+        self.write("apps/api/pyproject.toml", '[project]\nname = "a"\n')
+        findings, _ = self.scan()
+        sources = {f.source for f in findings}
+        self.assertNotIn("docs/examples/x/package.json", sources)
+        if shelf_suggest.tomllib is not None:
+            self.assertIn("apps/api/pyproject.toml", sources)
+
     def test_malformed_file_is_noted(self):
         self.write("package.json", "{bad")
         findings, notes = self.scan()
