@@ -3002,6 +3002,17 @@ class NotesWriteTests(unittest.TestCase):
         self.cli("notes", "python", "--set", "General", "--text", "g2")
         self.assertEqual(self.read(), "## General\ng2\n\n## a\nx\n")
 
+    def test_general_heading_any_case(self):
+        self.put("intro\n\n## a\nx\n")
+        r = self.cli("notes", "python", "--set", "general", "--text", "hi")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertEqual(self.read(), "hi\n\n## a\nx\n")
+        r = self.cli("notes", "python", "--delete", "GENERAL")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertEqual(self.read(), "## a\nx\n")
+        self.cli("notes", "python", "--set", "general", "--text", "g")
+        self.assertEqual(self.read(), "## General\ng\n\n## a\nx\n")
+
     def test_set_typed_heading(self):
         self.put("## open\nplain\n\n## open (Function)\nfn\n")
         self.cli("notes", "python", "--set", "open (Function)", "--text", "fn2")

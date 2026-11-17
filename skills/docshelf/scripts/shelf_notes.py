@@ -300,7 +300,7 @@ def _target(lines, heading):
     for start, end, h in secs:
         if h.lower() == heading.lower():  # as display matches; keep the file's text
             return start, end, 1
-    if heading == "General":
+    if heading.lower() == "general":
         end = secs[0][0] if secs else len(lines)
         keep = 0
         while keep < end and not lines[keep].strip():
@@ -339,6 +339,8 @@ def set_section(text: str, heading: str, body: str) -> str:
         if end == len(lines):
             return _join(new)
         return "\n".join(new) + "\n"
+    if heading.lower() == "general":
+        heading = "General"
     block = ["## " + heading] + body_lines
     if heading == "General":
         rest = lines
