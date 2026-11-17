@@ -1830,6 +1830,7 @@ Only if you need these, see `<command> --help`:
   show       --full --max-lines --no-notes
   fts        --all --max-lines --json
   sources    --refresh
+  install    --force
 Global: --version, --mcp (run as a stdio MCP server; references/mcp.md).
 Exit codes: 0 ok; 1 notes --check found problems; 2 usage error, ambiguous
   name or no FTS5; 4 search scope too wide (use -d, a project list or --all)
@@ -3151,6 +3152,100 @@ class DashFooterTests(unittest.TestCase):
     def test_too_few_pages_no_detection(self):
         self.build(4)
         self.assertIn("Licensed under", self.show("p2.html"))
+
+
+class DashReadOnlyTests(unittest.TestCase):
+    def setUp(self):
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        self.tmp = os.path.realpath(tmp.name)
+        self.cache = os.path.join(self.tmp, "cache")
+        self.docs = os.path.join(self.tmp, "docsets")
+        os.makedirs(os.path.join(self.cache, "devdocs"))
+        os.makedirs(self.docs)
+        env = mock.patch.dict(os.environ, {
+            "HOME": self.tmp, "USERPROFILE": self.tmp,
+            "XDG_DATA_HOME": os.path.join(self.tmp, "data"),
+            "XDG_CONFIG_HOME": os.path.join(self.tmp, "config"),
+            "LOCALAPPDATA": os.path.join(self.tmp, "local"),
+            "PATH": os.path.join(self.tmp, "path"),
+            "DOCSHELF_DOCSET_DIRS": self.docs,
+            "DOCSHELF_CACHE_DIR": self.cache,
+            "DOCSHELF_NOTES_DIR": os.path.join(self.tmp, "notes")})
+        env.start()
+        self.addCleanup(env.stop)
+        self.entries = [("Intro", "Guide", "intro")]
+        self.pages = {"intro": "<h1>Intro</h1>"}
+        rows = [row("Python", "python~3.12", "3.12.1", version="3.12"),
+                row("Python", "python~3.11", "3.11.5", version="3.11")]
+        pages = {shelf_devdocs.MANIFEST_URL: json.dumps(rows)}
+        for r in rows:
+            pages.update(remote_docvol(r["slug"], self.entries, self.pages))
+        self.net = FakeNet(self, pages)
+
+    def docset(self, name="Python_3", version="3.12.1"):
+        return make_docset(self.docs, name, [("frob", "Function", "api.html")],
+                           {"api.html": "<h1>frob</h1>"}, meta_version=version)
+
+    def main(self, *argv):
+        out, err = io.StringIO(), io.StringIO()
+        with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
+            code = shelf_cli.main(list(argv))
+        return code, out.getvalue(), err.getvalue()
+
+    def snapshot(self, folder):
+        found = []
+        for dirpath, _, files in os.walk(folder):
+            for f in files:
+                p = os.path.join(dirpath, f)
+                found.append((p, os.stat(p).st_mtime_ns))
+        return sorted(found)
+
+    def test_install_refuses_redundant_without_force(self):
+        self.docset()
+        code, out, err = self.main("install", "python~3.12")
+        self.assertEqual(code, 2, (out, err))
+        self.assertIn("python~3.12: Dash/Zeal docset Python_3 has this "
+                      "documentation and is used as is; install --force "
+                      "python~3.12 downloads it anyway", err)
+        self.assertEqual(self.net.fetched, [shelf_devdocs.MANIFEST_URL])
+        code, out, err = self.main("install", "python~3.12", "--force")
+        self.assertEqual((code, err), (0, ""))
+        self.assertTrue(out.startswith("installed python~3.12"), out)
+
+    def test_install_other_version_is_not_redundant(self):
+        self.docset()
+        code, out, err = self.main("install", "python~3.11")
+        self.assertEqual((code, err), (0, ""))
+        self.assertTrue(out.startswith("installed python~3.11"), out)
+
+    def test_unknown_docset_version_counts_as_same(self):
+        self.docset(version=None)
+        code, out, err = self.main("install", "python~3.12")
+        self.assertEqual(code, 2, (out, err))
+        self.assertIn("Dash/Zeal docset Python_3 has this documentation", err)
+
+    def test_remove_and_update_refuse_docsets(self):
+        folder = self.docset()
+        before = self.snapshot(folder)
+        for cmd in ("remove", "update"):
+            code, out, err = self.main(cmd, "Python_3")
+            self.assertEqual(code, 2, (cmd, out, err))
+            self.assertIn("Python_3 is a Dash/Zeal docset; Dash or Zeal "
+                          "manages it", err)
+        self.assertEqual(self.main("update")[0], 0)
+        self.assertEqual(self.snapshot(folder), before)
+
+    def test_list_flags_redundant_pairs(self):
+        self.docset()
+        self.assertEqual(self.main("install", "python~3.12", "--force")[0], 0)
+        code, out, err = self.main("list")
+        self.assertEqual(code, 0, err)
+        lines = {ln.split("  ")[0]: ln for ln in out.splitlines()}
+        self.assertTrue(lines["python~3.12"].endswith(
+            "  devdocs  also as docset Python_3"), out)
+        self.assertTrue(lines["Python_3"].endswith(
+            "  also as DevDocs python~3.12"), out)
 
 
 if __name__ == "__main__":

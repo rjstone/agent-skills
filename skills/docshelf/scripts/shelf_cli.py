@@ -60,10 +60,13 @@ def cmd_list(cfg: Config, args: argparse.Namespace) -> int:
         print("no docvols installed (install NAME; sources QUERY finds names)")
         return 0
     for d in docvols:
-        print("%s  %s  %s  %d entries  %s  %s" % (
+        also = "".join(
+            "  also as %s %s" % ("DevDocs" if d.read_only else "docset", o.name)
+            for o in docvols if shelf_backends.same_documentation(d, o))
+        print("%s  %s  %s  %d entries  %s  %s%s" % (
             d.name, d.display_name,
             d.release, d.entry_count, "full" if d.full_size else "small",
-            d.source))
+            d.source, also))
     return 0
 
 
@@ -113,6 +116,8 @@ COMMANDS: List[Command] = [
             shelf_devdocs.cmd_install, [
         Param(("names",), "Slug, alias or family (python, python~3.14).",
               nargs="+"),
+        Param(("--force",), "Download even when a Dash/Zeal docset has the "
+              "same documentation.", kind="flag", rare=True),
     ]),
     Command("update", "Re-download documentations that DevDocs has updated.",
             shelf_devdocs.cmd_update, [

@@ -469,21 +469,54 @@ def cmd_sources(cfg, args) -> int:
     return 0
 
 
+def _row_version(row: dict) -> str:
+    """A manifest row's version, as DevDocsDocvol derives it."""
+    version = str(row.get("version") or "")
+    slug = row["slug"]
+    if not version and "~" in slug:
+        version = slug.split("~", 1)[1].replace("_", " ")
+    return version
+
+
+def _refuse_redundant(cfg: Config, row: dict) -> None:
+    import types
+    import shelf_backends
+    want = types.SimpleNamespace(family=row["slug"].split("~")[0],
+                                 version=_row_version(row), read_only=False)
+    for d in shelf_backends.installed_docvols(cfg):
+        if d.read_only and shelf_backends.same_documentation(d, want):
+            raise CLIError(
+                "%s: Dash/Zeal docset %s has this documentation and is used "
+                "as is; install --force %s downloads it anyway"
+                % (row["slug"], d.name, row["slug"]), 2)
+
+
+def _refuse_read_only(d: Docvol) -> None:
+    if d.read_only:
+        raise CLIError("%s is a Dash/Zeal docset; Dash or Zeal manages it"
+                       % d.name, 2)
+
+
 def cmd_install(cfg, args) -> int:
     rows = get_manifest(cfg)
     for name in args.names:
         row = resolve_install(rows, name)
+        if not getattr(args, "force", False):
+            _refuse_redundant(cfg, row)
         status = install(cfg, row)
         print(_describe(cfg, status, row["slug"]))
     return 0
 
 
 def cmd_update(cfg, args) -> int:
-    have = installed_docvols(cfg)
+    import shelf_backends
+    have = shelf_backends.installed_docvols(cfg)
     if args.names:
         targets = [pick_docvol(have, n) for n in args.names]
+        for d in targets:
+            _refuse_read_only(d)
     else:
-        targets = have
+        targets = [d for d in have if not d.read_only]
     if not targets:
         print("no docvols installed (install NAME; sources QUERY finds names)")
         return 0
@@ -501,9 +534,14 @@ def cmd_update(cfg, args) -> int:
 
 
 def cmd_remove(cfg, args) -> int:
+    import shelf_backends
     try:
-        name = pick_docvol(installed_docvols(cfg), args.name).name
+        found = pick_docvol(shelf_backends.installed_docvols(cfg), args.name)
+        _refuse_read_only(found)
+        name = found.name
     except CLIError as e:
+        if e.code == 2:
+            raise
         name = _unloadable_folder(cfg, args.name)
         if e.code != 5 or name is None:
             raise

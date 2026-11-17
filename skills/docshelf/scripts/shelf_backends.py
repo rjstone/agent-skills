@@ -1,5 +1,6 @@
 """docshelf backends: the one place that lists installed docvols."""
-from typing import List
+import re
+from typing import List, Tuple
 
 import shelf_dash
 import shelf_devdocs
@@ -17,3 +18,22 @@ def installed_docvols(cfg: Config) -> List[Docvol]:
             continue
         docvols.append(d)
     return docvols
+
+
+def _major_minor(version: str) -> Tuple[int, ...]:
+    """The first two numbers in a version string: '3.12.1' -> (3, 12)."""
+    return tuple(int(n) for n in re.findall(r"\d+", version or "")[:2])
+
+
+def same_documentation(a, b) -> bool:
+    """True when a DevDocs docvol and a docset document the same thing: same
+    family, exactly one of them read-only, and equal major.minor versions
+    (or the docset's version unknown). Reads only family, version and
+    read_only, so a manifest row wrapped in a namespace works too."""
+    if a.family != b.family or bool(a.read_only) == bool(b.read_only):
+        return False
+    docset = a if a.read_only else b
+    other = b if a.read_only else a
+    if not docset.version:
+        return True
+    return _major_minor(docset.version) == _major_minor(other.version)
