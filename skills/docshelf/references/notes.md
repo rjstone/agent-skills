@@ -34,3 +34,5 @@ without asking. A write that would break a size limit is refused and
 leaves the file unchanged; otherwise it prints `wrote <path>` and the
 `--check` report, warnings included, and exits 0 (5 when `--delete`
 finds no such section).
+A notes file that is already over a size limit refuses every write until
+a write brings it under the limits.

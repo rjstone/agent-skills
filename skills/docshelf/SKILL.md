@@ -6,7 +6,7 @@ license: MIT
 metadata:
   author: Robert Stone
   source: https://github.com/rjstone/agent-skills
-  version: "0.4.0"
+  version: "0.5.0"
   credits: "DevDocs, devdocs-mcp, Zeal"
 ---
 
@@ -84,6 +84,12 @@ User-contributed docsets carry their own licences.
   description; `...` marks lines without a match, so there's no need to
   rerun without `--grep` or to pipe the section through `grep`. REF is the
   `<docvol>:<path>[#anchor]` that `search` and `fts` print.
+- `toc REF` prints a page's headings with their REFs: use it before
+  reading a long page, then `show` the section. `show` says where it cut
+  a long page; `show REF --offset N` continues from there. `types -d NAME`
+  lists a docvol's entry types (the names `search --type` takes).
+- Notes: write a lesson with `notes NAME --set HEADING --text TEXT` (or
+  `--delete HEADING`); see [references/notes.md](references/notes.md).
 - Scope: a project `"docvols"` list in `.docshelf.json` limits searches to
   those docvols. Without one, searches cover every installed docvol unless
   more than 4 are full-size; then (exit 4) narrow with `-d NAME`, set the

@@ -2002,7 +2002,7 @@ Look up (usual order):
   fts QUERY... [-d NAME]         words inside pages, 5 best hits with REFs;
                                  include the function name: fts read_csv skip
   types [-d NAME]                each docvol's entry types with counts, most
-                                 frequent first (types for --type)
+                                 frequent first (the names `search --type` takes)
 
 Notes (format: references/notes.md in the skill folder):
   notes DOCVOL --path            the notes file to edit

@@ -29,21 +29,10 @@ items are done.
 
 #### 1. Features
 
-- [ ] 1.1 `toc REF`: a page's heading outline, one line per heading with its
-      REF, cheaper than `show` for picking a section (idea from
-      maxwhipw/devdocs-mcp).
-- [ ] 1.2 `types -d X`: entry types with counts (`search --type` exists);
-      answers "what's in here" and tells apart same-name hits (keturn/ZDocsetMCP,
-      nzrsky/appleref-mcp).
-- [ ] 1.3 `show --offset N`: continue where the 150-line cut happened
-      instead of rereading the start (devdocs-mcp).
-- [ ] 1.4 `install` with no names installs the project file's `"docvols"`
-      list (bbsvip/docset-mcp's install profiles).
 - [ ] 1.5 Suggest docvols from a project's dependency names
       (`package.json`, `pyproject.toml`); a light version of
       @madhan-g-p/devdocs-mcp-server's version pinning, without full
       manifest parsing.
-- [ ] 1.6 Writing notes over MCP (the `notes` tool is read-only).
 
 #### 2. Dash/Zeal docsets
 
@@ -63,23 +52,13 @@ items are done.
 
 #### 3. Rendering
 
-- [ ] 3.1 Strip page chrome by tag only, never by class name (lesson from
-      Kapeli's Dash MCP server, where a table-of-contents class on `<body>`
-      emptied every page). `shelf_render.py` still skips by class
-      (`SKIP_CLASSES`), by ARIA role and by `hidden`: at least never skip
-      `html`, `body`, `main` or `article` that way, or drop class-based
-      skipping and rely on tags plus repeated header/footer stripping.
+(none open)
 
 #### 4. Full-text search
 
-- [ ] 4.1 Code names: index camelCase and identifier variants, and rewrite
-      word-salad queries into OR (docset-mcp's FTS prototype); today the
-      snippet for `return_exceptions` highlights only "return" (unicode61
-      splits on `_`).
 - [ ] 4.2 Cap index builds on huge docvols and mark the index partial
       (bbsvip/docset-mcp).
 - [ ] 4.3 Query tokens that are only punctuation return no results.
-- [ ] 4.4 `--max-lines` below 3 prints one line too many.
 
 #### 5. Agents and docs
 
