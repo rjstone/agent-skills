@@ -2289,7 +2289,7 @@ Get and manage docvols (references/getting-docvols.md):
                                  docsets Dash or Zeal could download
   install [NAME...] [--force]    download one (NAME without a version = the
                                  newest; no NAME = the project's docvols
-                                 list); refuses documentation already on
+                                 list); skips documentation already on
                                  disk as a docset unless --force; update
                                  [NAME...]; remove NAME (DevDocs docvols
                                  only: Dash or Zeal manages docsets)
@@ -2395,9 +2395,7 @@ class TocTests(unittest.TestCase):
         make_devdocs(self.cache, "lib3", name="Lib3", release="1",
                      entries=[("x", "Function", "q")],
                      pages={"q": "<p>Just text.</p>"})
-        out = self.toc("lib3:q").splitlines()
-        self.assertEqual(out[-1], "(no headings)")
-        self.assertLessEqual(len(out), 2)
+        self.assertEqual(self.toc("lib3:q"), "(no headings)\n")
 
     def test_toc_max_lines_caps(self):
         lines = self.toc("lib:p", "--max-lines", "2").splitlines()

@@ -204,15 +204,22 @@ def _split_ref(ref):
     return name, rest
 
 
+def _anchor_on_page(blocks, anchor: str, page: str) -> bool:
+    """True if some block has id anchor; else warn on stderr and say False."""
+    want = unquote_all(anchor)
+    if any(unquote_all(x) == want for b in blocks for x in b.ids):
+        return True
+    print("warning: no #%s on %s" % (anchor, page), file=sys.stderr)
+    return False
+
+
 def cmd_show(cfg: Config, args: argparse.Namespace) -> int:
     name, rest = _split_ref(args.ref)
     ds = pick_docvol(shelf_backends.installed_docvols(cfg), name)
     page, anchor, entry = ds.resolve(rest)
     blocks = ds.page_blocks(page, link=lambda href: ds.resolve_href(page, href))
     if anchor:
-        want = unquote_all(anchor)
-        if not any(unquote_all(x) == want for b in blocks for x in b.ids):
-            print("warning: no #%s on %s" % (anchor, page), file=sys.stderr)
+        if not _anchor_on_page(blocks, anchor, page):
             anchor = None
     elif entry is not None:  # no anchor: start at a heading named like the entry
         want_name = short_name(entry.name)
@@ -243,9 +250,7 @@ def cmd_toc(cfg: Config, args: argparse.Namespace) -> int:
     page, anchor, _entry = ds.resolve(rest)
     blocks = ds.page_blocks(page, link=lambda href: ds.resolve_href(page, href))
     if anchor:  # same warning as show; the toc is the whole page either way
-        want = unquote_all(anchor)
-        if not any(unquote_all(x) == want for b in blocks for x in b.ids):
-            print("warning: no #%s on %s" % (anchor, page), file=sys.stderr)
+        _anchor_on_page(blocks, anchor, page)
     heads = [b for b in blocks if b.level]
     out = []
     title = page_title(blocks)
@@ -254,9 +259,9 @@ def cmd_toc(cfg: Config, args: argparse.Namespace) -> int:
     if heads:
         top = min(b.level for b in heads)
         refs = shelf_notes.heading_refs(blocks)
-        for b, (text, anchor) in zip(heads, refs):
+        for b, (text, head_id) in zip(heads, refs):
             out.append("%s%s  %s" % ("  " * (b.level - top), text,
-                                     ds.make_ref(page, anchor)))
+                                     ds.make_ref(page, head_id)))
     else:
         out.append("(no headings)")
     for line in cap_lines(out, args.max_lines,
