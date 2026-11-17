@@ -18,12 +18,13 @@
     },
     {
       "name": "docshelf",
-      "version": "0.5.0",
+      "version": "0.6.0",
       "files": [
         "SKILL.md",
         "assets/allowlist.txt",
         "references/dash-zeal.md",
         "references/getting-docvols.md",
+        "references/lookup-defaults.md",
         "references/mcp.md",
         "references/notes.md",
         "scripts/docshelf.py",
@@ -35,7 +36,8 @@
         "scripts/shelf_lookup.py",
         "scripts/shelf_mcp.py",
         "scripts/shelf_notes.py",
-        "scripts/shelf_render.py"
+        "scripts/shelf_render.py",
+        "scripts/shelf_suggest.py"
       ]
     },
     {
