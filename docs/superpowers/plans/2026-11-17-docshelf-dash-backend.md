@@ -261,3 +261,29 @@ Removes every direct `shelf_devdocs.installed_docvols` use outside the backend, 
 - [ ] **Step 4: Run** `python3 -m unittest discover -s tests` and `python3 scripts/ci_changed_skills.py --base origin/main --check-versions`. Expected: all pass; `skills=docshelf`.
 - [ ] **Step 5: Real-data check** with the user's `HTTP.docset` (uploaded 2026-11-17; Dash `ZTOKEN` form, WAL index, 377 entries, 437 pages, `dashIndexFilePath` set; unpacked in the session scratchpad, never committed): put it in a temporary `DOCSHELF_DOCSET_DIRS` folder and also in `~/.local/share/Zeal/Zeal/docsets` (Zeal is installed in the sandbox); run `where`, `list`, `search`, `show`, `fts`, `notes --check`; record the results (entry count, any footer found, odd pages) at the end of this plan.
 - [ ] **Step 6: Commit** `docshelf 0.4.0: Dash/Zeal docsets, docs and policy`, push `update/docshelf`, open the PR with the template.
+
+## Real-data check (2026-11-17)
+
+A real Dash-format docset (HTTP reference, `ZTOKEN` index, WAL index,
+`dashIndexFilePath` set) was read from a `DOCSHELF_DOCSET_DIRS` folder
+(source `folder`) and from a copy in Zeal's folder (source `zeal`).
+
+- `where` lists the folders and the detected Zeal app; `list` shows one
+  docvol, 377 entries, 377 pages indexed by `index-text`.
+- `search` (GET, Content-Type, cache) returns typed hits (Method, Header,
+  Directive); `show` of an entry REF and of a `<Name>:page:<path>` REF
+  works, with cross-page links rewritten to REFs; `show --grep` prints
+  matching lines with their headings; the heading fallback finds
+  "Cache directives".
+- No repeated page footer was detected, so none is cut. Every page starts
+  with "Skip to main content / Skip to search" navigation lines (not a
+  footer; left in). Not a bug, but noisy.
+- Timings: first `fts` (index build) / `index-text` about 5.4 s; later
+  searches about 0.1 s.
+- `notes --check` with no notes file: reports "not present", exit 0.
+- `sources HTTP`: the GitHub listings were refused by the sandbox proxy
+  (notes say so, no action needed) and Zeal's catalog was used as the
+  fallback; the installed docset is marked "here as HTTP".
+- Read-only: only the docset's `-shm` coordination file was touched by
+  SQLite; its content files were unchanged.
+- No bug found.
