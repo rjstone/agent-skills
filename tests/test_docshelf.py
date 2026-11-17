@@ -2805,6 +2805,21 @@ class McpExplainTests(unittest.TestCase):
         self.assertIn("`sources` tool", out)
         self.assertNotIn("references/", out)
 
+    def test_quoted_user_input_survives(self):
+        tail = " (see: docshelf.py sources QUERY)"
+        for quoted in ("'--foo'", "'--all'", "'a -d b'", "'-data'",
+                       "'search API'", "'show CSS'", "'install --force'",
+                       '"--foo"', '"search API"'):
+            for msg in ("no match for %s in docvol a" % quoted,
+                        "no DevDocs documentation matches %s" % quoted + tail):
+                out = self.explain(msg)
+                self.assertIn(quoted, out)
+                self.assertEqual(out.count("`"),
+                                 2 if "sources" in msg else 0, out)
+            self.assertTrue(self.explain(
+                "no DevDocs documentation matches %s" % quoted + tail
+            ).endswith("(see: the `sources` tool)"))
+
     def test_plain_text_untouched(self):
         msg = "docvol 'a': damaged index; try again"
         self.assertEqual(self.explain(msg), msg)

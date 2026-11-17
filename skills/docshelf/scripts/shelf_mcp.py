@@ -74,6 +74,9 @@ def _flag_names() -> Dict[str, str]:
     return names
 
 
+_QUOTED = re.compile(r"""(?<!\w)'[^'\n]*'(?!\w)|"[^"\n]*\"""")
+
+
 def explain(message: str) -> str:
     """Rewrite an error message for a tool caller: the replacement for each
     `docshelf.py <cmd>`, bare `<cmd> PLACEHOLDER` phrase or CLI flag is the
@@ -81,6 +84,17 @@ def explain(message: str) -> str:
     def fix(m):
         return HINTS.get(m.group(1), m.group(0))
     message = _POINTER.sub(fix, message)
+    # docshelf quotes user input ('x' or "x"); only the text around it is ours
+    out, pos = [], 0
+    for q in _QUOTED.finditer(message):
+        out.append(_rewrite(message[pos:q.start()]))
+        out.append(q.group(0))
+        pos = q.end()
+    out.append(_rewrite(message[pos:]))
+    return "".join(out)
+
+
+def _rewrite(message: str) -> str:
     cmds = {c.name: c for c in _mcp_commands()}
     alt = "|".join(re.escape(n) for n in sorted(cmds, key=len, reverse=True))
     flags = _flag_names()
@@ -121,7 +135,7 @@ def explain(message: str) -> str:
                      with_flag, message)
     message = re.sub(r"\b(%s) [A-Z]{2,}(?:\.\.\.)?\b" % alt,
                      lambda m: "the `%s` tool" % m.group(1), message)
-    return re.sub(r"(?<![\w-])(-d|--[a-z][\w-]*)(?: [A-Z]{2,}\b)?",
+    return re.sub(r"(?<![\w-])(-d|--[a-z][\w-]*)(?![\w-])(?: [A-Z]{2,}\b)?",
                   lambda m: "`%s`" % flag_name(m.group(1)), message)
 
 
