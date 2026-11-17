@@ -2556,6 +2556,14 @@ class McpTests(unittest.TestCase):
     def call(self, name, arguments):
         return self.rpc("tools/call", {"name": name, "arguments": arguments})["result"]
 
+    def test_unknown_docvol_error_names_tool(self):
+        r = self.call("search", {"query": ["x"], "docvols": ["nosuch"]})
+        self.assertTrue(r["isError"])
+        text = r["content"][0]["text"]
+        self.assertIn("unknown docvol", text)
+        self.assertIn("the `list` tool", text)
+        self.assertNotIn("docshelf.py", text)
+
     def test_initialize_and_list(self):
         r = self.rpc("initialize", {"protocolVersion": "2024-11-05",
                                     "capabilities": {}})["result"]
@@ -2722,6 +2730,94 @@ class McpTests(unittest.TestCase):
         for needle in ("claude mcp add docshelf", "mcpServers",
                        "[mcp_servers.docshelf]", '"type": "local"'):
             self.assertIn(needle, text)
+
+
+class McpExplainTests(unittest.TestCase):
+    """Error text that reaches MCP callers names tools and arguments."""
+
+    def setUp(self):
+        import shelf_mcp
+        self.explain = shelf_mcp.explain
+
+    def assert_clean(self, text):
+        self.assertNotIn("docshelf.py", text)
+        self.assertNotRegex(text, r"(?<![\w-])--[a-z]")
+        self.assertNotRegex(text, r"(?<![\w-])-d\b")
+
+    def test_unknown_docvol_see_list(self):
+        out = self.explain("unknown docvol 'x' (see: docshelf.py list)")
+        self.assertEqual(out, "unknown docvol 'x' (see: the `list` tool)")
+
+    def test_sources_phrases(self):
+        out = self.explain("no DevDocs documentation matches 'x'"
+                           " (see: docshelf.py sources QUERY)")
+        self.assertEqual(out, "no DevDocs documentation matches 'x'"
+                              " (see: the `sources` tool)")
+        out = self.explain("x: documentation not found on DevDocs (HTTP 404 "
+                           "from h); sources QUERY lists the names")
+        self.assert_clean(out)
+        self.assertIn("the `sources` tool lists the names", out)
+        self.assertNotIn("QUERY", out)
+
+    def test_install_command_with_argument(self):
+        out = self.explain("reinstall with: docshelf.py install alpha")
+        self.assertEqual(out, "reinstall with: the `install` tool with "
+                              'names ["alpha"]')
+        out = self.explain("install needs NAME (or a \"docvols\" list)")
+        self.assertEqual(out, "the `install` tool needs `names` (or a "
+                              "\"docvols\" list)")
+
+    def test_scope_error_flags(self):
+        out = self.explain(
+            "5 full-size docvols and no scope.\nNarrow it with -d NAME "
+            "(repeatable; a family name picks all its versions), a "
+            "\"docvols\" list in .docshelf.json, or search everything "
+            "with --all.")
+        self.assert_clean(out)
+        self.assertIn("`docvols` (repeatable;", out)
+        self.assertIn("`all`", out)
+        self.assertNotIn("NAME", out)
+        self.assert_clean(self.explain(
+            "note: searching 2 docvols of a (a~1, a~2); -d NAME picks one"))
+
+    def test_install_force(self):
+        out = self.explain("a: skipped, Dash/Zeal docset d has this "
+                           "documentation and is used as is; install "
+                           "--force a downloads it anyway")
+        self.assert_clean(out)
+        self.assertIn("the `install` tool with `force`", out)
+
+    def test_notes_flags_use_argument_names(self):
+        self.assertEqual(self.explain("--set needs --text"),
+                         "`set` needs `text`")
+        self.assertEqual(
+            self.explain("--set and --delete cannot be used together"),
+            "`set` and `delete` cannot be used together")
+
+    def test_max_lines_and_type(self):
+        out = self.explain("raise --max-lines or narrow the query, -d or "
+                           "--type")
+        self.assertEqual(out, "raise `max_lines` or narrow the query, "
+                              "`docvols` or `type`")
+
+    def test_pointer_hints_still_replaced(self):
+        out = self.explain("see references/getting-docvols.md")
+        self.assertIn("`sources` tool", out)
+        self.assertNotIn("references/", out)
+
+    def test_plain_text_untouched(self):
+        msg = "docvol 'a': damaged index; try again"
+        self.assertEqual(self.explain(msg), msg)
+
+    def test_every_cli_flag_maps_to_a_tool_argument(self):
+        import shelf_mcp
+        for c in shelf_mcp._mcp_commands():
+            for p in shelf_mcp._tool_params(c):
+                for f in p.flags:
+                    if f.startswith("-"):
+                        out = self.explain("use %s here" % f)
+                        self.assert_clean(out)
+                        self.assertIn("`%s" % shelf_mcp._prop_name(p), out)
 
 
 class FinalReviewTests(unittest.TestCase):

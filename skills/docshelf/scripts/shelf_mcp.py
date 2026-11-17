@@ -37,12 +37,6 @@ _POINTER = re.compile(
     r"(?: in the skill folder)?(?: \([^)]*\))?")
 
 
-def explain(message: str) -> str:
-    def fix(m):
-        return HINTS.get(m.group(1), m.group(0))
-    return _POINTER.sub(fix, message)
-
-
 def _dest(p: shelf_cli.Param) -> str:
     if not p.flags[0].startswith("-"):
         return p.flags[0]
@@ -63,6 +57,72 @@ def _tool_params(c: shelf_cli.Command) -> List[shelf_cli.Param]:
     if c.name == "notes":  # read-only over MCP: no --path
         return [p for p in c.params if p.flags[0] != "--path"]
     return c.params
+
+
+def _first_positional(c: shelf_cli.Command) -> Optional[shelf_cli.Param]:
+    return next((p for p in _tool_params(c) if _positional(p)), None)
+
+
+def _flag_names() -> Dict[str, str]:
+    """CLI flag -> tool argument name, from the COMMANDS table."""
+    names: Dict[str, str] = {}
+    for c in _mcp_commands():
+        for p in _tool_params(c):
+            for f in p.flags:
+                if f.startswith("-"):
+                    names[f] = _prop_name(p)
+    return names
+
+
+def explain(message: str) -> str:
+    """Rewrite an error message for a tool caller: the replacement for each
+    `docshelf.py <cmd>`, bare `<cmd> PLACEHOLDER` phrase or CLI flag is the
+    tool or argument name, so nothing points at a command line."""
+    def fix(m):
+        return HINTS.get(m.group(1), m.group(0))
+    message = _POINTER.sub(fix, message)
+    cmds = {c.name: c for c in _mcp_commands()}
+    alt = "|".join(re.escape(n) for n in sorted(cmds, key=len, reverse=True))
+    flags = _flag_names()
+
+    def flag_name(flag: str) -> str:
+        return flags.get(flag) or flag.lstrip("-").replace("-", "_")
+
+    def program(m):  # docshelf.py install alpha
+        tool = "the `%s` tool" % m.group(1)
+        arg, pos = m.group(2), _first_positional(cmds[m.group(1)])
+        if not arg:
+            return tool
+        if arg.isupper():  # a placeholder such as QUERY
+            return tool
+        if pos is None:
+            return "%s %s" % (tool, arg)
+        many = pos.nargs in ("+", "*") or pos.repeat
+        return "%s with %s %s" % (tool, _prop_name(pos),
+                                  json.dumps([arg] if many else arg))
+
+    message = re.sub(r"docshelf\.py (%s)(?: ([^\s)]+))?" % alt, program, message)
+
+    def needs(m):  # install needs NAME
+        pos = _first_positional(cmds[m.group(1)])
+        return "the `%s` tool needs %s" % (
+            m.group(1), "`%s`" % _prop_name(pos) if pos else "an argument")
+
+    message = re.sub(r"\b(%s) needs [A-Z]{2,}\b" % alt, needs, message)
+
+    def with_flag(m):  # install --force alpha
+        rest = m.group(3)
+        if rest and rest in message[:m.start()]:
+            rest = None  # a value already named earlier in the message
+        return "the `%s` tool with `%s`%s" % (
+            m.group(1), flag_name(m.group(2)), " " + rest if rest else "")
+
+    message = re.sub(r"\b(%s) (--[a-z][\w-]*)(?: ([^\s-]\w*))?" % alt,
+                     with_flag, message)
+    message = re.sub(r"\b(%s) [A-Z]{2,}(?:\.\.\.)?\b" % alt,
+                     lambda m: "the `%s` tool" % m.group(1), message)
+    return re.sub(r"(?<![\w-])(-d|--[a-z][\w-]*)(?: [A-Z]{2,}\b)?",
+                  lambda m: "`%s`" % flag_name(m.group(1)), message)
 
 
 def _mcp_commands() -> List[shelf_cli.Command]:
