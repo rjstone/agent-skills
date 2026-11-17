@@ -2099,6 +2099,56 @@ class NetworkTests(unittest.TestCase):
         self.assertEqual(sorted(os.listdir(self.root)),
                          ["docs.json", "python~3.14", "python~3.15"])
 
+    def test_mcp_install_failure_gets_the_mcp_hint(self):
+        url = "%s/node/db.json" % shelf_devdocs.DOCUMENTS_BASE
+        self.net.pages[url] = shelf_devdocs.NetError(url, "connection reset")
+        import shelf_mcp
+        r = shelf_mcp.call_tool("install", {"names": ["python~3.14", "node"]})
+        self.assertTrue(r["isError"])
+        text = r["content"][0]["text"]
+        self.assertIn("installed python~3.14", text)
+        self.assertIn(shelf_mcp.HINTS["assets/allowlist.txt"], text)
+        self.assertNotIn("assets/allowlist.txt", text)
+
+    def test_install_first_failure_code_wins(self):
+        url = "%s/node/db.json" % shelf_devdocs.DOCUMENTS_BASE
+        self.net.pages[url] = shelf_devdocs.NetError(url, "connection reset")
+        code, out, err = self.main("install", "zzz", "node", "python~3.14")
+        self.assertEqual(code, 5)
+        self.assertIn("zzz", err)
+        self.assertIn("documents.devdocs.io", err)
+        self.assertIn("installed python~3.14", out)
+
+    def newer_manifest(self):
+        newer = [dict(r, mtime=1800000000) for r in self.rows]
+        self.write_manifest(newer)
+        self.net.pages[shelf_devdocs.MANIFEST_URL] = json.dumps(newer)
+
+    def test_update_continues_past_failure(self):
+        self.main("install", "node", "python~3.14", "python~3.15")
+        self.newer_manifest()
+        url = "%s/python~3.14/db.json" % shelf_devdocs.DOCUMENTS_BASE
+        self.net.pages[url] = shelf_devdocs.NetError(url, "boom")
+        code, out, err = self.main("update")
+        self.assertEqual(code, 7)
+        self.assertIn("documents.devdocs.io", err)
+        self.assertEqual(self.meta("node")["mtime"], 1800000000)
+        self.assertEqual(self.meta("python~3.15")["mtime"], 1800000000)
+        self.assertEqual(self.meta("python~3.14")["mtime"], 1700000000)
+        self.assertIn("updated node", out)
+        self.assertIn("updated python~3.15", out)
+
+    def test_update_404_says_no_longer(self):
+        self.main("install", "python~3.14", "node")
+        self.newer_manifest()
+        del self.net.pages["%s/python~3.14/index.json"
+                           % shelf_devdocs.DOCUMENTS_BASE]
+        code, out, err = self.main("update")
+        self.assertEqual(code, 5)
+        self.assertIn("DevDocs no longer has documents for python~3.14", err)
+        self.assertNotIn("not found on DevDocs", err)
+        self.assertIn("updated node", out)
+
     def test_install_404_is_not_found(self):
         url = "%s/python~3.15/index.json" % shelf_devdocs.DOCUMENTS_BASE
         del self.net.pages[url]
