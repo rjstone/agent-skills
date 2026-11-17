@@ -497,7 +497,7 @@ class DashDocvol(Docvol):
     def resolve_href(self, page: str, href: str) -> Optional[str]:
         for decode in (True, False):  # a file name may hold a literal %XX
             target, frag = resolve_doc_path(page, href, decode)
-            if self._has_page(target):
+            if target is not None and self._has_page(target):
                 return self.make_ref(target, frag)
         return None
 
@@ -985,8 +985,11 @@ def label_names(cfg, label: str, refresh: bool = False,
         except _SOURCE_ERRORS as e:
             raise CLIError("cannot load the %s docset list (GitHub: %s; Zeal's "
                            "catalog: %s)" % (label, first, e), 7)
-        print("note (no action needed): the %s list came from Zeal's catalog; "
-              "GitHub was unreachable (%s)" % (label, first), file=sys.stderr)
+        if zeal is None or not zeal.get("noted"):
+            if zeal is not None:
+                zeal["noted"] = True
+            print("note (no action needed): the docset lists came from Zeal's "
+                  "catalog; GitHub was unreachable (%s)" % first, file=sys.stderr)
         if skipped:
             print("note: skipped %d malformed entr%s in Zeal's catalog"
                   % (skipped, "y" if skipped == 1 else "ies"), file=sys.stderr)

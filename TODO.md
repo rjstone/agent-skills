@@ -68,48 +68,25 @@ items are done.
 
 #### 6. Deferred review items
 
-- [ ] 6.1 Links and REFs
-  - [ ] 6.1.2 A link with `..` past the docvol root is clamped silently.
-  - [ ] 6.1.3 `resolve()` scans a docset's entries linearly per id.
 - [ ] 6.2 DevDocs install, update and sources
   - [ ] 6.2.2 The real `fetch()` is untested (User-Agent, redirects, error
         mapping): add a loopback `http.server` test.
-  - [ ] 6.2.4 A same-mtime reinstall trusts `meta.json` without checking
-        the files exist; the page index is built twice at install.
-  - [ ] 6.2.5 Temp files from `mkstemp` are mode 0600, so cache files lose
-        the umask permissions (matters only for a shared cache); a process
-        killed mid-build leaves a stray `*.tmp`.
-  - [ ] 6.2.6 Every command parses each DevDocs docvol's `index.json` for
-        `entry_count`; store the count in `meta.json` at install.
 - [ ] 6.4 Docset reading (index, tarix)
   - [ ] 6.4.1 WAL stamps use whole-second mtimes; the stamp test only
         checks for "-".
   - [ ] 6.4.2 Containment tests cover `..` only (no absolute or backslash
         paths).
-  - [ ] 6.4.3 The `Info.plist` and `_index_page` reads catch a bare
-        `Exception`.
   - [ ] 6.4.4 Tarix: no tests for symlink or directory members or a
         truncated archive; the containment-before-lookup test isn't
         discriminating.
-  - [ ] 6.4.5 Tarix: `resolve_href` turns exit-7 errors into "no link"
-        silently; the index is opened and its prefix probed per lookup
-        (cache the prefix per docvol).
 - [ ] 6.5 Discovery, `where` and `list`
-  - [ ] 6.5.1 `where` prints `[source]` only for folders that exist.
-  - [ ] 6.5.2 `where_lines` and `installed_docvols` each open every docset.
-  - [ ] 6.5.3 `list` repeats "also as" once per matching pair.
   - [ ] 6.5.4 No test for `remove`/`update` with a family name matching
         both a DevDocs docvol and a docset.
   - [ ] 6.5.5 `import shelf_backends` is repeated lazily in 3 functions.
 - [ ] 6.6 Repeated header/footer cache
-  - [ ] 6.6.1 `repeats.json` items aren't type-checked on read.
-  - [ ] 6.6.2 `REPEAT_FORMAT` bumps don't rebuild the fts and headings
-        indexes (bump `FTS_FORMAT` and `HEADINGS_FORMAT` by hand).
   - [ ] 6.6.3 No tests for cache reuse, rebuild when the docset changes,
         the `Info.plist` keeper page or the write-failure warning.
 - [ ] 6.7 Dash/Zeal catalogs
-  - [ ] 6.7.1 The "came from Zeal's catalog" note prints once per list when
-        both fall back (the catalog itself is fetched once).
   - [ ] 6.7.3 Unused loop variables in `cached_catalog_match`.
   - [ ] 6.7.4 No tests for catalog cache expiry, malformed JSON or the MCP
         text of the new network error.
@@ -132,9 +109,6 @@ items are done.
 - [ ] 6.9 Notes
   - [ ] 6.9.2 No lock against concurrent writers of notes files (writes are
         atomic; last writer wins).
-- [ ] 6.10 Full-text search
-  - [ ] 6.10.1 The match expression is built more than once; the `ids`
-        query keeps punctuation for plain tokens.
 
 - [ ] 6.12 After the 0.6.0 reviews
   - [ ] 6.12.1 No CLI test for a double-encoded anchor or the

@@ -477,7 +477,8 @@ class DevDocsDiskTests(unittest.TestCase):
     def test_encoded_dots_and_slashes_resolve_like_literal_ones(self):
         rdp = shelf_core.resolve_doc_path
         self.assertEqual(rdp("a/b/p", "%2e%2e/x#f"), ("a/x", "f"))
-        self.assertEqual(rdp("a/b/p", "..%2F..%2F..%2Fx"), ("x", None))
+        self.assertEqual(rdp("a/b/p", "..%2F..%2Fx"), ("x", None))
+        self.assertEqual(rdp("a/b/p", "..%2F..%2F..%2Fx"), (None, None))
         self.assertEqual(rdp("p", "a%2F%2F..%2Fb"), ("b", None))
         self.assertEqual(rdp("a/p", "c%2F.%2Fd"), ("a/c/d", None))
         self.make(entries=[("Guide", "Guide", "api/index")],
@@ -489,6 +490,15 @@ class DevDocsDiskTests(unittest.TestCase):
         self.assertEqual(d.resolve_href("api/index", "%2e%2e/api/other#s"),
                          "vite:api/other#s")
         self.assertEqual(d.resolve_href("api/index", "a%20b"), "vite:api/a%20b")
+
+    def test_link_above_the_root_gets_no_ref(self):
+        self.make(entries=[("Guide", "Guide", "index")],
+                  pages={"index": "<p>x</p>", "x": "<p>r</p>",
+                         "sub/page": "<p>y</p>"})
+        d = shelf_devdocs.installed_docvols(self.cfg())[0]
+        self.assertIsNone(d.resolve_href("index", "../../x"))
+        self.assertIsNone(d.resolve_href("sub/page", "../../x"))
+        self.assertEqual(d.resolve_href("sub/page", "../x"), "vite:x")
 
     def test_entries_and_resolve(self):
         self.make(entries=[("Guide", "Guide", "guide"),
@@ -5069,6 +5079,14 @@ class DashCatalogTests(unittest.TestCase):
             self.net.pages[u] = shelf_devdocs.NetError(u, "blocked")
         self.main("sources", "python")
         self.assertEqual(self.net.fetched.count(shelf_dash.ZEAL_CATALOG_URL), 1)
+
+    def test_catalog_note_printed_once_per_command(self):
+        self.zeal_install()
+        for u in (shelf_dash.FEEDS_LIST_URL, shelf_dash.CONTRIB_LIST_URL):
+            self.net.pages[u] = shelf_devdocs.NetError(u, "blocked")
+        code, _out, err = self.main("sources", "python")
+        self.assertEqual(code, 0)
+        self.assertEqual(err.count("came from Zeal's catalog"), 1, err)
 
     def test_zeal_catalog_skips_malformed_entries(self):
         self.zeal_install()

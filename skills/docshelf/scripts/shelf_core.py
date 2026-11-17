@@ -10,7 +10,7 @@ from dataclasses import dataclass
 from typing import Dict, Iterator, List, Optional, Tuple
 from urllib.parse import unquote
 
-VERSION = "0.7.0"
+VERSION = "0.7.1"
 PROJECT_FILE = ".docshelf.json"
 
 
@@ -296,7 +296,7 @@ class Docvol(ABC):
             self._href_known = set(self.pages())
         for decode in (True, False):  # a page name may hold a literal %XX
             target, frag = resolve_doc_path(page, href, decode)
-            if target in self._href_known:
+            if target is not None and target in self._href_known:
                 return self.make_ref(target, frag)
         return None
 
@@ -322,7 +322,7 @@ def resolve_doc_path(page, href, decode=True):
     the docvol root; a '?query' is dropped and, with decode, each segment is
     percent-decoded (a decoded '/' splits it, so %2F and %2e%2e act like
     literal ones); returns (path, fragment or None). The fragment is
-    returned as written."""
+    returned as written. A '..' that climbs above the root gives path None."""
     rel, _, frag = href.partition("#")
     rel = rel.partition("?")[0]
     segments = [] if rel.startswith("/") else page.split("/")[:-1]
@@ -331,8 +331,9 @@ def resolve_doc_path(page, href, decode=True):
             if part in ("", "."):
                 continue
             if part == "..":
-                if segments:
-                    segments.pop()
+                if not segments:
+                    return None, frag or None
+                segments.pop()
             else:
                 segments.append(part)
     return "/".join(segments), frag or None
