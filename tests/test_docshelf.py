@@ -473,6 +473,22 @@ class DevDocsDiskTests(unittest.TestCase):
                          "vite:api/my page")
         self.assertIsNone(d.resolve_href("api/index", "nope?x=1"))
 
+    def test_encoded_dots_and_slashes_resolve_like_literal_ones(self):
+        rdp = shelf_core.resolve_doc_path
+        self.assertEqual(rdp("a/b/p", "%2e%2e/x#f"), ("a/x", "f"))
+        self.assertEqual(rdp("a/b/p", "..%2F..%2F..%2Fx"), ("x", None))
+        self.assertEqual(rdp("p", "a%2F%2F..%2Fb"), ("b", None))
+        self.assertEqual(rdp("a/p", "c%2F.%2Fd"), ("a/c/d", None))
+        self.make(entries=[("Guide", "Guide", "api/index")],
+                  pages={"api/index": "<p>x</p>", "api/other": "<p>y</p>",
+                         "api/a%20b": "<p>raw</p>"})
+        d = shelf_devdocs.installed_docvols(self.cfg())[0]
+        self.assertEqual(d.resolve_href("api/index", "..%2Fapi%2Fother"),
+                         "vite:api/other")
+        self.assertEqual(d.resolve_href("api/index", "%2e%2e/api/other#s"),
+                         "vite:api/other#s")
+        self.assertEqual(d.resolve_href("api/index", "a%20b"), "vite:api/a%20b")
+
     def test_entries_and_resolve(self):
         self.make(entries=[("Guide", "Guide", "guide"),
                            ("Sec", "Guide", "guide#sec")],
@@ -3722,6 +3738,13 @@ class DashReaderTests(unittest.TestCase):
         self.assertEqual(dv.resolve_href("lib.html", "my%20page.html"),
                          "Q:page:my page.html")
         self.assertIsNone(dv.resolve_href("lib.html", "nope.html?x=1"))
+
+    def test_page_named_with_percent_gets_ref(self):
+        dv = self.docvol("R", pages={**self.PAGES, "a%20b.html": "<p>m</p>"})
+        self.assertEqual(dv.resolve_href("lib.html", "a%20b.html#x"),
+                         "R:page:a%20b.html#x")
+        self.assertEqual(dv.resolve_href("lib.html", "sub%2F..%2Fos.html"),
+                         "R:page:os.html")
 
     def test_ztoken_form_reads_the_same(self):
         a = self.docvol("A")

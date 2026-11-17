@@ -251,8 +251,11 @@ class Docvol(ABC):
         """The REF a link on page points to, or None."""
         if self._href_known is None:
             self._href_known = set(self.pages())
-        target, frag = resolve_doc_path(page, href)
-        return self.make_ref(target, frag) if target in self._href_known else None
+        for decode in (True, False):  # a page name may hold a literal %XX
+            target, frag = resolve_doc_path(page, href, decode)
+            if target in self._href_known:
+                return self.make_ref(target, frag)
+        return None
 
     @abstractmethod
     def resolve(self, rest: str) -> Tuple[str, Optional[str], Optional[Entry]]:
@@ -271,23 +274,24 @@ class Docvol(ABC):
         """Folder for derived files."""
 
 
-def resolve_doc_path(page, href):
+def resolve_doc_path(page, href, decode=True):
     """href resolved against the page's folder: '..' pops, a leading '/' is
-    the docvol root; a '?query' is dropped and each segment is
-    percent-decoded; returns (path, fragment or None). The fragment is
+    the docvol root; a '?query' is dropped and, with decode, each segment is
+    percent-decoded (a decoded '/' splits it, so %2F and %2e%2e act like
+    literal ones); returns (path, fragment or None). The fragment is
     returned as written."""
     rel, _, frag = href.partition("#")
     rel = rel.partition("?")[0]
     segments = [] if rel.startswith("/") else page.split("/")[:-1]
-    for part in rel.split("/"):
-        part = unquote(part)
-        if part in ("", "."):
-            continue
-        if part == "..":
-            if segments:
-                segments.pop()
-        else:
-            segments.append(part)
+    for raw in rel.split("/"):
+        for part in (unquote(raw).split("/") if decode else [raw]):
+            if part in ("", "."):
+                continue
+            if part == "..":
+                if segments:
+                    segments.pop()
+            else:
+                segments.append(part)
     return "/".join(segments), frag or None
 
 

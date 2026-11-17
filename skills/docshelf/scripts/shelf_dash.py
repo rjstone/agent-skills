@@ -461,16 +461,21 @@ class DashDocvol(Docvol):
         return blocks[:end]
 
     def resolve_href(self, page: str, href: str) -> Optional[str]:
-        target, frag = resolve_doc_path(page, href)
+        for decode in (True, False):  # a file name may hold a literal %XX
+            target, frag = resolve_doc_path(page, href, decode)
+            if self._has_page(target):
+                return self.make_ref(target, frag)
+        return None
+
+    def _has_page(self, target: str) -> bool:
         try:
             self._doc_file(target)
         except CLIError:
             try:
-                if self._tarix_row(self._tarix_rel(target)) is None:
-                    return None
+                return self._tarix_row(self._tarix_rel(target)) is not None
             except CLIError:
-                return None
-        return self.make_ref(target, frag)
+                return False
+        return True
 
     def resolve(self, rest: str) -> Tuple[str, Optional[str], Optional[Entry]]:
         if rest.isascii() and rest.isdecimal():
