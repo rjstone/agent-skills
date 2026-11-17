@@ -15,6 +15,7 @@ import subprocess
 import sys
 import tempfile
 import threading
+import time
 import types
 import unittest
 from unittest import mock
@@ -460,6 +461,33 @@ class DevDocsDiskTests(unittest.TestCase):
         d2 = shelf_devdocs.installed_docvols(self.cfg())[0]
         self.assertEqual(d2.page_html("guide"), "<p>hi</p>")
         self.assertTrue(os.path.isfile(os.path.join(derived, "pages.json")))
+
+    def test_link_with_query_or_percent_encoding_gets_ref(self):
+        self.make(entries=[("Guide", "Guide", "api/index")],
+                  pages={"api/index": "<p>x</p>", "api/other": "<p>y</p>",
+                         "api/my page": "<p>z</p>"})
+        d = shelf_devdocs.installed_docvols(self.cfg())[0]
+        self.assertEqual(d.resolve_href("api/index", "other?x=1#sec"),
+                         "vite:api/other#sec")
+        self.assertEqual(d.resolve_href("api/index", "my%20page"),
+                         "vite:api/my page")
+        self.assertIsNone(d.resolve_href("api/index", "nope?x=1"))
+
+    def test_encoded_dots_and_slashes_resolve_like_literal_ones(self):
+        rdp = shelf_core.resolve_doc_path
+        self.assertEqual(rdp("a/b/p", "%2e%2e/x#f"), ("a/x", "f"))
+        self.assertEqual(rdp("a/b/p", "..%2F..%2F..%2Fx"), ("x", None))
+        self.assertEqual(rdp("p", "a%2F%2F..%2Fb"), ("b", None))
+        self.assertEqual(rdp("a/p", "c%2F.%2Fd"), ("a/c/d", None))
+        self.make(entries=[("Guide", "Guide", "api/index")],
+                  pages={"api/index": "<p>x</p>", "api/other": "<p>y</p>",
+                         "api/a%20b": "<p>raw</p>"})
+        d = shelf_devdocs.installed_docvols(self.cfg())[0]
+        self.assertEqual(d.resolve_href("api/index", "..%2Fapi%2Fother"),
+                         "vite:api/other")
+        self.assertEqual(d.resolve_href("api/index", "%2e%2e/api/other#s"),
+                         "vite:api/other#s")
+        self.assertEqual(d.resolve_href("api/index", "a%20b"), "vite:api/a%20b")
 
     def test_entries_and_resolve(self):
         self.make(entries=[("Guide", "Guide", "guide"),
@@ -1637,6 +1665,12 @@ class FtsTests(unittest.TestCase):
         self.assertEqual(r.returncode, 0)
         self.assertEqual(r.stdout.strip(), "no matches for 'zzzznothing'")
 
+    def test_fts_json_no_searchable_words_is_json(self):
+        r = self.cli("fts", "- ()", "-d", "py", "--json")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertEqual(json.loads(r.stdout), [])
+        self.assertIn("no searchable words in '- ()'", r.stderr)
+
     def test_hit_ref_is_page_anchor_when_no_entry(self):
         self.add("duck", [("Other", "Guide", "p")],
                  {"p": "<h2 id='intro'>Intro</h2><p>quack quack</p>"})
@@ -1932,7 +1966,7 @@ class FakeNet:
         if isinstance(v, Exception):
             raise v
         if v is None:
-            raise shelf_devdocs.NetError(url, "HTTP 404")
+            raise shelf_devdocs.NetError(url, "HTTP 404", status=404)
         data = v if isinstance(v, bytes) else v.encode("utf-8")
         if dest is None:
             return data
@@ -2069,6 +2103,85 @@ class NetworkTests(unittest.TestCase):
         leftovers = [f for _, _, fs in os.walk(folder) for f in fs]
         self.assertEqual(leftovers, [])
 
+    def test_install_continues_past_failure(self):
+        url = "%s/node/db.json" % shelf_devdocs.DOCUMENTS_BASE
+        self.net.pages[url] = shelf_devdocs.NetError(url, "connection reset")
+        code, out, err = self.main("install", "python~3.14", "node",
+                                   "python~3.15")
+        self.assertEqual(code, 7)
+        self.assertIn("documents.devdocs.io", err)
+        self.assertIn("installed python~3.14", out)
+        self.assertIn("installed python~3.15", out)
+        self.assertEqual(sorted(os.listdir(self.root)),
+                         ["docs.json", "python~3.14", "python~3.15"])
+
+    def test_mcp_install_failure_gets_the_mcp_hint(self):
+        url = "%s/node/db.json" % shelf_devdocs.DOCUMENTS_BASE
+        self.net.pages[url] = shelf_devdocs.NetError(url, "connection reset")
+        import shelf_mcp
+        r = shelf_mcp.call_tool("install", {"names": ["python~3.14", "node"]})
+        self.assertTrue(r["isError"])
+        text = r["content"][0]["text"]
+        self.assertIn("installed python~3.14", text)
+        self.assertIn(shelf_mcp.HINTS["assets/allowlist.txt"], text)
+        self.assertNotIn("assets/allowlist.txt", text)
+
+    def test_install_first_failure_code_wins(self):
+        url = "%s/node/db.json" % shelf_devdocs.DOCUMENTS_BASE
+        self.net.pages[url] = shelf_devdocs.NetError(url, "connection reset")
+        code, out, err = self.main("install", "zzz", "node", "python~3.14")
+        self.assertEqual(code, 5)
+        self.assertIn("zzz", err)
+        self.assertIn("documents.devdocs.io", err)
+        self.assertIn("installed python~3.14", out)
+
+    def newer_manifest(self):
+        newer = [dict(r, mtime=1800000000) for r in self.rows]
+        self.write_manifest(newer)
+        self.net.pages[shelf_devdocs.MANIFEST_URL] = json.dumps(newer)
+
+    def test_update_continues_past_failure(self):
+        self.main("install", "node", "python~3.14", "python~3.15")
+        self.newer_manifest()
+        url = "%s/python~3.14/db.json" % shelf_devdocs.DOCUMENTS_BASE
+        self.net.pages[url] = shelf_devdocs.NetError(url, "boom")
+        code, out, err = self.main("update")
+        self.assertEqual(code, 7)
+        self.assertIn("documents.devdocs.io", err)
+        self.assertEqual(self.meta("node")["mtime"], 1800000000)
+        self.assertEqual(self.meta("python~3.15")["mtime"], 1800000000)
+        self.assertEqual(self.meta("python~3.14")["mtime"], 1700000000)
+        self.assertIn("updated node", out)
+        self.assertIn("updated python~3.15", out)
+
+    def test_update_404_says_no_longer(self):
+        self.main("install", "python~3.14", "node")
+        self.newer_manifest()
+        del self.net.pages["%s/python~3.14/index.json"
+                           % shelf_devdocs.DOCUMENTS_BASE]
+        code, out, err = self.main("update")
+        self.assertEqual(code, 5)
+        self.assertIn("DevDocs no longer has documents for python~3.14", err)
+        self.assertNotIn("not found on DevDocs", err)
+        self.assertIn("updated node", out)
+
+    def test_install_404_is_not_found(self):
+        url = "%s/python~3.15/index.json" % shelf_devdocs.DOCUMENTS_BASE
+        del self.net.pages[url]
+        code, _, err = self.main("install", "python~3.15")
+        self.assertEqual(code, 5)
+        self.assertIn("python~3.15", err)
+        self.assertIn("not found on DevDocs", err)
+        self.assertNotIn("allowlist", err)
+
+    def test_sources_lists_each_slug_once(self):
+        self.write_manifest(self.rows + [dict(self.rows[0], name="Dup")])
+        code, out, _ = self.main("sources", "python")
+        self.assertEqual(code, 0)
+        slugs = [ln.split()[0] for ln in out.splitlines()]
+        self.assertEqual(slugs.count("python~3.15"), 1, out)
+        self.assertNotIn("Dup", out)
+
     def test_failed_update_keeps_old_docvol(self):
         self.main("install", "python~3.14")
         newer = [dict(r, mtime=1800000000) for r in self.rows]
@@ -2192,7 +2305,7 @@ Get and manage docvols (references/getting-docvols.md):
                                  docsets Dash or Zeal could download
   install [NAME...] [--force]    download one (NAME without a version = the
                                  newest; no NAME = the project's docvols
-                                 list); refuses documentation already on
+                                 list); skips documentation already on
                                  disk as a docset unless --force; update
                                  [NAME...]; remove NAME (DevDocs docvols
                                  only: Dash or Zeal manages docsets)
@@ -2284,6 +2397,21 @@ class TocTests(unittest.TestCase):
                      pages={"q": "<h1 id='t'>T</h1><h2>A</h2>"})
         self.assertEqual(self.toc("lib2:q").splitlines(),
                          ["(page: T)", "T  lib2:q#t", "  A  lib2:q#t"])
+
+    def test_toc_missing_anchor_warns_like_show(self):
+        r = run_cli("toc", "lib:p#missing", env=self.env, cwd=self.tmp)
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertEqual(r.stdout.splitlines(), self.WANT)
+        self.assertEqual(r.stderr.strip(), "warning: no #missing on p")
+        r = run_cli("show", "lib:p#missing", "--no-notes", env=self.env,
+                    cwd=self.tmp)
+        self.assertIn("warning: no #missing on p", r.stderr)
+
+    def test_toc_page_without_headings(self):
+        make_devdocs(self.cache, "lib3", name="Lib3", release="1",
+                     entries=[("x", "Function", "q")],
+                     pages={"q": "<p>Just text.</p>"})
+        self.assertEqual(self.toc("lib3:q"), "(no headings)\n")
 
     def test_toc_max_lines_caps(self):
         lines = self.toc("lib:p", "--max-lines", "2").splitlines()
@@ -2888,6 +3016,17 @@ class NotesWriteTests(unittest.TestCase):
         self.cli("notes", "python", "--set", "General", "--text", "g2")
         self.assertEqual(self.read(), "## General\ng2\n\n## a\nx\n")
 
+    def test_general_heading_any_case(self):
+        self.put("intro\n\n## a\nx\n")
+        r = self.cli("notes", "python", "--set", "general", "--text", "hi")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertEqual(self.read(), "hi\n\n## a\nx\n")
+        r = self.cli("notes", "python", "--delete", "GENERAL")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertEqual(self.read(), "## a\nx\n")
+        self.cli("notes", "python", "--set", "general", "--text", "g")
+        self.assertEqual(self.read(), "## General\ng\n\n## a\nx\n")
+
     def test_set_typed_heading(self):
         self.put("## open\nplain\n\n## open (Function)\nfn\n")
         self.cli("notes", "python", "--set", "open (Function)", "--text", "fn2")
@@ -2970,6 +3109,45 @@ class NotesWriteTests(unittest.TestCase):
         with open(real, encoding="utf-8") as f:
             self.assertEqual(f.read(), "## a\n1\n\n## b\n2\n")
         self.assertEqual([n for n in os.listdir(self.notes)], ["python.md"])
+
+    @unittest.skipUnless(hasattr(os, "symlink") and os.name == "posix",
+                         "symlinks need POSIX here")
+    def test_dangling_symlink_refused_nothing_created(self):
+        gone = os.path.join(self.tmp, "gone", "deeper")
+        os.makedirs(self.notes, exist_ok=True)
+        os.symlink(os.path.join(gone, "python.md"), self.file)
+        r = self.cli("notes", "python", "--set", "a", "--text", "b")
+        self.assertEqual(r.returncode, 2, r.stdout + r.stderr)
+        self.assertIn(self.file, r.stderr)
+        self.assertFalse(os.path.exists(os.path.join(self.tmp, "gone")))
+        self.assertTrue(os.path.islink(self.file))
+        self.assertEqual(os.listdir(self.notes), ["python.md"])
+
+    def test_set_and_delete_match_heading_case_insensitively(self):
+        self.put("## foo\nold\n\n## Bar Baz\nkeep\n")
+        r = self.cli("notes", "python", "--set", "Foo", "--text", "new")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertEqual(self.read(), "## foo\nnew\n\n## Bar Baz\nkeep\n")
+        r = self.cli("notes", "python", "--delete", "BAR baz")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertEqual(self.read(), "## foo\nnew\n")
+
+    def test_write_keeps_crlf_line_endings(self):
+        os.makedirs(self.notes, exist_ok=True)
+        with open(self.file, "wb") as f:
+            f.write(b"## a\r\n1\r\n\r\n## b\r\n2\r\n")
+        r = self.cli("notes", "python", "--set", "c", "--text", "x\ny")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertEqual(self.read(),
+                         "## a\r\n1\r\n\r\n## b\r\n2\r\n\r\n## c\r\nx\r\ny\r\n")
+        r = self.cli("notes", "python", "--delete", "a")
+        self.assertEqual(self.read(), "## b\r\n2\r\n\r\n## c\r\nx\r\ny\r\n")
+
+    def test_delete_unheaded_general_keeps_blank_after_title(self):
+        self.put("# Title\n\nintro\n\n## a\n1\n")
+        r = self.cli("notes", "python", "--delete", "General")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertEqual(self.read(), "# Title\n\n## a\n1\n")
 
     @unittest.skipUnless(os.name == "posix", "file modes are POSIX")
     def test_write_keeps_file_mode(self):
@@ -3552,6 +3730,21 @@ class DashReaderTests(unittest.TestCase):
         self.assertEqual(dv.resolve_href("lib.html", "os.html#x"),
                          "Lib:page:os.html#x")
         self.assertIsNone(dv.resolve_href("lib.html", "nope.html"))
+
+    def test_link_with_query_or_percent_encoding_gets_ref(self):
+        dv = self.docvol("Q", pages={**self.PAGES, "my page.html": "<p>m</p>"})
+        self.assertEqual(dv.resolve_href("lib.html", "os.html?x=1#sec"),
+                         "Q:page:os.html#sec")
+        self.assertEqual(dv.resolve_href("lib.html", "my%20page.html"),
+                         "Q:page:my page.html")
+        self.assertIsNone(dv.resolve_href("lib.html", "nope.html?x=1"))
+
+    def test_page_named_with_percent_gets_ref(self):
+        dv = self.docvol("R", pages={**self.PAGES, "a%20b.html": "<p>m</p>"})
+        self.assertEqual(dv.resolve_href("lib.html", "a%20b.html#x"),
+                         "R:page:a%20b.html#x")
+        self.assertEqual(dv.resolve_href("lib.html", "sub%2F..%2Fos.html"),
+                         "R:page:os.html")
 
     def test_ztoken_form_reads_the_same(self):
         a = self.docvol("A")
@@ -4150,12 +4343,12 @@ class DashReadOnlyTests(unittest.TestCase):
                 found.append((p, os.stat(p).st_mtime_ns))
         return sorted(found)
 
-    def test_install_refuses_redundant_without_force(self):
+    def test_install_skips_redundant_without_force(self):
         self.docset()
         code, out, err = self.main("install", "python~3.12")
-        self.assertEqual(code, 2, (out, err))
-        self.assertIn("python~3.12: Dash/Zeal docset Python_3 has this "
-                      "documentation and is used as is; install --force "
+        self.assertEqual(code, 0, (out, err))
+        self.assertIn("python~3.12: skipped, Dash/Zeal docset Python_3 has "
+                      "this documentation and is used as is; install --force "
                       "python~3.12 downloads it anyway", err)
         self.assertEqual(self.net.fetched, [shelf_devdocs.MANIFEST_URL])
         code, out, err = self.main("install", "python~3.12", "--force")
@@ -4171,7 +4364,7 @@ class DashReadOnlyTests(unittest.TestCase):
     def test_unknown_docset_version_counts_as_same(self):
         self.docset(version=None)
         code, out, err = self.main("install", "python~3.12")
-        self.assertEqual(code, 2, (out, err))
+        self.assertEqual(code, 0, (out, err))
         self.assertIn("Dash/Zeal docset Python_3 has this documentation", err)
 
     def test_name_version_python_2_does_not_block_3_12(self):
@@ -4183,7 +4376,7 @@ class DashReadOnlyTests(unittest.TestCase):
         self.docset("Python_3", version=None)
         for slug in ("python~3.12", "python~3.11"):
             code, out, err = self.main("install", slug)
-            self.assertEqual(code, 2, (slug, out, err))
+            self.assertEqual(code, 0, (slug, out, err))
             self.assertIn("Dash/Zeal docset Python_3 has this documentation", err)
 
     def test_remove_and_update_refuse_docsets(self):
@@ -4303,6 +4496,38 @@ class DashCatalogTests(unittest.TestCase):
             self.net.pages[u] = shelf_devdocs.NetError(u, "blocked")
         self.main("sources", "python")
         self.assertEqual(self.net.fetched.count(shelf_dash.ZEAL_CATALOG_URL), 1)
+
+    def test_zeal_catalog_skips_malformed_entries(self):
+        self.zeal_install()
+        for u in (shelf_dash.FEEDS_LIST_URL, shelf_dash.CONTRIB_LIST_URL):
+            self.net.pages[u] = shelf_devdocs.NetError(u, "blocked")
+        self.net.pages[shelf_dash.ZEAL_CATALOG_URL] = json.dumps([
+            "junk", {"title": "No name", "sourceId": "com.kapeli.dash"},
+            {"name": "Bad_Versions", "sourceId": "com.kapeli.dash", "versions": 5},
+            {"name": "Python_3", "title": "Python 3",
+             "sourceId": "com.kapeli.dash", "versions": ["3.12"]},
+            {"name": "Lua", "sourceId": "com.kapeli.contrib"}])
+        code, out, err = self.main("sources", "python")
+        self.assertEqual(code, 0)
+        self.assertIn("Python_3  (Dash/Zeal: download in the app, official)", out)
+        self.assertNotIn("Bad_Versions", out)
+        self.assertEqual(err.count("skipped 3 malformed entries"), 1, err)
+
+    def test_expired_cache_and_network_error_uses_stale_copy(self):
+        self.zeal_install()
+        self.main("sources", "python")
+        old = time.time() - 30 * 86400
+        cdir = os.path.join(self.cache, "docsets", "catalogs")
+        for n in os.listdir(cdir):
+            os.utime(os.path.join(cdir, n), (old, old))
+        date = time.strftime("%Y-%m-%d", time.localtime(old))
+        for u in (shelf_dash.FEEDS_LIST_URL, shelf_dash.CONTRIB_LIST_URL):
+            self.net.pages[u] = shelf_devdocs.NetError(u, "blocked")
+        code, out, err = self.main("sources", "python")
+        self.assertEqual(code, 0)
+        self.assertIn("Python_3  (Dash/Zeal: download in the app, official)", out)
+        self.assertIn("using the cached docset list from " + date, err)
+        self.assertNotIn(shelf_dash.ZEAL_CATALOG_URL, self.net.fetched)
 
     def test_catalog_failure_keeps_devdocs_part(self):
         self.zeal_install()
@@ -4913,6 +5138,17 @@ class SuggestTests(unittest.TestCase):
         r = self.suggest()
         line = next(x for x in r.stdout.splitlines() if "python~3.14" in x)
         self.assertIn("no 3.9 docs; newest is 3.14", line)
+
+    def test_lower_bound_pins_the_minimum(self):
+        # the user, 2026-11-17: code for the minimum must work there
+        self.listed(row("Django", "django~5.2", "5.2", version="5.2"),
+                    row("Django", "django~3.2", "3.2", version="3.2"))
+        self.write("requirements.txt", "django>=3.2\n")
+        r = self.suggest()
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertIn("available django~3.2  (requirements.txt)",
+                      r.stdout.splitlines())
+        self.assertNotIn("django~5.2", r.stdout)
 
     def test_alias_and_scoped_names(self):
         self.listed(row("React", "react", "18"), row("Node.js", "node", "22"))

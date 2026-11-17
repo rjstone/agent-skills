@@ -69,16 +69,11 @@ items are done.
 #### 6. Deferred review items
 
 - [ ] 6.1 Links and REFs
-  - [ ] 6.1.1 Link hrefs with `?query` or percent-encoding get no REF.
   - [ ] 6.1.2 A link with `..` past the docvol root is clamped silently.
   - [ ] 6.1.3 `resolve()` scans a docset's entries linearly per id.
 - [ ] 6.2 DevDocs install, update and sources
-  - [ ] 6.2.1 `sources` lists duplicate slugs (bun, vitest) twice; keep
-        the first row.
   - [ ] 6.2.2 The real `fetch()` is untested (User-Agent, redirects, error
         mapping): add a loopback `http.server` test.
-  - [ ] 6.2.3 A 404 from documents.devdocs.io still shows the allowlist
-        hint.
   - [ ] 6.2.4 A same-mtime reinstall trusts `meta.json` without checking
         the files exist; the page index is built twice at install.
   - [ ] 6.2.5 Temp files from `mkstemp` are mode 0600, so cache files lose
@@ -86,8 +81,6 @@ items are done.
         killed mid-build leaves a stray `*.tmp`.
   - [ ] 6.2.6 Every command parses each DevDocs docvol's `index.json` for
         `entry_count`; store the count in `meta.json` at install.
-  - [ ] 6.2.7 `install` from the project list: a download failure aborts
-        the loop; a redundancy refusal counts as a failure (exit 5).
 - [ ] 6.3 MCP
   - [ ] 6.3.1 Error text still says "(see: docshelf.py list)" and uses CLI
         flag names.
@@ -124,12 +117,9 @@ items are done.
 - [ ] 6.7 Dash/Zeal catalogs
   - [ ] 6.7.1 The "came from Zeal's catalog" note prints once per list when
         both fall back (the catalog itself is fetched once).
-  - [ ] 6.7.2 One malformed `versions` entry discards the whole Zeal
-        catalog with an unclear note.
   - [ ] 6.7.3 Unused loop variables in `cached_catalog_match`.
   - [ ] 6.7.4 No tests for catalog cache expiry, malformed JSON or the MCP
         text of the new network error.
-  - [ ] 6.7.5 A stale GitHub cache isn't reused when a refetch fails.
 - [ ] 6.8 Tests and small cleanups
   - [ ] 6.8.1 An expected "skipping" warning leaks into test stderr.
   - [ ] 6.8.2 No tests for CRLF notes files or exit 2 for help with no
@@ -137,9 +127,6 @@ items are done.
   - [ ] 6.8.3 `show` reads the notes file twice, through the private
         `_read_notes`.
   - [ ] 6.8.4 The first line of SKILL.md's body is very long.
-  - [ ] 6.8.5 `toc` with a nonexistent `#anchor` gives no warning (`show`
-        warns); a page with no headings prints only the title;
-        `test_toc_over_mcp` builds `McpTests` by hand.
   - [ ] 6.8.6 Tests: no lock on the SKIP_TAGS-before-STRUCTURE_TAGS order;
         `<html>` cases untested; `FtsMaxLinesTests` checks counts only; no
         `show --offset` boundary tests (total == max_lines, offset =
@@ -150,19 +137,52 @@ items are done.
   - [ ] 6.8.7 Cosmetics: an extra blank line in `shelf_render`'s imports;
         the `types` help line is ~81 columns.
 - [ ] 6.9 Notes
-  - [ ] 6.9.1 Deleting an unheaded General leaves the title against the
-        next heading; heading match is case-sensitive while display isn't
-        (`--set Foo` next to `## foo` appends a duplicate); a write
-        converts CRLF files to LF; no lock against concurrent writers.
+  - [ ] 6.9.2 No lock against concurrent writers of notes files (writes are
+        atomic; last writer wins).
 - [ ] 6.10 Full-text search
   - [ ] 6.10.1 The match expression is built more than once; the `ids`
         query keeps punctuation for plain tokens.
 
-- [ ] 6.11 After the 0.5.0 fix wave
-  - [ ] 6.11.1 A dangling symlink at the notes path reads as absent, so a
-        write creates the link's target (and its folder).
-  - [ ] 6.11.2 `fts --json` prints "no searchable words" as plain text,
-        not JSON.
+- [ ] 6.12 After the 0.6.0 reviews
+  - [ ] 6.12.1 No CLI test for a double-encoded anchor or the
+        "warning: no #..." path in `show` (only `section_lines` is tested).
+  - [ ] 6.12.2 `unquote_all` stops after 3 passes; untested and
+        undocumented.
+  - [ ] 6.12.3 `suggest`: a docset and a DevDocs docvol of the same family
+        are chosen by `installed_docvols` order (DevDocs first); untested.
+  - [ ] 6.12.5 `shelf_suggest`: `_has_parser_file` repeats `_scan_dir`'s
+        filter; CMake `#` inside quotes or `#[[ ]]` comments isn't handled.
+  - [ ] 6.12.6 Tests: `.ruby-version` with a `ruby-` prefix, Docker
+        `--platform` and registry prefixes (`localhost:5000/`, `ghcr.io/`),
+        an `==3.11` Python spec, a non-UTF-8 build file;
+        `test_installed_and_available` re-sorts `docs.json` instead of
+        listing rows in order.
+  - [ ] 6.12.7 `name=` on `<details>` (an accordion group name) still adds
+        an anchor; harmless unless it collides.
+
+- [ ] 6.13 After the 0.6.1 reviews
+  - [ ] 6.13.1 Notes tests: an LF file stays LF; a mixed-ending file takes
+        the majority ending.
+  - [ ] 6.13.2 Test `--delete` on a notes file that is a dangling symlink.
+  - [ ] 6.13.3 `install`/`update` with several names: a network-error
+        failure doesn't name its docvol (prefix "<name>: " in `_each` when
+        missing). Tests: that; a 404 leaves no folder behind; a redundant
+        skip plus a failure exits with the failure's code.
+  - [ ] 6.13.4 `sources` dedupes after the query filter; it should keep
+        the first row overall.
+  - [ ] 6.13.5 `_cached_or_fetched`: `getmtime` can raise OSError if the
+        file goes away between checks.
+  - [ ] 6.13.6 No test for reusing a stale Zeal catalog cache offline.
+  - [ ] 6.13.7 Nameless catalog entries are undercounted when only the
+        contrib catalog falls back.
+  - [ ] 6.13.8 `_zeal_rows` docstring has a stray "((".
+  - [ ] 6.13.9 The 6.12.4 lower-bound test lists the newer version first
+        only.
+  - [ ] 6.13.10 `install` repeats an exit-2 error (unwritable cache) once
+        per name.
+  - [ ] 6.13.11 `notes --set General` on an unheaded General after the
+        title drops the blank line between them (`# T\ng2`); same family as
+        the 6.9.1 spacing fix.
 
 #### Reference: other docset and DevDocs readers (skimmed 2026-11-17)
 

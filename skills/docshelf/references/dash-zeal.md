@@ -72,11 +72,11 @@ Then ask how to proceed. Don't install anything first.
 
 ## Redundant copies and `install --force`
 
-`install` refuses a documentation that exists locally as a docset. Pass
-`--force` only when the user explicitly asks for the DevDocs copy. `list`
-flags a DevDocs docvol and a docset of the same documentation as "also as";
-ask the user whether to remove the DevDocs copy (`remove`). Never remove a
-docset: Dash or Zeal manages it.
+`install` skips a documentation that exists locally as a docset (exit 0
+if nothing else failed). Pass `--force` only when the user explicitly asks
+for the DevDocs copy. `list` flags a DevDocs docvol and a docset of the
+same documentation as "also as"; ask the user whether to remove the
+DevDocs copy (`remove`). Never remove a docset: Dash or Zeal manages it.
 
 ## Terms
 

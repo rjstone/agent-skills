@@ -6,7 +6,7 @@ license: MIT
 metadata:
   author: Robert Stone
   source: https://github.com/rjstone/agent-skills
-  version: "0.6.0"
+  version: "0.6.1"
   credits: "DevDocs, devdocs-mcp, Zeal"
 ---
 

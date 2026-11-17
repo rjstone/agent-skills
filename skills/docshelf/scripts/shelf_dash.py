@@ -14,8 +14,9 @@ import tarfile
 import tempfile
 import time
 import zlib
+from datetime import datetime
 from typing import List, NamedTuple, Optional, Tuple
-from urllib.parse import unquote
+from urllib.parse import unquote, urlsplit
 
 from shelf_core import CLIError, Docvol, Entry, resolve_doc_path, warn
 
@@ -460,16 +461,21 @@ class DashDocvol(Docvol):
         return blocks[:end]
 
     def resolve_href(self, page: str, href: str) -> Optional[str]:
-        target, frag = resolve_doc_path(page, href)
+        for decode in (True, False):  # a file name may hold a literal %XX
+            target, frag = resolve_doc_path(page, href, decode)
+            if self._has_page(target):
+                return self.make_ref(target, frag)
+        return None
+
+    def _has_page(self, target: str) -> bool:
         try:
             self._doc_file(target)
         except CLIError:
             try:
-                if self._tarix_row(self._tarix_rel(target)) is None:
-                    return None
+                return self._tarix_row(self._tarix_rel(target)) is not None
             except CLIError:
-                return None
-        return self.make_ref(target, frag)
+                return False
+        return True
 
     def resolve(self, rest: str) -> Tuple[str, Optional[str], Optional[Entry]]:
         if rest.isascii() and rest.isdecimal():
@@ -852,12 +858,41 @@ def _slim_catalog(body: bytes) -> list:
     if not isinstance(data, list):
         raise ValueError("Zeal catalog is not a list")
     keep = ("name", "title", "sourceId", "versions")
-    return [{k: e.get(k) for k in keep if k in e}
-            for e in data if isinstance(e, dict) and e.get("name")]
+    # Malformed entries are kept: label_names skips and counts them.
+    return [{k: e.get(k) for k in keep if k in e} if isinstance(e, dict) else e
+            for e in data]
 
 
 def _first_version(e) -> str:
-    return next((str(v) for v in e.get("versions") or [] if v), "")
+    """The first version of a Zeal entry; ValueError when versions is not a list."""
+    versions = e.get("versions")
+    if versions is None:
+        return ""
+    if not isinstance(versions, list):
+        raise ValueError("versions is not a list")
+    return next((str(v) for v in versions if v), "")
+
+
+def _zeal_rows(cat, source_id: str):
+    """((name, version, title) rows of one kind, number of malformed entries
+    skipped) from Zeal's catalog; one bad entry never spoils the rest. An
+    entry with no readable name has no kind: it is counted with the official
+    list only, so the two lists never report it twice."""
+    out, skipped = [], 0
+    for e in cat:
+        try:
+            name = e["name"]
+            if not isinstance(name, str) or not name:
+                raise ValueError("no name")
+        except _SOURCE_ERRORS:
+            skipped += source_id == DOCSET_LISTS["official"][4]
+            continue
+        try:
+            if e.get("sourceId") == source_id:
+                out.append((name, _first_version(e), str(e.get("title") or "")))
+        except _SOURCE_ERRORS:
+            skipped += 1
+    return out, skipped
 
 
 def _cached_or_fetched(cfg, key: str, url: str, refresh: bool, slim):
@@ -866,7 +901,17 @@ def _cached_or_fetched(cfg, key: str, url: str, refresh: bool, slim):
         data = _read_catalog(cfg, key, CATALOG_MAX_AGE)
         if data is not None:
             return data
-    data = slim(shelf_devdocs.fetch(url))
+    try:
+        data = slim(shelf_devdocs.fetch(url))
+    except shelf_devdocs.NetError:
+        stale = _read_catalog(cfg, key)
+        if stale is None:
+            raise
+        date = datetime.fromtimestamp(
+            os.path.getmtime(_catalog_path(cfg, key))).strftime("%Y-%m-%d")
+        print("note: using the cached docset list from %s (could not reach %s)"
+              % (date, urlsplit(url).hostname or url), file=sys.stderr)
+        return stale
     _write_catalog(cfg, key, data)
     return data
 
@@ -887,13 +932,15 @@ def label_names(cfg, label: str, refresh: bool = False,
             raise
         try:
             cat = _zeal_once(cfg, refresh, zeal if zeal is not None else {})
-            out = [(str(e["name"]), _first_version(e), str(e.get("title") or ""))
-                   for e in cat if isinstance(e, dict) and e.get("sourceId") == source_id]
+            out, skipped = _zeal_rows(cat, source_id)
         except _SOURCE_ERRORS as e:
             raise CLIError("cannot load the %s docset list (GitHub: %s; Zeal's "
                            "catalog: %s)" % (label, first, e), 7)
         print("note (no action needed): the %s list came from Zeal's catalog; "
               "GitHub was unreachable (%s)" % (label, first), file=sys.stderr)
+        if skipped:
+            print("note: skipped %d malformed entr%s in Zeal's catalog"
+                  % (skipped, "y" if skipped == 1 else "ies"), file=sys.stderr)
         return out
 
 

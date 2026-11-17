@@ -217,7 +217,7 @@ Get and manage docvols (references/getting-docvols.md):
                                  docsets Dash or Zeal could download
   install [NAME...] [--force]    download one (NAME without a version = the
                                  newest; no NAME = the project's docvols
-                                 list); refuses documentation already on
+                                 list); skips documentation already on
                                  disk as a docset unless --force; update
                                  [NAME...]; remove NAME (DevDocs docvols
                                  only: Dash or Zeal manages docsets)
