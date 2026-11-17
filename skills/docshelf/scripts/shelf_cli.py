@@ -112,6 +112,11 @@ COMMANDS: List[Command] = [
               default=shelf_lookup.FTS_MAX_LINES),
         Param(("--json",), "Print JSON.", kind="flag", rare=True),
     ]),
+    Command("types", "List each docvol's entry types with counts.",
+            shelf_lookup.cmd_types, [
+        Param(("-d", "--docvol"), "Docvol or family to list (repeatable).", repeat=True),
+        Param(("--all",), "List every installed docvol.", kind="flag", rare=True),
+    ]),
     Command("index-text", "Build the full-text index of docvols ahead of fts.",
             shelf_lookup.cmd_index_text, [
         Param(("docvol",), "Docvol name (several allowed).", nargs="+"),
@@ -182,6 +187,8 @@ Look up (usual order):
                                  its REF (to show one section)
   fts QUERY... [-d NAME]         words inside pages, 5 best hits with REFs;
                                  include the function name: fts read_csv skip
+  types [-d NAME]                each docvol's entry types with counts, most
+                                 frequent first (types for --type)
 
 Notes (format: references/notes.md in the skill folder):
   notes DOCVOL --path            the notes file to edit

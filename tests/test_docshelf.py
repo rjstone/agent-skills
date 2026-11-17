@@ -1912,6 +1912,8 @@ Look up (usual order):
                                  its REF (to show one section)
   fts QUERY... [-d NAME]         words inside pages, 5 best hits with REFs;
                                  include the function name: fts read_csv skip
+  types [-d NAME]                each docvol's entry types with counts, most
+                                 frequent first (types for --type)
 
 Notes (format: references/notes.md in the skill folder):
   notes DOCVOL --path            the notes file to edit
@@ -1937,6 +1939,7 @@ Only if you need these, see `<command> --help`:
   show       --full --max-lines --offset --no-notes
   toc        --max-lines
   fts        --all --max-lines --json
+  types      --all
   sources    --refresh
   install    --force
 Global: --version, --mcp (run as a stdio MCP server; references/mcp.md).
@@ -2048,6 +2051,74 @@ class TocTests(unittest.TestCase):
         self.assertEqual(cli.stdout.splitlines(), self.WANT)
 
 
+class TypesTests(unittest.TestCase):
+    def setUp(self):
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        self.tmp = os.path.realpath(tmp.name)
+        self.cache = os.path.join(self.tmp, "cache")
+        self.env = {"HOME": self.tmp, "USERPROFILE": self.tmp,
+                    "DOCSHELF_CACHE_DIR": self.cache,
+                    "DOCSHELF_NOTES_DIR": os.path.join(self.tmp, "notes")}
+
+    def add(self, slug, types):
+        entries = [("e%d" % i, t, "p") for i, t in enumerate(types)]
+        make_devdocs(self.cache, slug, name=slug.capitalize(), release="1",
+                     entries=entries, pages={"p": "<p>t</p>"})
+
+    def test_types_counts_sorted(self):
+        self.add("lib", ["Function"] * 3 + ["Class"] + ["Method"] * 3)
+        r = run_cli("types", "-d", "lib", env=self.env, cwd=self.tmp)
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertEqual(r.stdout.splitlines(), [
+            "lib", "  3  Function", "  3  Method", "  1  Class"])
+
+    def test_types_empty_type_is_no_type(self):
+        self.add("lib", ["", "", "Class"])
+        r = run_cli("types", "-d", "lib", env=self.env, cwd=self.tmp)
+        self.assertEqual(r.stdout.splitlines(),
+                         ["lib", "  2  (no type)", "  1  Class"])
+
+    def test_types_two_docvols(self):
+        self.add("alpha", ["Function", "Function", "Class"])
+        self.add("beta", ["Macro"])
+        r = run_cli("types", "-d", "alpha", "-d", "beta", env=self.env,
+                    cwd=self.tmp)
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertEqual(r.stdout.splitlines(), [
+            "alpha", "  2  Function", "  1  Class", "beta", "  1  Macro"])
+        r = run_cli("types", "--all", env=self.env, cwd=self.tmp)
+        self.assertEqual(r.stdout.splitlines()[0], "alpha")
+
+    def test_types_docset(self):
+        make_docset(self.tmp, "Dset", [("a", "Function", "p.html"),
+                                       ("b", "Function", "p.html"),
+                                       ("c", "Class", "p.html")],
+                    {"p.html": "<p>t</p>"})
+        env = dict(self.env, DOCSHELF_DOCSET_DIRS=self.tmp,
+                   XDG_DATA_HOME=os.path.join(self.tmp, "data"),
+                   PATH=os.path.join(self.tmp, "path"))
+        r = run_cli("types", "-d", "Dset", env=env, cwd=self.tmp)
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertEqual(r.stdout.splitlines(),
+                         ["Dset", "  2  Function", "  1  Class"])
+
+    def test_types_over_mcp(self):
+        mcp = McpTests("test_initialize_and_list")
+        mcp.setUp()
+        self.addCleanup(mcp.doCleanups)
+        make_devdocs(mcp.cache, "lib", name="Lib", release="1",
+                     entries=[("a", "Function", "p"), ("b", "Class", "p"),
+                              ("c", "Function", "p")],
+                     pages={"p": "<p>t</p>"})
+        r = mcp.call("types", {"docvols": ["lib"]})
+        self.assertFalse(r["isError"], r)
+        cli = run_cli("types", "-d", "lib", env=mcp.env, cwd=mcp.tmp)
+        self.assertEqual(r["content"][0]["text"], cli.stdout)
+        self.assertEqual(cli.stdout.splitlines(),
+                         ["lib", "  2  Function", "  1  Class"])
+
+
 class McpTests(unittest.TestCase):
     def setUp(self):
         tmp = tempfile.TemporaryDirectory()
@@ -2106,7 +2177,7 @@ class McpTests(unittest.TestCase):
         by_name = {t["name"]: t for t in tools}
         self.assertEqual(sorted(by_name), ["fts", "install", "list", "notes",
                                            "remove", "search", "show", "sources",
-                                           "toc"])
+                                           "toc", "types"])
         q = by_name["search"]["inputSchema"]
         self.assertEqual(q["properties"]["query"]["type"], "array")
         self.assertEqual(q["properties"]["query"]["items"], {"type": "string"})

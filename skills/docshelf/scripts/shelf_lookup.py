@@ -1,5 +1,6 @@
 """docshelf lookup commands: search, show, fts, index-text."""
 import argparse
+import collections
 import contextlib
 import json
 import os
@@ -487,6 +488,18 @@ def cmd_index_text(cfg: Config, args: argparse.Namespace) -> int:
         picked[d.name] = d
     for d in picked.values():
         print("indexed %d pages of %s" % (build_fts(cfg, d), d.name))
+    return 0
+
+
+def cmd_types(cfg: Config, args: argparse.Namespace) -> int:
+    docs = select_docvols(cfg, shelf_backends.installed_docvols(cfg),
+                          args.docvol or [], args.all)
+    _print_family_note(docs, args)
+    for ds in docs:
+        counts = collections.Counter(e.type or "(no type)" for e in ds.entries())
+        print(ds.name)
+        for t, n in sorted(counts.items(), key=lambda kv: (-kv[1], kv[0].lower(), kv[0])):
+            print("  %d  %s" % (n, t))
     return 0
 
 
