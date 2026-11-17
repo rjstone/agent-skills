@@ -73,6 +73,40 @@ def _best_per_word(docs, words, want_type) -> List[Tuple[str, Optional[str]]]:
     return out
 
 
+HEADING = "(heading)"  # type shown for a heading inside a page
+
+
+def _rank_name(query, words, name) -> Optional[int]:
+    """rank(), plus: several words all in the name, in any order, rank like a
+    substring (2); 'f(a, b)' for query 'f' ranks as exact (0)."""
+    r = rank(query, name)
+    if (r is None or r == 3) and len(words) > 1 \
+            and all(w in name.lower() for w in words):
+        r = 2
+    if r and short_name(name) == query.lower():
+        r = 0
+    return r
+
+
+def _heading_hits(docs, query, words, page_of, max_rank) -> list:
+    """Search hits for headings inside pages ranked at most max_rank (never
+    fuzzy), for docvols that index whole sections rather than each function.
+    A heading named like an entry ranks like it, so callers that cap
+    max_rank below the best entry hit get no duplicates."""
+    hits, seen = [], set()
+    for ds in docs:
+        for page, rows in shelf_notes.docvol_headings(ds).items():
+            for name, anchor in rows:
+                r = _rank_name(query, words, name)
+                ref = ds.make_ref(page, anchor)
+                if r is None or r > max_rank or (ref, name) in seen:
+                    continue
+                seen.add((ref, name))
+                page_of[ref] = page
+                hits.append((r, len(name), name, ds.name, ref, HEADING))
+    return hits
+
+
 def cmd_search(cfg: Config, args: argparse.Namespace) -> int:
     _join_query(args)
     if not args.query:
@@ -84,26 +118,25 @@ def cmd_search(cfg: Config, args: argparse.Namespace) -> int:
     hits = []
     no_anchor = set()  # refs of entries that point at a whole page
     page_of: Dict[str, str] = {}  # ref -> page
-    q_lower = args.query.lower()
     for ds in docs:
         for e in ds.entries():
             if want_type is not None and e.type.lower() != want_type:
                 continue
             name = e.name
-            r = rank(args.query, name)
-            # several words: a name holding all of them in any order ranks
-            # like a substring hit (2)
-            if (r is None or r == 3) and len(words) > 1 \
-                    and all(w in name.lower() for w in words):
-                r = 2
+            r = _rank_name(args.query, words, name)
             if r is None:
                 continue
-            if r and short_name(name) == q_lower:
-                r = 0  # 'f(a, b)' for query 'f' is an exact match
             page_of[e.ref] = e.page
             if e.anchor is None:
                 no_anchor.add(e.ref)
             hits.append((r, len(name), name, ds.name, e.ref, e.type))
+    # headings inside pages: every non-fuzzy one when no entry name matches,
+    # only exact ones when entries match just by prefix or substring
+    best = min((h[0] for h in hits), default=3)
+    only_headings = best == 3
+    if want_type is None and best > 0:
+        hits += _heading_hits(docs, args.query, words, page_of,
+                              2 if only_headings else 0)
     # within a rank, entries with an anchor (a section) before whole pages
     hits.sort(key=lambda h: (h[0], h[4] in no_anchor) + h[1:5])
     hits, also = _fold_bare_entries(hits, no_anchor, page_of)
@@ -124,6 +157,9 @@ def cmd_search(cfg: Config, args: argparse.Namespace) -> int:
     else:
         cut = 0
     lines = []
+    if only_headings and hits and hits[0][5] == HEADING:
+        lines.append("no entry name matches %r; headings inside pages "
+                     "(show REF opens the section):" % args.query)
     for k, (r, _l, n, d, ref, t) in enumerate(hits):
         if r == 3 and (k == 0 or hits[k - 1][0] < 3):
             lines.append("no exact, prefix or substring matches; fuzzy matches "
@@ -146,8 +182,9 @@ def cmd_search(cfg: Config, args: argparse.Namespace) -> int:
                 lines.append(best or "(no entry name contains %r; fts searches "
                                      "the text inside pages)" % w)
         else:
-            lines.append("no matches for %r (entry names only; fts searches the "
-                         "text inside pages)" % args.query)
+            lines.append("no matches for %r (%s; fts searches the text inside "
+                         "pages)" % (args.query, "entry names only" if want_type
+                                     else "entry names and page headings"))
     for line in cap_lines(lines, args.max_lines, hint):
         print(line)
     return 0

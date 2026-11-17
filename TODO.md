@@ -69,8 +69,6 @@
 - [ ] `docshelf`: from the Haiku trials with the earlier prompts (2026-11-16):
   - strip a footer repeated on every page (LÖVE's licence line), as the
     earlier skill's footer detection did.
-  - `search` can't find function names in section-indexed docvols
-    (DuckDB); consider matching in-page headings.
   - `-d NAME` for a docvol that isn't installed exits 4 "unknown docvol";
     when NAME is in DevDocs' list, say "not installed: install NAME".
   - notes headings cache: no format-version key (an old-format cache would

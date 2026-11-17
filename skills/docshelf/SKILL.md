@@ -6,7 +6,7 @@ license: MIT
 metadata:
   author: Robert Stone
   source: https://github.com/rjstone/agent-skills
-  version: "0.1.0"
+  version: "0.1.1"
   credits: "DevDocs, devdocs-mcp, Zeal"
 ---
 
@@ -46,7 +46,9 @@ licence.
 
 ## Looking things up
 
-- Try `search` first; use `fts` when names don't match. Function options,
+- Try `search` first; use `fts` when names don't match. When no entry name
+  is an exact match, `search` also lists headings inside pages, marked
+  `(heading)` (DuckDB's functions are headings, not entries). Function options,
   parameters and settings are often only in page text (`read_csv`'s `skip`
   is a row in a table), so look for them with `fts`, adding the function
   name (`fts read_csv skip`, not `fts skip`).

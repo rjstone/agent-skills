@@ -116,7 +116,7 @@ class SkeletonTests(unittest.TestCase):
     def test_help_runs(self):
         r = run_cli("--help", env=self.env(), cwd=self.work)
         self.assertEqual(r.returncode, 0, r.stderr)
-        self.assertTrue(r.stdout.startswith("docshelf 0.1.0"), r.stdout)
+        self.assertTrue(r.stdout.startswith("docshelf 0.1.1"), r.stdout)
         self.assertIn("where", r.stdout)
 
     def test_no_command_exits_2(self):
@@ -565,7 +565,7 @@ class SearchTests(unittest.TestCase):
         self.add("alpha", [("date_sub", "Function", "date#sub")])
         r = self.cli("search", "enemy", "arrow", "-d", "alpha")
         self.assertTrue(r.stdout.startswith(
-            "no matches for 'enemy arrow' (entry names only"), r.stdout)
+            "no matches for 'enemy arrow' (entry names and page headings"), r.stdout)
         self.assertEqual(len(r.stdout.splitlines()), 1)
 
     def test_docvol_name_is_case_insensitive(self):
@@ -647,7 +647,8 @@ class SearchTests(unittest.TestCase):
         r = self.cli("search", "slp", "-d", "alpha")
         self.assertTrue(r.stdout.startswith("no exact, prefix or substring matches"))
         r = self.cli("search", "qqq", "-d", "alpha")
-        self.assertTrue(r.stdout.startswith("no matches for 'qqq' (entry names only"))
+        self.assertTrue(r.stdout.startswith(
+            "no matches for 'qqq' (entry names and page headings"), r.stdout)
         self.assertEqual(out[0].split("  ")[:2], ["beta:c", "Guide"])
         self.assertTrue(out[1].startswith("alpha:b  "))
 
@@ -1655,7 +1656,7 @@ class NetworkTests(unittest.TestCase):
 
 
 TOP_HELP_EXPECTED = """\
-docshelf 0.1.0: look up DevDocs documentation offline (stdlib only).
+docshelf 0.1.1: look up DevDocs documentation offline (stdlib only).
 This is the command reference; `<command> --help` adds only the options
 listed at the end. REF = <docvol>:<path>[#anchor], as search and fts print
 them; <docvol> is the name `list` prints.
@@ -1663,8 +1664,10 @@ A docvol is a DevDocs documentation plus docshelf's own metadata, indexes
 and notes.
 
 Look up (usual order):
-  search QUERY... [-d NAME]      entries whose names contain all the words;
-                                 prints one REF per entry, best first
+  search QUERY... [-d NAME]      entries whose names contain all the words,
+                                 and headings inside pages when no entry
+                                 name is an exact match; one REF per hit,
+                                 best first
   show REF                       that entry's section (max 150 lines) plus
                                  your notes for it
   show REF --grep TEXT           only lines containing TEXT, with their
@@ -2256,6 +2259,67 @@ class NotesPageHeadingTests(unittest.TestCase):
         self.assertEqual(shelf_notes.heading_refs(blocks),
                          [("A", "a"), ("no_id(x)", "a"), ("Bare", None)])
         self.assertTrue(shelf_ds.pages())
+
+
+class SearchHeadingTests(unittest.TestCase):
+    """search falls back to headings inside pages when no entry name matches
+    (DuckDB indexes whole sections, so function names are only headings)."""
+    UTIL, OTHER = NotesPageHeadingTests.UTIL, NotesPageHeadingTests.OTHER
+
+    def setUp(self):
+        NotesPageHeadingTests.setUp(self)
+
+    def cli(self, *args):
+        return run_cli(*args, env=self.env, cwd=self.tmp)
+
+    def test_entry_miss_lists_matching_page_headings(self):
+        r = self.cli("search", "count_if", "-d", "duckdb")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        out = r.stdout.splitlines()
+        self.assertIn("headings inside pages", out[0])
+        self.assertIn("duckdb:sql/utility#count_ifx  (heading)  count_if(x)", out)
+        self.assertNotIn("typeof", r.stdout)
+
+    def test_entry_hit_skips_headings(self):
+        r = self.cli("search", "misc", "-d", "duckdb")
+        self.assertIn("duckdb:sql/other#misc  Section  Misc", r.stdout.splitlines())
+        self.assertNotIn("(heading)", r.stdout)
+
+    def test_type_filter_skips_headings(self):
+        r = self.cli("search", "count_if", "-d", "duckdb", "--type", "Section")
+        self.assertNotIn("(heading)", r.stdout)
+        self.assertTrue(r.stdout.startswith(
+            "no matches for 'count_if' (entry names only"), r.stdout)
+
+    def add_beta(self):
+        page = ("<h2 id='regex'>Regular Expressions</h2>"
+                "<h3 id='using-rx'>Using rx_extract</h3><p>u</p>"
+                "<h4 id='rx_extracts'>rx_extract(s)</h4><p>e</p>"
+                "<h4 id='rx_extract_alls'>rx_extract_all(s)</h4><p>a</p>")
+        make_devdocs(self.cache, "beta", name="Beta", release="1",
+                     entries=[("Using rx_extract", "Section", "re#using-rx"),
+                              ("Regular Expressions", "Section", "re#regex")],
+                     pages={"re": page})
+
+    def test_substring_entry_hit_still_adds_exact_headings_first(self):
+        self.add_beta()
+        r = self.cli("search", "rx_extract", "-d", "beta")
+        self.assertEqual(r.stdout.splitlines(), [
+            "beta:re#rx_extracts  (heading)  rx_extract(s)",
+            "beta:re#using-rx  Section  Using rx_extract"])
+
+    def test_entry_hit_leaves_out_prefix_headings(self):
+        self.add_beta()
+        r = self.cli("search", "regular", "-d", "beta")
+        self.assertEqual(r.stdout.splitlines(),
+                         ["beta:re#regex  Section  Regular Expressions"])
+
+    def test_json_marks_heading_hits(self):
+        r = self.cli("search", "typeof", "-d", "duckdb", "--json")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertEqual(json.loads(r.stdout), [
+            {"ref": "duckdb:sql/utility#typeofx", "docvol": "duckdb",
+             "type": "(heading)", "name": "typeof(x)", "rank": 0}])
 
 
 class GrepDashValueTests(unittest.TestCase):
