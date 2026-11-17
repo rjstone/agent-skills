@@ -15,6 +15,10 @@ is written down, so the question is asked once per project.
    - an order to try them in (only when there are two or more),
    - no preference.
 
+   If docshelf is the only lookup tool, still ask (they may add
+   connectors), but the "order" option does not apply. If the user defers
+   or won't choose ("you decide", "whatever"), record no preference.
+
 ## Record the answer
 
 Add a `## Documentation lookups` section to the project's AGENTS.md if it
@@ -31,7 +35,7 @@ nothing written, say the question will come up again in later sessions.
   ```
 
 - An order: a numbered list of the tools in the user's order, with the
-  snippet's last paragraph.
+  snippet's last paragraph (on versions and downloads).
 - docshelf (or docshelf first): the snippet below.
 
 ## Snippet

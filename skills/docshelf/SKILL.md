@@ -26,9 +26,10 @@ A docvol is a DevDocs documentation, or a Dash/Zeal docset found on disk
 (read-only), plus docshelf's own metadata, indexes and notes.
 
 Use for exact, version-pinned reference (signatures, options, return values)
-quoted from the docs. Prefer Context7 or web search when the library has no
-docvol or you need the very latest release, and a per-library skill when one
-covers the task. Docvols can be stale: `list` shows versions.
+quoted from the docs. A `## Documentation lookups` section in AGENTS.md or
+CLAUDE.md takes precedence over what follows. Default when none exists:
+prefer Context7 or web search when the library has no docvol or you need
+the very latest release, and a per-library skill when one covers the task. Docvols can be stale: `list` shows versions.
 
 The documentation comes from DevDocs (https://devdocs.io); docshelf is not
 affiliated with DevDocs, and each documentation keeps its own licence:
@@ -94,9 +95,8 @@ User-contributed docsets carry their own licences.
 - Notes: write a lesson with `notes NAME --set HEADING --text TEXT` (or
   `--delete HEADING`); see [references/notes.md](references/notes.md).
 - Scope: a project `"docvols"` list in `.docshelf.json` limits searches to
-  those docvols. A project without one: run `suggest` and offer its list
-  to the user. Without a list, searches cover every installed docvol unless
-  more than 4 are full-size; then (exit 4) narrow with `-d NAME`, set the
+  those docvols. No list: run `suggest` and offer its list to the user;
+  until one is set, searches cover every installed docvol unless more than 4 are full-size; then (exit 4) narrow with `-d NAME`, set the
   list, or pass `--all`. The first `fts` on a docvol builds its index
   (seconds for large docvols); `index-text DOCVOL` builds it ahead.
 
