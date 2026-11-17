@@ -167,7 +167,7 @@ class DevDocsDocvol(Docvol):
             st = os.stat(self.db_path)
         except OSError:
             raise CLIError("docvol %s: db.json is missing" % self.name, 5)
-        return st.st_size, int(st.st_mtime)
+        return st.st_size, st.st_mtime_ns
 
     def page_index(self) -> Dict[str, Tuple[int, int]]:
         size, mtime = self._db_stat()
@@ -578,22 +578,25 @@ def _print_catalog_hits(cfg, args, words) -> None:
     here = {shelf_dash._norm(d.name): d.name
             for d in shelf_dash.installed_docsets(cfg)}
     zeal: dict = {}  # Zeal's catalog at most once per run
-    for label in shelf_dash.DOCSET_LISTS:
-        try:
-            names = shelf_dash.label_names(cfg, label, args.refresh, zeal)
-        except CLIError as e:
-            print("note: the Dash/Zeal %s list could not be loaded (%s)"
-                  % (label, e), file=sys.stderr)
-            continue
-        shown = 0
-        for name, _v, title in sorted(names):
-            key = shelf_dash._norm(name)
-            if shown < 30 and all(w in key or w in shelf_dash._norm(title)
-                                  for w in norm):
-                shown += 1
-                print("%s  (Dash/Zeal: download in the app, %s)%s" % (
-                    name, label,
-                    "  (here as %s)" % here[key] if key in here else ""))
+    try:
+        for label in shelf_dash.DOCSET_LISTS:
+            try:
+                names = shelf_dash.label_names(cfg, label, args.refresh, zeal)
+            except CLIError as e:
+                print("note: the Dash/Zeal %s list could not be loaded (%s)"
+                      % (label, e), file=sys.stderr)
+                continue
+            shown = 0
+            for name, _v, title in sorted(names):
+                key = shelf_dash._norm(name)
+                if shown < 30 and all(w in key or w in shelf_dash._norm(title)
+                                      for w in norm):
+                    shown += 1
+                    print("%s  (Dash/Zeal: download in the app, %s)%s" % (
+                        name, label,
+                        "  (here as %s)" % here[key] if key in here else ""))
+    finally:
+        shelf_dash.zeal_notes(zeal)  # once per run, after the lists
 
 
 def _row_version(row: dict) -> str:

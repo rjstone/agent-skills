@@ -210,7 +210,9 @@ def make_docset(root: str, name: str, entries: List[Tuple[str, str, str]],
 
 def make_tarix(docset: str, files: Dict[str, bytes]) -> None:
     """Move the docset's Documents/ files into Contents/Resources/tarix.tgz
-    (a zlib full flush before every tar record) and write tarixIndex.db."""
+    (a zlib full flush before every tar record) and write tarixIndex.db.
+    A value ("dir",) or ("symlink", target) makes that member a directory or
+    a symlink record instead of a file."""
     import tarfile
     import zlib
     res = os.path.join(docset, "Contents", "Resources")
@@ -223,8 +225,15 @@ def make_tarix(docset: str, files: Dict[str, bytes]) -> None:
         buf = io.BytesIO()
         with tarfile.open(fileobj=buf, mode="w:", format=tarfile.USTAR_FORMAT) as tar:
             info = tarfile.TarInfo("%s/Contents/Resources/Documents/%s" % (name, rel))
-            info.size = len(data)
-            tar.addfile(info, io.BytesIO(data))
+            if isinstance(data, tuple):  # ("dir",) or ("symlink", target)
+                if data[0] == "symlink":
+                    info.type, info.linkname = tarfile.SYMTYPE, data[1]
+                else:
+                    info.type = tarfile.DIRTYPE
+                tar.addfile(info)
+            else:
+                info.size = len(data)
+                tar.addfile(info, io.BytesIO(data))
         record = buf.getvalue()[:-1024]  # drop the end-of-archive blocks
         out += comp.flush(zlib.Z_FULL_FLUSH)
         rows.append(("%s/Contents/Resources/Documents/%s" % (name, rel),
@@ -452,6 +461,20 @@ class DevDocsDiskTests(unittest.TestCase):
         d2 = shelf_devdocs.installed_docvols(self.cfg())[0]
         self.assertEqual(d2.page_html("guide"), "<p>new text</p>")
         self.assertEqual(d.page_html("guide"), "<p>new text</p>")  # same object too
+
+    def test_index_rebuilt_when_db_mtime_changes_within_a_second(self):
+        folder = self.make()
+        db = os.path.join(folder, "db.json")
+        os.utime(db, ns=(1_800_000_000 * 10**9, 1_800_000_000 * 10**9))
+        d = shelf_devdocs.installed_docvols(self.cfg())[0]
+        d.page_html("guide")
+        os.utime(db, ns=(1_800_000_000 * 10**9 + 500_000_000,) * 2)  # same size
+        with mock.patch.object(shelf_devdocs, "build_page_index",
+                               wraps=shelf_devdocs.build_page_index) as spy:
+            shelf_devdocs.installed_docvols(self.cfg())[0].page_html("guide")
+            self.assertEqual(spy.call_count, 1)
+            shelf_devdocs.installed_docvols(self.cfg())[0].page_html("guide")
+            self.assertEqual(spy.call_count, 1)  # the second run reuses it
 
     def test_works_without_derived_dir(self):
         folder = self.make()
@@ -4765,6 +4788,83 @@ class DashFooterTests(unittest.TestCase):
             with open(path, encoding="utf-8") as f:  # rewritten, well-formed
                 self.assertEqual(json.load(f)["footer"], good.footer)
 
+    def _repeats_stamp(self):
+        with open(self._data_file("repeats.json"), encoding="utf-8") as f:
+            return json.load(f)["stamp"]
+
+    def test_repeats_cache_reused_by_a_new_process(self):
+        self.build(6)
+        first = self._docvol().repeats_info()
+        self.assertTrue(first.footer)
+        again = self._docvol()
+        with mock.patch.object(shelf_dash.DashDocvol, "detect_repeats",
+                               side_effect=AssertionError("detected again")):
+            self.assertEqual(again.repeats_info(), first)
+            self.assertEqual(again.repeats_info(), first)  # and per object
+
+    def test_repeats_detected_once_per_object_without_a_cache_file(self):
+        self.build(6)
+        ds = self._docvol()
+        with mock.patch.object(shelf_dash.DashDocvol, "detect_repeats",
+                               autospec=True,
+                               side_effect=shelf_dash.DashDocvol.detect_repeats) as spy:
+            ds.repeats_info()
+            ds.repeats_info()
+            self.assertEqual(spy.call_count, 1)
+
+    def test_repeats_rebuilt_when_the_docset_changes(self):
+        self.build(6)
+        ds = self._docvol()
+        ds.repeats_info()
+        stamp = self._repeats_stamp()
+        con = sqlite3.connect(os.path.join(ds.path, "Contents", "Resources",
+                                           "docSet.dsidx"))
+        try:
+            con.execute("INSERT INTO searchIndex (name, type, path) "
+                        "VALUES ('more', 'Guide', 'p1.html')")
+            con.commit()
+        finally:
+            con.close()
+        again = self._docvol()
+        with mock.patch.object(shelf_dash.DashDocvol, "detect_repeats",
+                               autospec=True,
+                               side_effect=shelf_dash.DashDocvol.detect_repeats) as spy:
+            again.repeats_info()
+            self.assertEqual(spy.call_count, 1)
+        self.assertNotEqual(self._repeats_stamp(), stamp)
+
+    def test_info_plist_index_page_is_the_keeper(self):
+        self.build(6)
+        with open(os.path.join(self.docs, "Lib.docset", "Contents", "Info.plist"),
+                  "wb") as f:
+            plistlib.dump({"CFBundleName": "Lib",
+                           "dashIndexFilePath": "p3.html"}, f)
+        self.assertEqual(self._docvol().repeats_info().keep, "p3.html")
+        self.assertIn("Licensed under the Example License.", self.show("p3.html"))
+        for page in ("p1.html", "p2.html"):
+            self.assertNotIn("Licensed under", self.show(page))
+        # a plist page that is not a docset page falls back to the first page
+        with open(os.path.join(self.docs, "Lib.docset", "Contents", "Info.plist"),
+                  "wb") as f:
+            plistlib.dump({"dashIndexFilePath": "nowhere.html"}, f)
+        self.assertEqual(self._docvol().repeats_info().keep, "p1.html")
+
+    def test_repeats_cache_write_failure_warns_and_still_works(self):
+        self.build(6)
+        ds = self._docvol()
+        os.makedirs(os.path.dirname(ds.data_dir()), exist_ok=True)
+        with open(ds.data_dir(), "w") as f:  # a file where the folder should be
+            f.write("x")
+        err = io.StringIO()
+        with contextlib.redirect_stderr(err):
+            found = ds.repeats_info()
+            ds.repeats_info()  # kept on the object: no second attempt
+        self.assertTrue(found.footer)
+        lines = [l for l in err.getvalue().splitlines() if l.strip()]
+        self.assertEqual(len(lines), 1, lines)
+        self.assertTrue(lines[0].startswith("warning: cannot write "), lines)
+        self.assertIn("repeats.json", lines[0])
+
     def test_repeat_format_bump_rebuilds_fts_and_headings_once(self):
         self.build(6)
         with mock.patch.dict(os.environ, self.env):
@@ -5326,6 +5426,152 @@ class DashCatalogTests(unittest.TestCase):
         self.assertIn("Python_3  (Dash/Zeal: download in the app, official)", out)
         self.assertIn("using the cached docset list from " + date, err)
         self.assertNotIn(shelf_dash.ZEAL_CATALOG_URL, self.net.fetched)
+
+    def fail(self, *urls):
+        for u in urls:
+            self.net.pages[u] = shelf_devdocs.NetError(u, "blocked")
+
+    def age_catalogs(self, days=30):
+        old = time.time() - days * 86400
+        cdir = os.path.join(self.cache, "docsets", "catalogs")
+        for n in os.listdir(cdir):
+            os.utime(os.path.join(cdir, n), (old, old))
+        return time.strftime("%Y-%m-%d", time.localtime(old))
+
+    def test_stale_zeal_cache_reused_offline(self):
+        self.zeal_install()
+        self.fail(shelf_dash.FEEDS_LIST_URL, shelf_dash.CONTRIB_LIST_URL)
+        self.main("sources", "python")  # GitHub down: Zeal's catalog is cached
+        self.assertTrue(os.path.isfile(os.path.join(
+            self.cache, "docsets", "catalogs", "zeal-catalog.json")))
+        date = self.age_catalogs()
+        self.fail(shelf_dash.ZEAL_CATALOG_URL)  # now nothing is reachable
+        code, out, err = self.main("sources", "python")
+        self.assertEqual(code, 0, err)
+        self.assertIn("Python_3  (Dash/Zeal: download in the app, official)", out)
+        self.assertIn("using the cached docset list from " + date, err)
+        self.assertIn("api.zealdocs.org", err)
+
+    def test_expired_catalog_is_fetched_again_and_rewritten(self):
+        self.zeal_install()
+        self.main("sources", "python")
+        self.age_catalogs()
+        self.net.fetched.clear()
+        self.main("sources", "python")
+        self.assertEqual(sorted(self.catalog_urls()),
+                         sorted([shelf_dash.FEEDS_LIST_URL, shelf_dash.CONTRIB_LIST_URL]))
+        path = os.path.join(self.cache, "docsets", "catalogs", "feeds-list.json")
+        self.assertLess(time.time() - os.path.getmtime(path), 3600)
+
+    def test_malformed_catalog_json_is_fetched_again(self):
+        self.zeal_install()
+        self.main("sources", "python")
+        cdir = os.path.join(self.cache, "docsets", "catalogs")
+        for n in os.listdir(cdir):
+            with open(os.path.join(cdir, n), "w") as f:
+                f.write("{not json")
+        self.net.fetched.clear()
+        code, out, err = self.main("sources", "python")
+        self.assertEqual(code, 0, err)
+        self.assertIn("Python_3  (Dash/Zeal: download in the app, official)", out)
+        self.assertEqual(len(self.catalog_urls()), 2)
+        with open(os.path.join(cdir, "feeds-list.json")) as f:
+            self.assertEqual(json.load(f), ["Python_3"])
+
+    def test_malformed_catalog_json_offline_is_the_network_error(self):
+        self.zeal_install()
+        cdir = os.path.join(self.cache, "docsets", "catalogs")
+        os.makedirs(cdir)
+        for n in ("feeds-list", "contrib-list", "zeal-catalog"):
+            with open(os.path.join(cdir, n + ".json"), "w") as f:
+                f.write("{not json")
+        self.fail(shelf_dash.FEEDS_LIST_URL, shelf_dash.CONTRIB_LIST_URL,
+                  shelf_dash.ZEAL_CATALOG_URL)
+        code, out, err = self.main("sources", "python")
+        self.assertEqual(code, 0)
+        self.assertNotIn("Dash/Zeal:", out)
+        self.assertIn("could not be loaded", err)
+
+    def test_not_installed_hint_ignores_malformed_catalogs(self):
+        self.zeal_install()
+        cdir = os.path.join(self.cache, "docsets", "catalogs")
+        os.makedirs(cdir)
+        with open(os.path.join(cdir, "contrib-list.json"), "w") as f:
+            f.write("[\"Lua\"")
+        with open(os.path.join(cdir, "zeal-catalog.json"), "w") as f:
+            json.dump({"not": "a list"}, f)
+        with open(os.path.join(cdir, "feeds-list.json"), "w") as f:
+            json.dump([1, None, ["x"], "Python_3"], f)
+        self.assertIsNone(shelf_dash.cached_catalog_match(
+            shelf_core.load_config(), "lua"))
+        self.assertEqual(shelf_dash.cached_catalog_match(
+            shelf_core.load_config(), "python 3"), "Python_3")
+        code, _, err = self.main("search", "x", "-d", "Lua")
+        self.assertEqual(code, 4)
+        self.assertIn("unknown docvol 'Lua'", err)
+
+    def test_mcp_catalog_network_error_reads_without_a_file_pointer(self):
+        import shelf_mcp
+        self.zeal_install()
+        self.fail(shelf_dash.FEEDS_LIST_URL, shelf_dash.CONTRIB_LIST_URL,
+                  shelf_dash.ZEAL_CATALOG_URL)
+        r = shelf_mcp.call_tool("sources", {"query": "python"})
+        text = r["content"][0]["text"]
+        self.assertFalse(r["isError"], text)
+        self.assertIn("python~3.12", text)
+        self.assertIn("cannot reach api.zealdocs.org", text)
+        self.assertIn(shelf_mcp.HINTS["assets/allowlist.txt"], text)
+        self.assertNotIn("assets/allowlist.txt", text)
+
+    def test_catalog_notes_name_the_lists_that_fell_back(self):
+        self.zeal_install()
+        mixed = json.dumps([
+            "junk", {"title": "No name", "sourceId": "com.kapeli.dash"},
+            {"name": "Bad_Versions", "sourceId": "com.kapeli.dash", "versions": 5},
+            {"name": "Lua", "sourceId": "com.kapeli.contrib", "versions": 7},
+            {"name": "Python_3", "title": "Python 3", "sourceId": "com.kapeli.dash"}])
+        self.net.pages[shelf_dash.ZEAL_CATALOG_URL] = mixed
+        # both lists fall back: one note naming both, one skipped note
+        self.fail(shelf_dash.FEEDS_LIST_URL, shelf_dash.CONTRIB_LIST_URL)
+        _, _, err = self.main("sources", "python")
+        self.assertEqual(err.count("came from Zeal's catalog"), 1, err)
+        self.assertIn("official and user-contributed docset lists came from Zeal's "
+                      "catalog", err)
+        self.assertEqual(err.count("skipped"), 1, err)
+        self.assertIn("skipped 4 malformed entries", err)
+        # only the official list falls back
+        self.net.pages[shelf_dash.CONTRIB_LIST_URL] = self.contrib
+        shutil.rmtree(os.path.join(self.cache, "docsets", "catalogs"))
+        _, _, err = self.main("sources", "python")
+        self.assertIn("official docset list came from Zeal's catalog", err)
+        self.assertNotIn("user-contributed", err)
+        self.assertEqual(err.count("skipped"), 1, err)
+        # only the contributed list falls back: nameless entries still counted
+        self.net.pages[shelf_dash.FEEDS_LIST_URL] = self.feeds
+        self.fail(shelf_dash.CONTRIB_LIST_URL)
+        shutil.rmtree(os.path.join(self.cache, "docsets", "catalogs"))
+        _, _, err = self.main("sources", "lua")
+        self.assertIn("user-contributed docset list came from Zeal's catalog", err)
+        self.assertNotIn("official docset list came", err)
+        self.assertEqual(err.count("skipped"), 1, err)
+        self.assertIn("skipped 3 malformed entries", err)  # 2 nameless + Lua's
+
+    def test_catalog_vanishing_between_checks_keeps_the_note(self):
+        self.zeal_install()
+        self.main("sources", "python")
+        self.age_catalogs()
+        self.fail(shelf_dash.FEEDS_LIST_URL, shelf_dash.CONTRIB_LIST_URL)
+        real = os.path.getmtime
+
+        def gone(path):  # the file disappears after it was read
+            if path.endswith("-list.json") and os.path.isfile(path):
+                raise FileNotFoundError(path)
+            return real(path)
+        with mock.patch.object(shelf_dash.os.path, "getmtime", gone):
+            code, out, err = self.main("sources", "python")
+        self.assertEqual(code, 0, err)
+        self.assertIn("Python_3  (Dash/Zeal: download in the app, official)", out)
+        self.assertIn("using the cached docset list from an unknown date", err)
 
     def test_catalog_failure_keeps_devdocs_part(self):
         self.zeal_install()
@@ -6269,6 +6515,200 @@ class FinalReviewFixTests(unittest.TestCase):
         self.addCleanup(os.umask, old)
         self.assertEqual(shelf_core.umask_mode(), 0o640)
         self.assertEqual(shelf_notes._new_file_mode(), 0o640)
+
+
+class DocsetStampTests(unittest.TestCase):
+    """6.4.1: a docset's stamp keeps the full mtime (ns), not whole seconds."""
+    ENTRIES = [("open", "Function", "lib.html#open"), ("os", "Module", "os.html")]
+    PAGES = {"lib.html": "<h1>lib</h1><p>Opens files.</p>",
+             "os.html": "<h1>os</h1><p>Operating system calls.</p>"}
+    SEC = 1_800_000_000 * 10**9
+
+    def setUp(self):
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        self.tmp = os.path.realpath(tmp.name)
+        self.docs = os.path.join(self.tmp, "docs")
+        self.cache = os.path.join(self.tmp, "cache")
+        self.path = make_docset(self.docs, "Lib", self.ENTRIES, self.PAGES, wal=True)
+        self.wal = os.path.join(self.path, "Contents", "Resources", "docSet.dsidx-wal")
+        os.utime(self.wal, ns=(self.SEC, self.SEC))
+
+    def open(self):
+        return shelf_dash.DashDocvol(self.path, "folder", self.cache)
+
+    def test_stamp_is_size_and_nanosecond_mtime_of_each_file(self):
+        parts = shelf_dash.docset_stamp(self.path).split("|")
+        self.assertEqual(len(parts), 6)  # index, -wal, tarix.tgz, tarix index, -wal, plist
+        st = os.stat(self.wal)
+        self.assertEqual(parts[1], "%d:%d" % (st.st_size, self.SEC))
+        self.assertEqual(parts[2:], ["-"] * 4)
+
+    def test_stamp_changes_for_a_same_size_change_within_a_second(self):
+        before = shelf_dash.docset_stamp(self.path)
+        os.utime(self.wal, ns=(self.SEC + 500_000_000,) * 2)
+        self.assertNotEqual(shelf_dash.docset_stamp(self.path), before)
+
+    def test_wal_copy_refreshed_for_a_change_within_a_second(self):
+        self.assertEqual(len(self.open().entries()), 2)
+        os.utime(self.wal, ns=(self.SEC + 500_000_000,) * 2)
+        with mock.patch.object(shelf_dash.shutil, "copyfile",
+                               wraps=shutil.copyfile) as cp:
+            self.assertEqual(len(self.open().entries()), 2)
+            self.assertGreater(cp.call_count, 0)
+            cp.reset_mock()
+            self.assertEqual(len(self.open().entries()), 2)
+            self.assertEqual(cp.call_count, 0)  # a second run doesn't copy again
+
+    def test_discovery_memo_key_sees_a_change_within_a_second(self):
+        env = {"HOME": self.tmp, "USERPROFILE": self.tmp,
+               "DOCSHELF_DOCSET_DIRS": self.docs}
+        cfg = shelf_core.load_config(self.tmp, env)
+        with mock.patch.object(shelf_dash, "_OPEN_MEMO", []) as memo:
+            shelf_dash._open_all(cfg, env)
+            first = memo[0][0]
+            os.utime(self.wal, ns=(self.SEC + 500_000_000,) * 2)
+            shelf_dash._open_all(cfg, env)
+            self.assertNotEqual(memo[0][0], first)
+
+    def test_fts_and_repeats_caches_stable_on_a_second_run(self):
+        env = {"HOME": self.tmp, "USERPROFILE": self.tmp,
+               "DOCSHELF_DOCSET_DIRS": self.docs, "DOCSHELF_CACHE_DIR": self.cache,
+               "DOCSHELF_NOTES_DIR": os.path.join(self.tmp, "notes")}
+        cfg = shelf_core.load_config(self.tmp, env)
+        with mock.patch.dict(os.environ, env), \
+                mock.patch.object(shelf_lookup, "build_fts",
+                                  wraps=shelf_lookup.build_fts) as built:
+            for _ in range(3):
+                ds = shelf_backends.installed_docvols(cfg)[0]
+                shelf_lookup.ensure_fts(cfg, ds)
+            self.assertEqual(built.call_count, 1)
+
+
+class DashContainmentTests(unittest.TestCase):
+    """6.4.2: absolute and backslash page paths never reach a file outside
+    Documents/ (on disk or in a tarix archive)."""
+
+    DRIVE = "C"  # joined to ":\\..." in the tests: no drive-letter literal in the repo
+
+    def setUp(self):
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        self.tmp = os.path.realpath(tmp.name)
+        self.path = make_docset(self.tmp, "Lib", [("os", "Module", "os.html")],
+                                {"os.html": "<h1>os</h1>"})
+        self.dv = shelf_dash.DashDocvol(self.path, "dash", os.path.join(self.tmp, "cache"))
+        self.outside = os.path.join(self.dv.path, "Contents", "Resources", "secret.html")
+        with open(self.outside, "w") as f:
+            f.write("<p>secret</p>")
+
+    def refused(self, dv, page):
+        with self.assertRaises(CLIError, msg=page) as c:
+            dv.page_html(page)
+        self.assertEqual(c.exception.code, 5, page)
+
+    def bad_pages(self):
+        return ["/etc/passwd", self.outside, "/" + "../" * 8 + "etc/passwd",
+                self.DRIVE + ":\\Windows\\win.ini", self.DRIVE + ":/Windows/win.ini", "\\\\host\\share\\x",
+                "..\\secret.html", "..\\..\\Info.plist", "sub\\..\\..\\secret.html",
+                "../secret.html", "./../secret.html"]
+
+    def test_on_disk_pages_outside_documents_refused(self):
+        for page in self.bad_pages():
+            self.refused(self.dv, page)
+            self.assertIsNone(self.dv.resolve_href("os.html", page))
+
+    def test_backslash_names_are_literal_not_separators_on_disk(self):
+        # a file literally named "a\\b.html" is not reachable as a/b.html
+        name = "a\\b.html"
+        if os.sep == "/":
+            with open(os.path.join(self.dv.docs_dir, name), "w") as f:
+                f.write("<p>literal</p>")
+            self.assertEqual(self.dv.page_html(name), "<p>literal</p>")
+            self.refused(self.dv, "a/b.html")
+
+    def test_tarix_pages_outside_documents_refused(self):
+        make_tarix(self.path, {"os.html": b"<h1>os</h1>"})
+        dv = shelf_dash.DashDocvol(self.path, "dash", os.path.join(self.tmp, "cache2"))
+        for page in self.bad_pages():
+            self.refused(dv, page)
+            self.assertFalse(dv._has_page(page))
+
+    def test_tarix_rel_refuses_escape_in_every_spelling(self):
+        for page in ("..", ".", "../x", "..\\x", "a/../../x", "a\\..\\..\\x"):
+            with self.assertRaises(CLIError, msg=page) as c:
+                self.dv._tarix_rel(page)
+            self.assertEqual(c.exception.code, 5, page)
+        for page, rel in (("/etc/passwd", "etc/passwd"), ("a\\b.html", "a/b.html"),
+                          (self.DRIVE + ":\\x", self.DRIVE + ":/x"), ("a/../b.html", "b.html"),
+                          ("/../x", "x"), ("\\..\\x", "x")):  # rooted: stays inside
+            self.assertEqual(self.dv._tarix_rel(page),
+                             "Contents/Resources/Documents/" + rel, page)
+
+
+class DashTarixEdgeTests(unittest.TestCase):
+    """6.4.4: odd tarix members, a truncated archive, containment first."""
+
+    def setUp(self):
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        self.tmp = os.path.realpath(tmp.name)
+        self.path = make_docset(self.tmp, "Lib", [("os", "Module", "os.html")],
+                                {"os.html": "<h1>os</h1>"})
+        self.res = os.path.join(self.path, "Contents", "Resources")
+
+    def docvol(self, files):
+        make_tarix(self.path, files)
+        return shelf_dash.DashDocvol(self.path, "dash", os.path.join(self.tmp, "cache"))
+
+    def test_symlink_and_directory_members_are_not_pages(self):
+        dv = self.docvol({"os.html": b"<h1>os</h1>", "link.html": ("symlink", "os.html"),
+                          "evil.html": ("symlink", "/etc/passwd"), "sub": ("dir",)})
+        self.assertEqual(dv.page_html("os.html"), "<h1>os</h1>")
+        for page in ("link.html", "evil.html", "sub"):
+            with self.assertRaises(CLIError, msg=page) as c:
+                dv.page_html(page)
+            self.assertEqual(c.exception.code, 7, page)
+            self.assertIn("no file record", str(c.exception))
+
+    def test_truncated_archive_exit_7(self):
+        dv = self.docvol({"os.html": b"<h1>os</h1>" * 50, "a.html": b"<p>a</p>" * 50})
+        archive = os.path.join(self.res, "tarix.tgz")
+        size = os.path.getsize(archive)
+        with contextlib.closing(sqlite3.connect(
+                os.path.join(self.res, "tarixIndex.db"))) as con:
+            offset = int(con.execute("SELECT hash FROM tarindex WHERE path LIKE "
+                                     "'%a.html'").fetchone()[0].split()[1])
+        for keep in (0, offset, offset + 20, size - 8):  # cut at, in and near the end
+            with open(archive, "r+b") as f:
+                f.truncate(keep)
+            with self.assertRaises(CLIError, msg=keep) as c:
+                dv.page_html("a.html")
+            self.assertEqual(c.exception.code, 7, keep)
+            self.assertIn("a.html", str(c.exception))
+
+    def test_missing_archive_with_index_is_a_missing_page(self):
+        dv = self.docvol({"os.html": b"<h1>os</h1>"})
+        os.remove(os.path.join(self.res, "tarix.tgz"))
+        with self.assertRaises(CLIError) as c:
+            dv.page_html("os.html")
+        self.assertEqual(c.exception.code, 5)
+
+    def test_escape_refused_before_the_index_is_consulted(self):
+        # the index holds a row for the escaping path itself: only the
+        # containment check (not a failed lookup) keeps it out
+        dv = self.docvol({"os.html": b"<h1>os</h1>", "../evil.html": b"<p>evil</p>"})
+        with contextlib.closing(sqlite3.connect(
+                os.path.join(self.res, "tarixIndex.db"))) as con:
+            rows = [r[0] for r in con.execute("SELECT path FROM tarindex")]
+        self.assertTrue(any("Documents/../evil.html" in r for r in rows), rows)
+        with mock.patch.object(dv, "_tarix_row", wraps=dv._tarix_row) as lookup:
+            for page in ("../evil.html", "..\\evil.html", "a/../../evil.html"):
+                with self.assertRaises(CLIError, msg=page) as c:
+                    dv.page_html(page)
+                self.assertEqual(c.exception.code, 5, page)
+                self.assertFalse(dv._has_page(page), page)
+            self.assertEqual(lookup.call_count, 0)  # never looked up
 
 
 if __name__ == "__main__":

@@ -143,8 +143,10 @@ def _load_json(path):
 
 
 def docset_stamp(path: str) -> str:
-    """(size, mtime) of the files that change when a docset is updated: its
-    index and WAL, tarix archive and index and WAL, and Info.plist."""
+    """(size, mtime in nanoseconds) of the files that change when a docset is
+    updated: its index and WAL, tarix archive and index and WAL, and
+    Info.plist. The mtime is not truncated to whole seconds: a change within
+    the same second as the last one must still change the stamp."""
     res = os.path.join(path, "Contents", "Resources")
     tarix_index = os.path.join(res, "tarixIndex.db")
     index = os.path.join(path, *INDEX_REL)
@@ -154,7 +156,7 @@ def docset_stamp(path: str) -> str:
               os.path.join(path, "Contents", "Info.plist")):
         try:
             st = os.stat(f)
-            parts.append("%d:%d" % (st.st_size, int(st.st_mtime)))
+            parts.append("%d:%d" % (st.st_size, st.st_mtime_ns))
         except OSError:
             parts.append("-")
     return "|".join(parts)
@@ -924,25 +926,34 @@ def _first_version(e) -> str:
 
 
 def _zeal_rows(cat, source_id: str):
-    """((name, version, title) rows of one kind, number of malformed entries
-    skipped) from Zeal's catalog; one bad entry never spoils the rest. An
-    entry with no readable name has no kind: it is counted with the official
-    list only, so the two lists never report it twice."""
+    """(name, version, title) rows of one kind from Zeal's catalog, and the
+    number of malformed entries of that kind skipped; one bad entry never
+    spoils the rest. An entry with no readable name has no kind: _zeal_nameless
+    counts it, so the two lists never report it twice."""
     out, skipped = [], 0
     for e in cat:
-        try:
-            name = e["name"]
-            if not isinstance(name, str) or not name:
-                raise ValueError("no name")
-        except _SOURCE_ERRORS:
-            skipped += source_id == DOCSET_LISTS["official"][4]
+        if _nameless(e):
             continue
         try:
             if e.get("sourceId") == source_id:
-                out.append((name, _first_version(e), str(e.get("title") or "")))
+                out.append((e["name"], _first_version(e), str(e.get("title") or "")))
         except _SOURCE_ERRORS:
             skipped += 1
     return out, skipped
+
+
+def _nameless(e) -> bool:
+    """True for a catalog entry that is no dict or has no readable name."""
+    try:
+        name = e["name"]
+    except _SOURCE_ERRORS:
+        return True
+    return not isinstance(name, str) or not name
+
+
+def _zeal_nameless(cat) -> int:
+    """How many entries of Zeal's catalog have no readable name."""
+    return sum(1 for e in cat if _nameless(e))
 
 
 def _cached_or_fetched(cfg, key: str, url: str, refresh: bool, slim):
@@ -957,8 +968,11 @@ def _cached_or_fetched(cfg, key: str, url: str, refresh: bool, slim):
         stale = _read_catalog(cfg, key)
         if stale is None:
             raise
-        date = datetime.fromtimestamp(
-            os.path.getmtime(_catalog_path(cfg, key))).strftime("%Y-%m-%d")
+        try:
+            date = datetime.fromtimestamp(
+                os.path.getmtime(_catalog_path(cfg, key))).strftime("%Y-%m-%d")
+        except OSError:  # the file went away after it was read
+            date = "an unknown date"
         print("note: using the cached docset list from %s (could not reach %s)"
               % (date, urlsplit(url).hostname or url), file=sys.stderr)
         return stale
@@ -971,7 +985,9 @@ def label_names(cfg, label: str, refresh: bool = False,
     """(name, version, title) of each docset of one kind: from GitHub (names
     only), from Zeal's catalog only when GitHub fails. CLIError(7) when both
     fail. zeal: a dict shared by the calls of one run, so Zeal's catalog is
-    fetched (or found unreachable) at most once per run."""
+    fetched (or found unreachable) at most once per run; the notes about the
+    fallback are printed once per run by zeal_notes(zeal), which the caller
+    calls after its last label (without zeal, they are printed here)."""
     key, url, kind, suffix, source_id = DOCSET_LISTS[label]
     try:
         names = _cached_or_fetched(cfg, key, url, refresh,
@@ -980,21 +996,38 @@ def label_names(cfg, label: str, refresh: bool = False,
     except _SOURCE_ERRORS as first:
         if getattr(first, "code", 7) != 7:
             raise
+        memo = zeal if zeal is not None else {}
         try:
-            cat = _zeal_once(cfg, refresh, zeal if zeal is not None else {})
+            cat = _zeal_once(cfg, refresh, memo)
             out, skipped = _zeal_rows(cat, source_id)
         except _SOURCE_ERRORS as e:
             raise CLIError("cannot load the %s docset list (GitHub: %s; Zeal's "
                            "catalog: %s)" % (label, first, e), 7)
-        if zeal is None or not zeal.get("noted"):
-            if zeal is not None:
-                zeal["noted"] = True
-            print("note (no action needed): the docset lists came from Zeal's "
-                  "catalog; GitHub was unreachable (%s)" % first, file=sys.stderr)
-        if skipped:
-            print("note: skipped %d malformed entr%s in Zeal's catalog"
-                  % (skipped, "y" if skipped == 1 else "ies"), file=sys.stderr)
+        if "nameless" not in memo:  # counted once, whichever list falls back
+            memo["nameless"] = _zeal_nameless(cat)
+        memo["skipped"] = memo.get("skipped", 0) + skipped
+        memo.setdefault("fell_back", []).append(label)
+        memo.setdefault("github_error", first)
+        if zeal is None:
+            zeal_notes(memo)
         return out
+
+
+def zeal_notes(zeal: dict) -> None:
+    """Print, once per run, which docset lists came from Zeal's catalog (the
+    lists that fell back, not all of them) and how many malformed catalog
+    entries were skipped; then forget them."""
+    fell_back = zeal.pop("fell_back", [])
+    skipped = zeal.pop("skipped", 0) + (zeal.get("nameless", 0) if fell_back else 0)
+    first = zeal.pop("github_error", None)
+    if fell_back:
+        print("note (no action needed): the %s docset list%s came from Zeal's "
+              "catalog; GitHub was unreachable (%s)"
+              % (" and ".join(fell_back), "s" if len(fell_back) > 1 else "", first),
+              file=sys.stderr)
+    if skipped:
+        print("note: skipped %d malformed entr%s in Zeal's catalog"
+              % (skipped, "y" if skipped == 1 else "ies"), file=sys.stderr)
 
 
 def _zeal_once(cfg, refresh: bool, memo: dict):
@@ -1016,16 +1049,19 @@ def catalog_names(cfg, refresh: bool = False) -> List[Tuple[str, str, str, str]]
     """(name, version, title, label) of every official and user-contributed
     docset; raises CLIError(7) when a kind cannot be loaded at all."""
     zeal: dict = {}
-    return [(n, v, t, label) for label in DOCSET_LISTS
-            for n, v, t in label_names(cfg, label, refresh, zeal)]
+    try:
+        return [(n, v, t, label) for label in DOCSET_LISTS
+                for n, v, t in label_names(cfg, label, refresh, zeal)]
+    finally:
+        zeal_notes(zeal)
 
 
 def cached_catalog_match(cfg, name: str) -> Optional[str]:
     """The docset name a cached catalog (any age; never the network) lists
     for name, compared by _norm; else None."""
     want = _norm(name)
-    for label, (key, _u, _k, _s, source_id) in DOCSET_LISTS.items():
-        names = _read_catalog(cfg, key)
+    for spec in DOCSET_LISTS.values():
+        names = _read_catalog(cfg, spec[0])
         if isinstance(names, list):
             for n in names:
                 if isinstance(n, str) and _norm(n) == want:
