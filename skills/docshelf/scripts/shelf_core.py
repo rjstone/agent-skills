@@ -5,10 +5,14 @@ import re
 import sys
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
-from typing import Iterator, List, Optional, Tuple
+from typing import Dict, Iterator, List, Optional, Tuple
 
-VERSION = "0.3.0"
+VERSION = "0.4.0"
 PROJECT_FILE = ".docshelf.json"
+
+
+def warn(msg: str) -> None:
+    print("warning: " + msg, file=sys.stderr)
 
 
 class CLIError(Exception):
@@ -208,6 +212,18 @@ class Docvol(ABC):
     release: str
     aliases: Tuple[str, ...] = ()
     entry_count: int = 0
+    source: str = ""          # "devdocs", "dash", "zeal" or "folder"
+    read_only: bool = False
+    version: str = ""
+    _href_known: Optional[set] = None
+
+    @property
+    def display_name(self) -> str:
+        return self.__dict__.get("_display_name") or self.title
+
+    @display_name.setter
+    def display_name(self, value: str) -> None:
+        self._display_name = value
 
     @property
     def full_size(self) -> bool:
@@ -225,6 +241,18 @@ class Docvol(ABC):
     def page_html(self, page: str) -> str:
         """The page's HTML; CLIError(code 5) when there is no such page."""
 
+    def page_blocks(self, page: str, link=None) -> "List[Block]":
+        """The page as text blocks (see shelf_render.html_to_text)."""
+        from shelf_render import html_to_text  # lazy: shelf_render imports us
+        return html_to_text(self.page_html(page), link=link)
+
+    def resolve_href(self, page: str, href: str) -> Optional[str]:
+        """The REF a link on page points to, or None."""
+        if self._href_known is None:
+            self._href_known = set(self.pages())
+        target, frag = resolve_doc_path(page, href)
+        return self.make_ref(target, frag) if target in self._href_known else None
+
     @abstractmethod
     def resolve(self, rest: str) -> Tuple[str, Optional[str], Optional[Entry]]:
         """(page, anchor, the entry whose REF part is exactly rest or None)."""
@@ -240,6 +268,22 @@ class Docvol(ABC):
     @abstractmethod
     def data_dir(self) -> str:
         """Folder for derived files."""
+
+
+def resolve_doc_path(page, href):
+    """href resolved against the page's folder: '..' pops, a leading '/' is
+    the docvol root; returns (path, fragment or None)."""
+    rel, _, frag = href.partition("#")
+    segments = [] if rel.startswith("/") else page.split("/")[:-1]
+    for part in rel.split("/"):
+        if part in ("", "."):
+            continue
+        if part == "..":
+            if segments:
+                segments.pop()
+        else:
+            segments.append(part)
+    return "/".join(segments), frag or None
 
 
 def rank(query: str, name: str) -> Optional[int]:
@@ -287,23 +331,48 @@ def pick_docvol(docvols, name, error=None) -> Docvol:
 
 
 def select_docvols(cfg, all_docvols, names, use_all) -> List[Docvol]:
-    """Scope: names > project list > all if <= 4 full-size or use_all."""
+    """Scope: names > project list > all if <= 4 full-size or use_all.
+    A name picks the docvol of that exact name, else every docvol of that
+    family (a family name selects all its versions), else whatever
+    pick_docvol finds (alias, title)."""
     wanted = names or cfg.project_docvols
     if wanted:
-        picked = []
+        chosen = []
         for n in wanted:
-            d = pick_docvol(all_docvols, n, ScopeError)
-            if d not in picked:
-                picked.append(d)
-        return picked
+            low = n.lower()
+            hit = ([d for d in all_docvols if d.name == n]
+                   or [d for d in all_docvols if d.name.lower() == low]
+                   or [d for d in all_docvols if d.family.lower() == low])
+            if not hit:
+                hit = [pick_docvol(all_docvols, n, ScopeError)]
+            chosen.extend(hit)
+        return [d for d in all_docvols if d in chosen]
     full = [d for d in all_docvols if d.full_size]
     if use_all or len(full) <= MAX_FULL_UNSCOPED:
         return list(all_docvols)
+    counts: Dict[str, int] = {}
+    for d in full:
+        counts[d.family] = counts.get(d.family, 0) + 1
+    listed = ", ".join("%s (%d)" % (f, c) if c > 1 else f
+                       for f, c in sorted(counts.items()))
     raise ScopeError(
         "%d full-size docvols and no scope; searching all of them is slow and "
-        "noisy.\nFull-size docvols: %s\nNarrow it with -d NAME (repeatable), "
-        "a \"docvols\" list in %s, or search everything with --all."
-        % (len(full), ", ".join(d.name for d in full), PROJECT_FILE))
+        "noisy.\nFull-size docvols: %s\nNarrow it with -d NAME (repeatable; "
+        "a family name picks all its versions), a \"docvols\" list in %s, or "
+        "search everything with --all."
+        % (len(full), listed, PROJECT_FILE))
+
+
+def same_family_note(docs) -> Optional[str]:
+    """Note for the first family with two or more docvols in docs, or None."""
+    groups: Dict[str, List[str]] = {}
+    for d in docs:
+        groups.setdefault(d.family, []).append(d.name)
+    for family, names in groups.items():
+        if len(names) > 1:
+            return ("note: searching %d docvols of %s (%s); -d NAME picks one"
+                    % (len(names), family, ", ".join(names)))
+    return None
 
 
 def cap_lines(lines, max_lines, hint) -> List[str]:

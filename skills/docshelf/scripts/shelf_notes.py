@@ -7,9 +7,9 @@ import sys
 import tempfile
 from typing import Dict, Iterable, List, Optional, Tuple
 
+import shelf_backends
 import shelf_devdocs
-from shelf_core import CLIError, Config, pick_docvol, short_name
-from shelf_render import html_to_text
+from shelf_core import CLIError, Config, pick_docvol, short_name, warn
 
 NOTES_GENERAL_MAX = 50
 NOTES_SECTION_MAX = 100
@@ -173,7 +173,7 @@ def heading_refs(blocks) -> List[Tuple[str, Optional[str]]]:
     return out
 
 
-HEADINGS_FORMAT = 2  # bump when what headings.json holds changes
+HEADINGS_FORMAT = 5  # bump when headings.json changes (3: footers, 4-5: headers)
 
 
 def docvol_headings(ds) -> Dict[str, List[List[Optional[str]]]]:
@@ -199,7 +199,7 @@ def headings_index(ds) -> Tuple[Dict[str, List[List[Optional[str]]]], int]:
     skipped = 0
     for page in ds.pages():
         try:
-            blocks = html_to_text(ds.page_html(page))
+            blocks = ds.page_blocks(page)
         except (OSError, ValueError, CLIError):
             skipped += 1
             continue
@@ -218,7 +218,7 @@ def headings_index(ds) -> Tuple[Dict[str, List[List[Optional[str]]]], int]:
             shelf_devdocs._discard(tmp)
             raise
     except OSError as e:
-        shelf_devdocs._warn("cannot write %s: %s" % (cache, e))
+        warn("cannot write %s: %s" % (cache, e))
     return heads, skipped
 
 
@@ -255,7 +255,7 @@ def notes_matches(text, entries, page_headings=()) -> List[str]:
 
 
 def cmd_notes(cfg: Config, args) -> int:
-    docvols = shelf_devdocs.installed_docvols(cfg)
+    docvols = shelf_backends.installed_docvols(cfg)
     low = args.docvol.lower()
     family = next((d.family for d in docvols if d.family.lower() == low), None)
     if family is None:

@@ -22,11 +22,24 @@
       template instead of hand-editing each.
 - [ ] `opencode-build` `ERRATA.md`: record the doc mistakes already seen
       (verify each against the installed `@opencode/plugin` types).
-- [ ] `docshelf`: a read-only Dash/Zeal backend for docsets the user
-      already has (from `skill/dash-docset` before it is archived). It
-      downloads nothing and may be preferred over downloading the same
-      documentation from DevDocs. Same CLI and MCP interface,
-      equivalent search and FTS (the user, 2026-11-16).
+- [ ] `docshelf`: skim other docset and DevDocs readers for ideas (list
+      gathered 2026-11; the user wants to look through them later).
+      Read Zeal's folder, no network:
+      https://github.com/andreas-mausch/docset-mcp (Rust, list/search/page),
+      https://github.com/keturn/ZDocsetMCP (Python, MIT, many tools incl.
+      cheat sheets, entries by type),
+      https://github.com/erno-szabados/zealmcp (Python, MIT, tiny).
+      Downloads docsets itself (via Zeal's catalog):
+      https://github.com/bbsvip/docset-mcp.
+      macOS / Dash only: https://github.com/Kapeli/dash-mcp-server,
+      https://github.com/codybrom/DocsetMCP,
+      https://github.com/joshuadanpeterson/enhanced-dash-mcp,
+      https://github.com/Robdel12/doc-fetcher-mcp,
+      https://github.com/nzrsky/appleref-mcp.
+      DevDocs-based: https://github.com/maxwhipw/devdocs-mcp,
+      `@madhan-g-p/devdocs-mcp-server` (npm). Non-MCP: dasht, and Zeal's
+      `zeal python:pprint` (opens the GUI). These are also candidates for
+      `references/dash-zeal.md`'s "check for an existing MCP server first".
 - [ ] `docshelf`: agent trials as dash-docset ran them (no-skill baseline,
       Haiku, the opencode model set, CLI vs `--mcp`): fine-tuning after v1
       (the user, 2026-11-16).
@@ -60,12 +73,33 @@
     names; `initialize` has no "instructions"; `"id": null` treated as a
     request; batch arrays rejected while 2025-03-26 is advertised;
     `_parser_defaults` reads argparse private attributes
-  - backend interface before the Dash backend: add `display_name` to the
-    Docvol base; a core installed-docvols aggregator; move href resolution
-    into a backend hook; `shelf_lookup` imports `_warn` from the backend
   - tests: expected "skipping" warning leaks to test stderr; no tests for
     `name=`-only anchors, CRLF notes, no-command help exit 2
   - `show` reads the notes file twice via private `_read_notes`
+- [ ] `docshelf`: deferred from the Dash/Zeal backend (0.4.0) reviews:
+  - WAL stamp uses whole-second mtimes; the stamp test only checks for "-"
+  - containment tests cover `..` only (no absolute or backslash paths);
+    `resolve()` scans entries linearly per id
+  - plist and `_index_page` reads catch bare `Exception`
+  - tarix: no tests for symlink/dir members or a truncated archive; the
+    containment-before-lookup test isn't discriminating; `resolve_href`
+    turns exit-7 errors into None silently; the tarix index is opened and
+    its prefix probed per lookup (cache the prefix per docvol)
+  - `where` prints `[source]` only for existing folders; `where_lines` and
+    `installed_docvols` each open every docset
+  - `repeats.json` items not type-checked on read; `REPEAT_FORMAT` bumps
+    don't invalidate the fts/headings indexes (bump `FTS_FORMAT` and
+    `HEADINGS_FORMAT` by hand); no tests for its cache reuse, stamp
+    rebuild, plist keeper page or write-failure warning
+  - lazy `import shelf_backends` in 3 functions; no
+    test for remove/update with a family name matching both kinds; `list`
+    repeats "also as" per pair
+  - the "came from Zeal's catalog" note prints once per list when both
+    fall back (the catalog itself is fetched once); one malformed `versions` entry discards the whole catalog with an
+    unclear note; unused loop variables in `cached_catalog_match`; no tests
+    for catalog cache expiry, malformed JSON or the MCP text of the new
+    NetError; a stale GitHub cache isn't reused when a refetch fails
+  - the long first line of SKILL.md's body
 
 ## Automation
 

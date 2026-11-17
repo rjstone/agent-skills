@@ -1,5 +1,6 @@
 """docshelf command line: the command table, parser and main()."""
 import argparse
+import os
 import sqlite3
 import sys
 import textwrap
@@ -7,6 +8,8 @@ from dataclasses import dataclass
 from typing import Any, Callable, List, Optional, Tuple
 
 import shelf_core
+import shelf_backends
+import shelf_dash
 import shelf_devdocs
 import shelf_lookup
 import shelf_notes
@@ -47,18 +50,24 @@ def cmd_where(cfg: Config, args: argparse.Namespace) -> int:
     print("cache: %s %s" % (cfg.cache_dir, src(cfg.cache_source, "DOCSHELF_CACHE_DIR")))
     print("notes: %s %s" % (cfg.notes_dir, src(cfg.notes_source, "DOCSHELF_NOTES_DIR")))
     print("project: %s" % (cfg.project_file or "none"))
+    for line in shelf_dash.where_lines(cfg):
+        print(line)
     return 0
 
 
 def cmd_list(cfg: Config, args: argparse.Namespace) -> int:
-    docvols = shelf_devdocs.installed_docvols(cfg)
+    docvols = shelf_backends.installed_docvols(cfg)
     if not docvols:
         print("no docvols installed (install NAME; sources QUERY finds names)")
         return 0
     for d in docvols:
-        print("%s  %s  %s  %d entries  %s" % (
+        also = "".join(
+            "  also as %s %s" % ("DevDocs" if d.read_only else "docset", o.name)
+            for o in docvols if shelf_backends.same_documentation(d, o))
+        print("%s  %s  %s  %d entries  %s  %s%s" % (
             d.name, d.display_name,
-            d.release, d.entry_count, "full" if d.full_size else "small"))
+            d.release, d.entry_count, "full" if d.full_size else "small",
+            d.source, also))
     return 0
 
 
@@ -70,7 +79,7 @@ COMMANDS: List[Command] = [
             "substring; fuzzy for entries only).",
             shelf_lookup.cmd_search, [
         Param(("query",), "Words to find in entry names or page headings.", nargs="+"),
-        Param(("-d", "--docvol"), "Docvol to search (repeatable).", repeat=True),
+        Param(("-d", "--docvol"), "Docvol or family to search (repeatable).", repeat=True),
         Param(("--type",), "Only entries of this type (no headings).", rare=True),
         Param(("--all",), "Search every installed docvol.", kind="flag", rare=True),
         Param(("--max-lines",), "Output line cap.", kind="posint", rare=True,
@@ -89,7 +98,7 @@ COMMANDS: List[Command] = [
     Command("fts", "Full-text search inside pages (SQLite FTS5).",
             shelf_lookup.cmd_fts, [
         Param(("query",), "Words that must all appear in a page.", nargs="+"),
-        Param(("-d", "--docvol"), "Docvol to search (repeatable).", repeat=True),
+        Param(("-d", "--docvol"), "Docvol or family to search (repeatable).", repeat=True),
         Param(("--all",), "Search every installed docvol.", kind="flag", rare=True),
         Param(("--max-lines",), "Output line cap.", kind="posint", rare=True,
               default=shelf_lookup.FTS_MAX_LINES),
@@ -108,6 +117,8 @@ COMMANDS: List[Command] = [
             shelf_devdocs.cmd_install, [
         Param(("names",), "Slug, alias or family (python, python~3.14).",
               nargs="+"),
+        Param(("--force",), "Download even when a Dash/Zeal docset has the "
+              "same documentation.", kind="flag", rare=True),
     ]),
     Command("update", "Re-download documentations that DevDocs has updated.",
             shelf_devdocs.cmd_update, [
@@ -142,9 +153,11 @@ TOP_HELP = """\
 docshelf {version}: look up DevDocs documentation offline (stdlib only).
 This is the command reference; `<command> --help` adds only the options
 listed at the end. REF = <docvol>:<path>[#anchor], as search and fts print
-them; <docvol> is the name `list` prints.
-A docvol is a DevDocs documentation plus docshelf's own metadata, indexes
-and notes.
+them; <docvol> is the name `list` prints. A Dash/Zeal docset's REFs read
+<Name>:<id> (an entry) and <Name>:page:<path>[#anchor] (a page).
+A docvol is a DevDocs documentation or a read-only Dash/Zeal docset on disk,
+plus docshelf's own metadata, indexes and notes. -d NAME takes a docvol or
+a family name (all its docvols, with a note).
 
 Look up (usual order):
   search QUERY... [-d NAME]      entries whose names contain all the words,
@@ -166,11 +179,17 @@ Notes (format: references/notes.md in the skill folder):
                                  then "ok"
 
 Get and manage docvols (references/getting-docvols.md):
-  list                           installed docvols and their versions
-  sources QUERY...               documentations DevDocs offers, with sizes
-  install NAME...                download one (NAME without a version = the
-                                 newest); update [NAME...]; remove NAME
-  where                          cache, notes folder and project file
+  list                           docvols, versions, source (devdocs, zeal,
+                                 dash) and "also as" redundancy flags
+  sources QUERY...               documentations DevDocs offers, with sizes;
+                                 docsets Dash or Zeal could download
+  install NAME... [--force]      download one (NAME without a version = the
+                                 newest); refuses documentation already on
+                                 disk as a docset unless --force; update
+                                 [NAME...]; remove NAME (DevDocs docvols
+                                 only: Dash or Zeal manages docsets)
+  where                          cache, notes folder, project file, docset
+                                 folders and Dash/Zeal apps found
   index-text DOCVOL              build the fts index now
 
 Only if you need these, see `<command> --help`:
@@ -255,6 +274,19 @@ def _join_grep_values(argv: List[str]) -> List[str]:
     return out
 
 
+def _closed_stdout() -> int:
+    """The reader of our output went away (`show REF | head`): end quietly.
+    stdout is pointed at the null device so the flush at exit can't raise
+    the same error again."""
+    try:
+        devnull = os.open(os.devnull, os.O_WRONLY)
+        os.dup2(devnull, sys.stdout.fileno())
+        os.close(devnull)
+    except (OSError, ValueError, AttributeError):
+        pass  # not a real file (tests); nothing left to flush
+    return 0
+
+
 def main(argv: Optional[List[str]] = None) -> int:
     parser = build_parser()
     argv = list(sys.argv[1:] if argv is None else argv)
@@ -283,6 +315,8 @@ def main(argv: Optional[List[str]] = None) -> int:
             cfg, e.docvol, lambda slug: "docshelf.py install " + slug))
         print(msg or str(e), file=sys.stderr)
         return e.code
+    except BrokenPipeError:
+        return _closed_stdout()
     except (OSError, sqlite3.Error, ValueError) as e:
         print("error: %s: %s" % (type(e).__name__, e), file=sys.stderr)
         return 2

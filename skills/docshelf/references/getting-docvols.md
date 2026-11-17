@@ -20,6 +20,13 @@ downloaded. Lookups work offline; only the commands below use the network.
   skipped with a warning.
 - `remove NAME` deletes the downloaded docvol. Notes are kept.
 
+A docset already on disk (Dash or Zeal) is used instead of `install`: the
+documentation is not downloaded again. `install` of a documentation that
+exists locally as a docset is refused unless `--force`, which is for when the
+user explicitly asks for the DevDocs copy. docshelf never installs, updates
+or removes docsets (see [dash-zeal.md](dash-zeal.md)); `sources` also lists
+docsets Dash or Zeal could download, when one of them is present.
+
 ## Sizes
 
 Some documentations are large (ansible is about 281 MB). Run `sources` first and

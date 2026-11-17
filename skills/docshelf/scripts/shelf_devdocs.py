@@ -13,7 +13,7 @@ from datetime import datetime, timezone
 from typing import Dict, List, Optional, Tuple
 from urllib.parse import urlsplit
 
-from shelf_core import VERSION, CLIError, Config, Docvol, Entry, pick_docvol
+from shelf_core import VERSION, CLIError, warn, Config, Docvol, Entry, pick_docvol
 
 DERIVED = ".docshelf"
 MANIFEST_URL = "https://devdocs.io/docs.json"
@@ -93,8 +93,7 @@ def read_span(db_path: str, span: Tuple[int, int]) -> str:
     return json.loads(raw.decode("utf-8"))
 
 
-def _warn(msg):
-    print("warning: " + msg, file=sys.stderr)
+_warn = warn
 
 
 def _load(path):
@@ -117,6 +116,8 @@ class DevDocsDocvol(Docvol):
         if not version and "~" in self.name:
             version = self.name.split("~", 1)[1].replace("_", " ")
         self.title = ("%s %s" % (base, version)).strip()
+        self.version = version
+        self.source = "devdocs"
         alias = meta.get("alias")
         self.aliases = (alias,) if alias else ()
         self.mtime = int(meta.get("mtime") or 0)
@@ -233,9 +234,8 @@ class NetError(CLIError):
     def __init__(self, url: str, reason: str):
         host = urlsplit(url).hostname or url
         super().__init__(
-            "cannot reach %s (%s). Hosts to allow are listed in "
-            "assets/allowlist.txt in the skill folder (devdocs.io, "
-            "documents.devdocs.io)." % (host, reason), 7)
+            "cannot reach %s (%s). The hosts docshelf may contact are listed "
+            "in assets/allowlist.txt in the skill folder." % (host, reason), 7)
 
 
 def _write_error(path: str, e: OSError) -> CLIError:
@@ -324,8 +324,17 @@ def not_installed_message(cfg: Config, name: str, how) -> Optional[str]:
         row = resolve_install(_manifest_rows(_load(
             os.path.join(devdocs_dir(cfg), "docs.json"))), name)
     except (OSError, ValueError, CLIError):
-        return None
-    return "docvol %r is not installed; DevDocs has it: %s" % (name, how(row["slug"]))
+        row = None
+    if row is not None:
+        return "docvol %r is not installed; DevDocs has it: %s" % (
+            name, how(row["slug"]))
+    import shelf_dash
+    docset = shelf_dash.cached_catalog_match(cfg, name)
+    if docset and shelf_dash.catalogs_wanted(os.environ):
+        return ("docvol %r is not installed; Dash/Zeal can download docset "
+                "%r (in the app); docshelf doesn't install docsets"
+                % (name, docset))
+    return None
 
 
 def _manifest_rows(data) -> List[dict]:
@@ -465,26 +474,92 @@ def cmd_sources(cfg, args) -> int:
             "  (installed)" if r["slug"] in have else ""))
     if not hits:
         print("no DevDocs documentation matches %s" % " ".join(args.query))
+    _print_catalog_hits(cfg, args, words)
     return 0
+
+
+def _print_catalog_hits(cfg, args, words) -> None:
+    """Dash/Zeal docset names matching the query, when an app or a docset
+    folder exists; a failing list is a note, never an error."""
+    import shelf_dash
+    if not shelf_dash.catalogs_wanted(os.environ):
+        return
+    norm = [shelf_dash._norm(w) for w in words]
+    here = {shelf_dash._norm(d.name): d.name
+            for d in shelf_dash.installed_docsets(cfg)}
+    zeal: dict = {}  # Zeal's catalog at most once per run
+    for label in shelf_dash.DOCSET_LISTS:
+        try:
+            names = shelf_dash.label_names(cfg, label, args.refresh, zeal)
+        except CLIError as e:
+            print("note: the Dash/Zeal %s list could not be loaded (%s)"
+                  % (label, e), file=sys.stderr)
+            continue
+        shown = 0
+        for name, _v, title in sorted(names):
+            key = shelf_dash._norm(name)
+            if shown < 30 and all(w in key or w in shelf_dash._norm(title)
+                                  for w in norm):
+                shown += 1
+                print("%s  (Dash/Zeal: download in the app, %s)%s" % (
+                    name, label,
+                    "  (here as %s)" % here[key] if key in here else ""))
+
+
+def _row_version(row: dict) -> str:
+    """A manifest row's version, as DevDocsDocvol derives it."""
+    version = str(row.get("version") or "")
+    slug = row["slug"]
+    if not version and "~" in slug:
+        version = slug.split("~", 1)[1].replace("_", " ")
+    return version
+
+
+def _refuse_redundant(cfg: Config, row: dict) -> None:
+    import types
+    import shelf_backends
+    want = types.SimpleNamespace(family=row["slug"].split("~")[0],
+                                 version=_row_version(row), read_only=False)
+    for d in shelf_backends.installed_docvols(cfg):
+        if d.read_only and shelf_backends.same_documentation(d, want):
+            raise CLIError(
+                "%s: Dash/Zeal docset %s has this documentation and is used "
+                "as is; install --force %s downloads it anyway"
+                % (row["slug"], d.name, row["slug"]), 2)
+
+
+def _refuse_read_only(d: Docvol) -> None:
+    if d.read_only:
+        raise CLIError("%s is a Dash/Zeal docset; Dash or Zeal manages it"
+                       % d.name, 2)
 
 
 def cmd_install(cfg, args) -> int:
     rows = get_manifest(cfg)
     for name in args.names:
         row = resolve_install(rows, name)
+        if not getattr(args, "force", False):
+            _refuse_redundant(cfg, row)
         status = install(cfg, row)
         print(_describe(cfg, status, row["slug"]))
     return 0
 
 
 def cmd_update(cfg, args) -> int:
-    have = installed_docvols(cfg)
+    import shelf_backends
+    have = shelf_backends.installed_docvols(cfg)
     if args.names:
         targets = [pick_docvol(have, n) for n in args.names]
+        for d in targets:
+            _refuse_read_only(d)
     else:
-        targets = have
+        targets = [d for d in have if not d.read_only]
     if not targets:
-        print("no docvols installed (install NAME; sources QUERY finds names)")
+        if have:
+            print("no DevDocs docvols to update (Dash/Zeal docsets are updated "
+                  "in Dash or Zeal)")
+        else:
+            print("no docvols installed (install NAME; sources QUERY finds names)")
         return 0
     rows = get_manifest(cfg, refresh=True)
     by_slug = {}
@@ -500,9 +575,14 @@ def cmd_update(cfg, args) -> int:
 
 
 def cmd_remove(cfg, args) -> int:
+    import shelf_backends
     try:
-        name = pick_docvol(installed_docvols(cfg), args.name).name
+        found = pick_docvol(shelf_backends.installed_docvols(cfg), args.name)
+        _refuse_read_only(found)
+        name = found.name
     except CLIError as e:
+        if e.code == 2:
+            raise
         name = _unloadable_folder(cfg, args.name)
         if e.code != 5 or name is None:
             raise
