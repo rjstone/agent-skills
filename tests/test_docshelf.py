@@ -1925,8 +1925,9 @@ Get and manage docvols (references/getting-docvols.md):
                                  dash) and "also as" redundancy flags
   sources QUERY...               documentations DevDocs offers, with sizes;
                                  docsets Dash or Zeal could download
-  install NAME... [--force]      download one (NAME without a version = the
-                                 newest); refuses documentation already on
+  install [NAME...] [--force]    download one (NAME without a version = the
+                                 newest; no NAME = the project's docvols
+                                 list); refuses documentation already on
                                  disk as a docset unless --force; update
                                  [NAME...]; remove NAME (DevDocs docvols
                                  only: Dash or Zeal manages docsets)
@@ -3553,6 +3554,85 @@ class DashFooterTests(unittest.TestCase):
         bare = self.show("bare.html")
         self.assertIn("Skip to main content", bare)
         self.assertIn("Menu", bare)
+
+
+class InstallProjectListTests(unittest.TestCase):
+    def setUp(self):
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        self.tmp = os.path.realpath(tmp.name)
+        self.cache = os.path.join(self.tmp, "cache")
+        self.docs = os.path.join(self.tmp, "docsets")
+        self.work = os.path.join(self.tmp, "work")
+        for d in (os.path.join(self.cache, "devdocs"), self.docs, self.work):
+            os.makedirs(d)
+        env = mock.patch.dict(os.environ, {
+            "HOME": self.tmp, "USERPROFILE": self.tmp,
+            "XDG_DATA_HOME": os.path.join(self.tmp, "data"),
+            "XDG_CONFIG_HOME": os.path.join(self.tmp, "config"),
+            "LOCALAPPDATA": os.path.join(self.tmp, "local"),
+            "PATH": os.path.join(self.tmp, "path"),
+            "DOCSHELF_DOCSET_DIRS": self.docs,
+            "DOCSHELF_CACHE_DIR": self.cache,
+            "DOCSHELF_NOTES_DIR": os.path.join(self.tmp, "notes")})
+        env.start()
+        self.addCleanup(env.stop)
+        old = os.getcwd()
+        os.chdir(self.work)
+        self.addCleanup(os.chdir, old)
+        entries = [("Intro", "Guide", "intro")]
+        pages = {"intro": "<h1>Intro</h1>"}
+        rows = [row("Lua", "lua~5.4", "5.4.6", version="5.4"),
+                row("Python", "python~3.12", "3.12.1", version="3.12")]
+        allp = {shelf_devdocs.MANIFEST_URL: json.dumps(rows)}
+        for r in rows:
+            allp.update(remote_docvol(r["slug"], entries, pages))
+        self.net = FakeNet(self, allp)
+
+    def main(self, *argv):
+        out, err = io.StringIO(), io.StringIO()
+        with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
+            code = shelf_cli.main(list(argv))
+        return code, out.getvalue(), err.getvalue()
+
+    def project(self, names):
+        with open(os.path.join(self.work, ".docshelf.json"), "w") as f:
+            json.dump({"docvols": names}, f)
+
+    def have(self):
+        return sorted(os.listdir(os.path.join(self.cache, "devdocs")))
+
+    def test_install_project_list(self):
+        self.main("install", "python~3.12")
+        self.project(["lua", "python"])
+        code, out, err = self.main("install")
+        self.assertEqual((code, err), (0, ""))
+        self.assertIn("installed lua~5.4", out)
+        self.assertIn("python: installed\n", out)
+        self.assertIn("lua~5.4", self.have())
+
+    def test_install_project_list_skips_docset(self):
+        make_docset(self.docs, "HTTP", [("frob", "Function", "api.html")],
+                    {"api.html": "<h1>frob</h1>"}, meta_version="1.0")
+        self.project(["http"])
+        code, out, err = self.main("install")
+        self.assertEqual((code, err), (0, ""))
+        self.assertEqual(out, "http: Dash/Zeal docset HTTP, "
+                              "not installed from DevDocs\n")
+
+    def test_install_project_list_unknown_name_continues(self):
+        self.project(["nosuchdoc", "lua"])
+        code, out, err = self.main("install")
+        self.assertEqual(code, 5)
+        self.assertIn("nosuchdoc", err)
+        self.assertIn("installed lua~5.4", out)
+        self.assertIn("lua~5.4", self.have())
+
+    def test_install_no_names_no_project_list(self):
+        code, out, err = self.main("install")
+        self.assertEqual(code, 2)
+        self.assertIn('install needs NAME (or a "docvols" list in '
+                      '.docshelf.json)', err)
 
 
 class DashReadOnlyTests(unittest.TestCase):

@@ -128,8 +128,8 @@ COMMANDS: List[Command] = [
     ]),
     Command("install", "Download documentations from DevDocs.",
             shelf_devdocs.cmd_install, [
-        Param(("names",), "Slug, alias or family (python, python~3.14).",
-              nargs="+"),
+        Param(("names",), "Slug, alias or family (python, python~3.14); "
+              "default: the project file's \"docvols\" list.", nargs="*"),
         Param(("--force",), "Download even when a Dash/Zeal docset has the "
               "same documentation.", kind="flag", rare=True),
     ]),
@@ -200,8 +200,9 @@ Get and manage docvols (references/getting-docvols.md):
                                  dash) and "also as" redundancy flags
   sources QUERY...               documentations DevDocs offers, with sizes;
                                  docsets Dash or Zeal could download
-  install NAME... [--force]      download one (NAME without a version = the
-                                 newest); refuses documentation already on
+  install [NAME...] [--force]    download one (NAME without a version = the
+                                 newest; no NAME = the project's docvols
+                                 list); refuses documentation already on
                                  disk as a docset unless --force; update
                                  [NAME...]; remove NAME (DevDocs docvols
                                  only: Dash or Zeal manages docsets)
