@@ -46,7 +46,8 @@ line is `installed`, `docset` or `available`. It ends with a
 `"docvols": [...]` list to paste into `.docshelf.json`; it never writes
 that file. Searches naming an `available` entry exit 4 until it is
 installed: after pasting, `install` with no NAME fetches them (check sizes
-with `sources` first).
+with `sources` first). A lower bound (`django>=3.2`) picks that
+version's docs: code for the minimum must work there.
 
 ## Sizes
 

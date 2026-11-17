@@ -5057,6 +5057,17 @@ class SuggestTests(unittest.TestCase):
         line = next(x for x in r.stdout.splitlines() if "python~3.14" in x)
         self.assertIn("no 3.9 docs; newest is 3.14", line)
 
+    def test_lower_bound_pins_the_minimum(self):
+        # the user, 2026-11-17: code for the minimum must work there
+        self.listed(row("Django", "django~5.2", "5.2", version="5.2"),
+                    row("Django", "django~3.2", "3.2", version="3.2"))
+        self.write("requirements.txt", "django>=3.2\n")
+        r = self.suggest()
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertIn("available django~3.2  (requirements.txt)",
+                      r.stdout.splitlines())
+        self.assertNotIn("django~5.2", r.stdout)
+
     def test_alias_and_scoped_names(self):
         self.listed(row("React", "react", "18"), row("Node.js", "node", "22"))
         self.write("package.json", json.dumps({"dependencies": {
