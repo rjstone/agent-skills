@@ -13,6 +13,7 @@ PROJECT_FILE = ".docshelf.json"
 
 class CLIError(Exception):
     """A user-facing error; main() prints the message and exits with code."""
+    docvol: Optional[str] = None  # set when the error is an unknown docvol name
 
     def __init__(self, message: str, code: int = 2):
         super().__init__(message)
@@ -280,7 +281,9 @@ def pick_docvol(docvols, name, error=None) -> Docvol:
         if found:
             raise CLIError("%s matches %s; give one"
                            % (name, ", ".join(sorted(d.name for d in found))), 2)
-    raise error("unknown docvol %r (see: docshelf.py list)" % name)
+    err = error("unknown docvol %r (see: docshelf.py list)" % name)
+    err.docvol = name
+    raise err
 
 
 def select_docvols(cfg, all_docvols, names, use_all) -> List[Docvol]:

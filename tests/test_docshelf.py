@@ -1805,6 +1805,14 @@ class McpTests(unittest.TestCase):
         self.assertEqual(sorted(by_name["notes"]["inputSchema"]["properties"]),
                          ["check", "docvol"])
 
+    def test_not_installed_docvol_names_the_install_tool(self):
+        add_listed_only(self.cache, "duckdb", "DuckDB")
+        r = self.call("search", {"query": ["x"], "docvols": ["duckdb"]})
+        self.assertTrue(r["isError"])
+        self.assertIn("docvol 'duckdb' is not installed; DevDocs has it: run "
+                      "the `install` tool with names [\"duckdb\"]",
+                      r["content"][0]["text"])
+
     def test_search_matches_cli(self):
         r = self.call("search", {"query": ["frobnicate"], "docvols": ["alpha"]})
         self.assertFalse(r["isError"], r)
@@ -2320,6 +2328,52 @@ class SearchHeadingTests(unittest.TestCase):
         self.assertEqual(json.loads(r.stdout), [
             {"ref": "duckdb:sql/utility#typeofx", "docvol": "duckdb",
              "type": "(heading)", "name": "typeof(x)", "rank": 0}])
+
+
+def add_listed_only(cache, slug, name):
+    """Add a row to the cached DevDocs list without installing it."""
+    path = os.path.join(cache, "devdocs", "docs.json")
+    rows = []
+    if os.path.isfile(path):
+        with open(path, encoding="utf-8") as f:
+            rows = json.load(f)
+    rows.append({"name": name, "slug": slug, "type": slug.split("~")[0],
+                 "version": "", "release": "1", "mtime": 1700000000,
+                 "db_size": 1, "attribution": "", "alias": None, "links": {}})
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    with open(path, "w", encoding="utf-8") as f:
+        json.dump(rows, f)
+
+
+class InstallHintTests(unittest.TestCase):
+    """A docvol name that DevDocs lists but isn't installed says how to
+    install it (from the cached list; never the network)."""
+
+    def setUp(self):
+        SearchTests.setUp(self)
+        make_devdocs(self.cache, "alpha", name="Alpha", release="1",
+                     entries=[("x", "Function", "x")], pages={"x": "<p>t</p>"})
+        add_listed_only(self.cache, "duckdb", "DuckDB")
+
+    def cli(self, *args):
+        return run_cli(*args, env=self.env, cwd=self.tmp)
+
+    def test_scope_name_listed_by_devdocs_says_install(self):
+        r = self.cli("search", "x", "-d", "DuckDB")
+        self.assertEqual(r.returncode, 4)
+        self.assertEqual(r.stderr.strip(), "docvol 'DuckDB' is not installed; "
+                         "DevDocs has it: docshelf.py install duckdb")
+
+    def test_ref_docvol_listed_by_devdocs_says_install(self):
+        r = self.cli("show", "duckdb:a")
+        self.assertEqual(r.returncode, 5)
+        self.assertIn("docshelf.py install duckdb", r.stderr)
+
+    def test_name_devdocs_does_not_list_keeps_unknown_message(self):
+        r = self.cli("search", "x", "-d", "nope")
+        self.assertEqual(r.returncode, 4)
+        self.assertIn("unknown docvol 'nope'", r.stderr)
+        self.assertNotIn("install", r.stderr)
 
 
 class GrepDashValueTests(unittest.TestCase):

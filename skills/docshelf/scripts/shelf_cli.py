@@ -271,10 +271,14 @@ def main(argv: Optional[List[str]] = None) -> int:
     for stream in (sys.stdout, sys.stderr):  # Windows pipes default to cp1252
         if hasattr(stream, "reconfigure"):
             stream.reconfigure(encoding="utf-8", errors="replace")
+    cfg = None
     try:
-        return args._command.func(shelf_core.load_config(), args)
+        cfg = shelf_core.load_config()
+        return args._command.func(cfg, args)
     except CLIError as e:
-        print(str(e), file=sys.stderr)
+        msg = (e.docvol and cfg and shelf_devdocs.not_installed_message(
+            cfg, e.docvol, lambda slug: "docshelf.py install " + slug))
+        print(msg or str(e), file=sys.stderr)
         return e.code
     except (OSError, sqlite3.Error, ValueError) as e:
         print("error: %s: %s" % (type(e).__name__, e), file=sys.stderr)

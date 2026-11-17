@@ -313,6 +313,17 @@ def get_manifest(cfg: Config, refresh: bool = False) -> List[dict]:
     return rows
 
 
+def not_installed_message(cfg: Config, name: str, how) -> Optional[str]:
+    """For a docvol name that isn't installed: when the cached DevDocs list
+    (any age; never the network) has it, say so and how(slug) installs it."""
+    try:
+        row = resolve_install(_manifest_rows(_load(
+            os.path.join(devdocs_dir(cfg), "docs.json"))), name)
+    except (OSError, ValueError, CLIError):
+        return None
+    return "docvol %r is not installed; DevDocs has it: %s" % (name, how(row["slug"]))
+
+
 def _manifest_rows(data) -> List[dict]:
     if not isinstance(data, list) or not all(
             isinstance(r, dict) and isinstance(r.get("slug"), str) for r in data):
