@@ -15,6 +15,7 @@ import subprocess
 import sys
 import tempfile
 import threading
+import time
 import types
 import unittest
 from unittest import mock
@@ -4413,6 +4414,38 @@ class DashCatalogTests(unittest.TestCase):
             self.net.pages[u] = shelf_devdocs.NetError(u, "blocked")
         self.main("sources", "python")
         self.assertEqual(self.net.fetched.count(shelf_dash.ZEAL_CATALOG_URL), 1)
+
+    def test_zeal_catalog_skips_malformed_entries(self):
+        self.zeal_install()
+        for u in (shelf_dash.FEEDS_LIST_URL, shelf_dash.CONTRIB_LIST_URL):
+            self.net.pages[u] = shelf_devdocs.NetError(u, "blocked")
+        self.net.pages[shelf_dash.ZEAL_CATALOG_URL] = json.dumps([
+            "junk", {"title": "No name", "sourceId": "com.kapeli.dash"},
+            {"name": "Bad_Versions", "sourceId": "com.kapeli.dash", "versions": 5},
+            {"name": "Python_3", "title": "Python 3",
+             "sourceId": "com.kapeli.dash", "versions": ["3.12"]},
+            {"name": "Lua", "sourceId": "com.kapeli.contrib"}])
+        code, out, err = self.main("sources", "python")
+        self.assertEqual(code, 0)
+        self.assertIn("Python_3  (Dash/Zeal: download in the app, official)", out)
+        self.assertNotIn("Bad_Versions", out)
+        self.assertEqual(err.count("skipped 3 malformed entries"), 1, err)
+
+    def test_expired_cache_and_network_error_uses_stale_copy(self):
+        self.zeal_install()
+        self.main("sources", "python")
+        old = time.time() - 30 * 86400
+        cdir = os.path.join(self.cache, "docsets", "catalogs")
+        for n in os.listdir(cdir):
+            os.utime(os.path.join(cdir, n), (old, old))
+        date = time.strftime("%Y-%m-%d", time.localtime(old))
+        for u in (shelf_dash.FEEDS_LIST_URL, shelf_dash.CONTRIB_LIST_URL):
+            self.net.pages[u] = shelf_devdocs.NetError(u, "blocked")
+        code, out, err = self.main("sources", "python")
+        self.assertEqual(code, 0)
+        self.assertIn("Python_3  (Dash/Zeal: download in the app, official)", out)
+        self.assertIn("using the cached docset list from " + date, err)
+        self.assertNotIn(shelf_dash.ZEAL_CATALOG_URL, self.net.fetched)
 
     def test_catalog_failure_keeps_devdocs_part(self):
         self.zeal_install()
