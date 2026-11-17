@@ -27,6 +27,24 @@
       downloads nothing and may be preferred over downloading the same
       documentation from DevDocs. Same CLI and MCP interface,
       equivalent search and FTS (the user, 2026-11-16).
+- [ ] `docshelf`: skim other docset and DevDocs readers for ideas (list
+      gathered 2026-11; the user wants to look through them later).
+      Read Zeal's folder, no network:
+      https://github.com/andreas-mausch/docset-mcp (Rust, list/search/page),
+      https://github.com/keturn/ZDocsetMCP (Python, MIT, many tools incl.
+      cheat sheets, entries by type),
+      https://github.com/erno-szabados/zealmcp (Python, MIT, tiny).
+      Downloads docsets itself (via Zeal's catalog):
+      https://github.com/bbsvip/docset-mcp.
+      macOS / Dash only: https://github.com/Kapeli/dash-mcp-server,
+      https://github.com/codybrom/DocsetMCP,
+      https://github.com/joshuadanpeterson/enhanced-dash-mcp,
+      https://github.com/Robdel12/doc-fetcher-mcp,
+      https://github.com/nzrsky/appleref-mcp.
+      DevDocs-based: https://github.com/maxwhipw/devdocs-mcp,
+      `@madhan-g-p/devdocs-mcp-server` (npm). Non-MCP: dasht, and Zeal's
+      `zeal python:pprint` (opens the GUI). These are also candidates for
+      `references/dash-zeal.md`'s "check for an existing MCP server first".
 - [ ] `docshelf`: agent trials as dash-docset ran them (no-skill baseline,
       Haiku, the opencode model set, CLI vs `--mcp`): fine-tuning after v1
       (the user, 2026-11-16).
