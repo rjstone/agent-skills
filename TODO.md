@@ -160,6 +160,26 @@ items are done.
   - [ ] 6.12.7 `name=` on `<details>` (an accordion group name) still adds
         an anchor; harmless unless it collides.
 
+- [ ] 6.13 After the 0.6.1 reviews
+  - [ ] 6.13.1 Notes tests: an LF file stays LF; a mixed-ending file takes
+        the majority ending.
+  - [ ] 6.13.2 Test `--delete` on a notes file that is a dangling symlink.
+  - [ ] 6.13.3 Install tests: a failure message names the slug; a 404
+        leaves no folder behind; a redundant skip plus a failure exits with
+        the failure's code.
+  - [ ] 6.13.4 `sources` dedupes after the query filter; it should keep
+        the first row overall.
+  - [ ] 6.13.5 `_cached_or_fetched`: `getmtime` can raise OSError if the
+        file goes away between checks.
+  - [ ] 6.13.6 No test for reusing a stale Zeal catalog cache offline.
+  - [ ] 6.13.7 Nameless catalog entries are undercounted when only the
+        contrib catalog falls back.
+  - [ ] 6.13.8 `_zeal_rows` docstring has a stray "((".
+  - [ ] 6.13.9 The 6.12.4 lower-bound test lists the newer version first
+        only.
+  - [ ] 6.13.10 `install` repeats an exit-2 error (unwritable cache) once
+        per name.
+
 #### Reference: other docset and DevDocs readers (skimmed 2026-11-17)
 
 Read Zeal's folder, no network:
