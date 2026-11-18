@@ -176,6 +176,12 @@ Done in 0.7.4 (lookup card: 7.1, 7.5 via the card) and 0.8.0 (defaults:
       REF's docvol, or a hint in the error. One model also ran `sources`
       with no query.
 
+- [ ] 7.7 MCP argument slips seen in the 2026-11-18 MCP arms (the user,
+      2026-11-18): accept a string where `docvols` expects a list (models
+      sent `"[node]"`), and suggest the closest docvol name when one is
+      unknown (models invented `nodejs`, `node~26`, `mdn/http`). See
+      `docs/trials/2026-11-18-opencode-docshelf-sandboxed/` ("MCP arms").
+
 #### Reference: other docset and DevDocs readers (skimmed 2026-11-17)
 
 Read Zeal's folder, no network:
