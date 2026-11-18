@@ -46,7 +46,7 @@ uid 1000; read-only `/usr`, `/etc/ssl`; private `/proc`, `/dev` and `/tmp`;
 
 | Option | Effect |
 |-|-|
-| `--work DIR` | writable folder at `/work` (also `HOME` and the cwd); default: a new folder in `/tmp`, removed afterwards unless `--keep` |
+| `--work DIR` | writable folder at `/work` (also `HOME` and the cwd); default: a new private (mode 700) folder in `/tmp`, removed afterwards unless `--keep` |
 | `--cwd DIR` | working directory inside, relative to `/work` (e.g. `--cwd proj`); must exist |
 | `--ro SRC[:DEST]`, `--rw SRC[:DEST]` | read-only / writable bind (repeatable); `SRC/bin` of a `--ro` bind goes on `PATH` |
 | `--setenv NAME=VALUE`, `--pass-env NAME` | set a variable inside; copy one of yours in (readable inside: never a real key) |

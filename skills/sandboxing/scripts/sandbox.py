@@ -38,7 +38,7 @@ CREDENTIAL_DIRS = [".ssh", ".aws", ".config/gh", ".claude", ".codex",
                    ".local/share/opencode"]
 # top-level paths that are symlinks into /usr on merged-/usr systems
 USR_LINKS = ["/bin", "/lib", "/lib64", "/sbin"]
-SHOW_TMP = "/tmp/sandbox.XXXXXX"
+SHOW_TMP = "/tmp/sandbox.XXXXXX"  # nosec B108 - placeholder shown by --show, never created
 # sandbox.py's own failures (usage, preflight, missing tools): 125, as env,
 # timeout and chroot use, so they don't look like the command's own status
 EXIT_SANDBOX_ERROR = 125
@@ -348,7 +348,7 @@ def build_command(opts, env, euid, work, ca_copy, hosts=None):
     if hosts:
         # before the caller's binds, so a --ro of their own /etc/hosts wins
         b += ["--ro-bind", hosts, "/etc/hosts"]
-    b += ["--proc", "/proc", "--dev", "/dev", "--tmpfs", "/tmp",
+    b += ["--proc", "/proc", "--dev", "/dev", "--tmpfs", "/tmp",  # nosec B108 - /tmp inside the sandbox: a private tmpfs
           "--bind", work, "/work"]
     path = []
     for flag, src, dest in binds(opts):
@@ -361,7 +361,7 @@ def build_command(opts, env, euid, work, ca_copy, hosts=None):
         b += ["--ro-bind", ca_copy, "/ca.crt"]
 
     setenv = [("HOME", "/work"), ("PATH", ":".join(path + BASE_PATH)),
-              ("LANG", "C.UTF-8"), ("TMPDIR", "/tmp")]
+              ("LANG", "C.UTF-8"), ("TMPDIR", "/tmp")]  # nosec B108 - TMPDIR inside the sandbox: a private tmpfs
     if net:
         setenv += [(n, env[n]) for n in PROXY_VARS if env.get(n)]
         if ca_copy:
@@ -492,14 +492,17 @@ def main(argv=None):
         return _fail([err])
 
     # per-run files the sandbox user must read: CA copy, hosts, default work
-    tmp = tempfile.mkdtemp(prefix="sandbox.", dir="/tmp")
-    os.chmod(tmp, 0o755)
+    tmp = tempfile.mkdtemp(prefix="sandbox.", dir="/tmp")  # nosec B108 - mkdtemp makes a unique folder; under /tmp so the sandbox user can reach it
+    os.chmod(tmp, 0o755)  # nosec B103 - the sandbox user must read the CA copy and hosts file
     hosts = os.path.join(tmp, "hosts")
     with open(hosts, "w") as f:
         f.write(hosts_text())
     os.chmod(hosts, 0o644)
     work = os.path.abspath(opts.work) if opts.work else os.path.join(tmp, "work")
     os.makedirs(work, exist_ok=True)
+    if not opts.work:
+        # the run's own output: owner only (the owner becomes the sandbox user)
+        os.chmod(work, 0o700)
     ca_copy = None
     if net:
         src = _ca_source(env)

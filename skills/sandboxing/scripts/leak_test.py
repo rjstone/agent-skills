@@ -115,7 +115,7 @@ def _sandbox_cmd(opts, extra):
 
 
 def _mkdir(dirs, mode):
-    d = tempfile.mkdtemp(prefix="leak-test.", dir="/tmp")
+    d = tempfile.mkdtemp(prefix="leak-test.", dir="/tmp")  # nosec B108 - mkdtemp; under /tmp so the sandbox user can reach the probe files
     os.chmod(d, mode)
     dirs.append(d)
     return d

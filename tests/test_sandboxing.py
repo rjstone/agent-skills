@@ -11,6 +11,7 @@ import os
 import re
 import shutil
 import signal
+import stat
 import subprocess
 import sys
 import tempfile
@@ -241,7 +242,7 @@ class PreflightTests(TempDirs):
         os.mkdir(src, 0o755)
         errs = self.errors(["--ro", src, "--", "true"], euid=0)
         self.assertTrue(any("'%s'" % private in e for e in errs), errs)
-        os.chmod(private, 0o755)
+        os.chmod(private, 0o755)  # nosec B103 - test fixture: readable by the sandbox user
         self.assertEqual(self.errors(["--ro", src, "--", "true"], euid=0), [])
 
     def test_cwd_missing_under_work(self):
@@ -259,7 +260,7 @@ class PreflightTests(TempDirs):
         errs = self.errors(["--rw", src, "--", "true"], euid=0)
         self.assertTrue(any("'%s'" % src in e and "writable" in e for e in errs), errs)
         self.assertEqual(self.errors(["--ro", src, "--", "true"], euid=0), [])
-        os.chmod(src, 0o777)
+        os.chmod(src, 0o777)  # nosec B103 - test fixture: writable by the sandbox user (the check under test)
         self.assertEqual(self.errors(["--rw", src, "--", "true"], euid=0), [])
 
     def test_preflight_rw_file_not_writable(self):
@@ -269,7 +270,7 @@ class PreflightTests(TempDirs):
         os.chmod(f, 0o644)
         errs = self.errors(["--rw", f, "--", "true"], euid=0)
         self.assertTrue(any("writable" in e for e in errs), errs)
-        os.chmod(f, 0o666)
+        os.chmod(f, 0o666)  # nosec B103 - test fixture: writable by the sandbox user (the check under test)
         self.assertEqual(self.errors(["--rw", f, "--", "true"], euid=0), [])
 
     def test_mem_warning_for_node(self):
@@ -390,8 +391,8 @@ class IntegrationTests(unittest.TestCase):
                               text=True, timeout=timeout)
 
     def mkdir(self):
-        d = tempfile.mkdtemp(prefix="sandboxing-test.", dir="/tmp")
-        os.chmod(d, 0o755)
+        d = tempfile.mkdtemp(prefix="sandboxing-test.", dir="/tmp")  # nosec B108 - test fixture: mkdtemp under /tmp, reachable by the sandbox user
+        os.chmod(d, 0o755)  # nosec B103 - test fixture: readable by the sandbox user
         self.addCleanup(shutil.rmtree, d, True)
         return d
 
@@ -425,7 +426,7 @@ class IntegrationTests(unittest.TestCase):
         hello = os.path.join(rt, "bin", "hello")
         with open(hello, "w") as f:
             f.write("#!/bin/sh\necho hello-from-runtime\n")
-        os.chmod(hello, 0o755)
+        os.chmod(hello, 0o755)  # nosec B103 - test fixture: an executable script
         r = self.run_sandbox(["--no-net", "--ro", rt + ":/opt/rt", "--", "hello"])
         self.assertEqual(r.returncode, 0, r.stderr)
         self.assertEqual(r.stdout.strip(), "hello-from-runtime")
@@ -443,16 +444,25 @@ class IntegrationTests(unittest.TestCase):
         shutil.rmtree(work)
 
     def test_sigterm_cleans_up(self):
-        before = set(glob.glob("/tmp/sandbox.*"))
+        before = set(glob.glob("/tmp/sandbox.*"))  # nosec B108 - test: lists sandbox.py's own temp folders
         p = subprocess.Popen([sys.executable, SANDBOX_PY, "--no-net", "--", "sleep", "30"],
                              stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
         deadline = time.time() + 15
-        while time.time() < deadline and set(glob.glob("/tmp/sandbox.*")) == before:
+        while time.time() < deadline and set(glob.glob("/tmp/sandbox.*")) == before:  # nosec B108 - test: lists sandbox.py's own temp folders
             time.sleep(0.1)
         time.sleep(0.5)  # let bwrap start
         p.terminate()
         self.assertEqual(p.wait(timeout=15), 128 + signal.SIGTERM)
-        self.assertEqual(set(glob.glob("/tmp/sandbox.*")) - before, set())
+        self.assertEqual(set(glob.glob("/tmp/sandbox.*")) - before, set())  # nosec B108 - test: lists sandbox.py's own temp folders
+
+    def test_default_work_folder_private(self):
+        r = self.run_sandbox(["--no-net", "--keep", "--", "true"])
+        self.assertEqual(r.returncode, 0, r.stderr)
+        m = re.search(r"kept work folder (\S+)", r.stderr)
+        self.assertTrue(m, r.stderr)
+        work = m.group(1)
+        self.addCleanup(shutil.rmtree, os.path.dirname(work), True)
+        self.assertEqual(stat.S_IMODE(os.stat(work).st_mode), 0o700)
 
     def test_localhost_resolves(self):
         r = self.run_sandbox(["--no-net", "--", "python3", "-c",
@@ -470,7 +480,7 @@ class IntegrationTests(unittest.TestCase):
     def test_rw_bind_writable_inside(self):
         data = os.path.join(self.mkdir(), "data")
         os.mkdir(data)
-        os.chmod(data, 0o777)
+        os.chmod(data, 0o777)  # nosec B103 - test fixture: writable by the sandbox user (the check under test)
         r = self.run_sandbox(["--no-net", "--rw", data + ":/data", "--",
                               "sh", "-c", "echo from-inside > /data/f"])
         self.assertEqual(r.returncode, 0, r.stderr)
