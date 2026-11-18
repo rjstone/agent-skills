@@ -268,7 +268,7 @@ class DashDocvol(Docvol):
     @property
     def entry_count(self) -> int:
         """Rows in the index, read only when asked for and cached in
-        data_dir()/count.json under stamp(); 0 (with a warning) when the
+        data_dir()/count.json under stamp(); 0 (silently; callers that read the index report it) when the
         index cannot be read."""
         if self._count is None:
             cache = os.path.join(self.data_dir(), "count.json")
@@ -282,7 +282,8 @@ class DashDocvol(Docvol):
                     self._count = int(con.execute(
                         "SELECT COUNT(*) FROM %s" % _table(con)).fetchone()[0])
             except (sqlite3.Error, ValueError, OSError) as e:
-                warn(str(self._index_error(e)))
+                # silent: commands that read the index report it (once) via
+                # DamagedDocvol; `list` shows 0
                 self._count = 0
                 return 0
             try:

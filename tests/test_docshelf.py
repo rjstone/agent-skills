@@ -7377,6 +7377,12 @@ class DamagedDocvolTests(unittest.TestCase):
         self.assertEqual(r.returncode, 0, r.stderr)
         self.assertIn("beta:guide", r.stdout)
         self.assertIn("skipping docvol Lib", r.stderr)
+        self.assertEqual(sum(1 for l in r.stderr.splitlines()
+                             if l.startswith("warning:") and "Lib" in l), 1,
+                         r.stderr)
+        r = self.cli("list")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertNotIn("Traceback", r.stderr)
 
 
 class NoShadowedTestCaseNamesTests(unittest.TestCase):
