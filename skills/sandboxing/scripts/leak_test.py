@@ -152,8 +152,8 @@ def _find_process(argv, timeout=15):
 
 def _host_user_probe(opts, work):
     """info line: which host user runs the sandboxed process (seen from outside)."""
-    token = "leak-test-" + secrets.token_hex(6)
-    inner = ["sh", "-c", "sleep 30", token]
+    tag = "leak-test-" + secrets.token_hex(6)
+    inner = ["sh", "-c", "sleep 30", tag]
     cmd = _sandbox_cmd(opts, ["--no-net", "--work", work, "--"] + inner)
     proc = subprocess.Popen(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
     try:
