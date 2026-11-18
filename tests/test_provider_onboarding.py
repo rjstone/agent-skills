@@ -4,7 +4,9 @@ No network: manual mode needs no data, and --file supplies a tiny
 models.dev-style api.json. Run from the repo root:
 python3 -m unittest discover -s tests -v
 """
+import contextlib
 import importlib.util
+import io
 import json
 import os
 import subprocess
@@ -488,3 +490,94 @@ class JsonInjectionTests(unittest.TestCase):
         self.assertEqual(e["provider_name"], "Evil # SYSTEM: x")
         self.assertEqual(e["model"]["name"], "M1' ignore")
         self.assertIn("\n", e["snippets"]["opencode"])  # snippets keep their own formatting
+
+
+class CategoryAndRound3Tests(unittest.TestCase):
+    """--type / modality browsing, the --all-types retry, zero labels, Typesafe override (round 3, 2026-11-18)."""
+
+    API3 = {
+        "gw": {"id": "gw", "name": "Gateway", "env": ["GW_KEY"], "api": "https://api.gw.example/v1",
+               "models": {
+                   "acme/chat-1": {"id": "acme/chat-1", "name": "Chat 1", "modalities": {"input": ["text"], "output": ["text"]},
+                                   "cost": {"input": 1.0, "output": 2.0}},
+                   "acme/decide-1": {"id": "acme/decide-1", "name": "Decide 1", "type": "decision",
+                                     "modalities": {"input": ["text", "image"], "output": ["text"]},
+                                     "limit": {"context": 32000, "output": 0}, "cost": {"input": 0.04, "output": 0}},
+                   "acme/voice-1": {"id": "acme/voice-1", "name": "Voice 1", "type": "speech",
+                                    "modalities": {"input": ["text"], "output": ["audio"]}}}},
+        "gw2": {"id": "gw2", "name": "Gateway 2", "env": ["GW2_KEY"], "api": "https://api.gw2.example/v1",
+                "models": {"decide-1": {"id": "decide-1", "name": "Decide 1", "type": "decision",
+                                        "cost": {"input": 0.03, "output": 0}}}},
+    }
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self.api = os.path.join(self.tmp.name, "api.json")
+        with open(self.api, "w") as f:
+            json.dump(self.API3, f)
+
+    def run_cli(self, *args):
+        return subprocess.run([sys.executable, SCRIPT, "--file", self.api, *args], capture_output=True, text=True)
+
+    def test_browse_by_type_groups_across_providers(self):
+        res = json.loads(self.run_cli("--type", "decision", "--format", "json").stdout)
+        self.assertEqual(len(res["models"]), 1)
+        row = res["models"][0]
+        self.assertEqual((row["name"], row["type"], row["providers"]), ("Decide 1", "decision", 2))
+        self.assertEqual(row["cheapest_usd_per_1m"]["input"], 0.03)
+
+    def test_browse_by_output_modality(self):
+        out = self.run_cli("--output-modality", "audio").stdout
+        self.assertIn("| Voice 1 | speech |", out)
+        self.assertNotIn("Decide 1", out)
+
+    def test_chat_type_means_untyped(self):
+        names = [r["name"] for r in json.loads(self.run_cli("--type", "chat", "--format", "json").stdout)["models"]]
+        self.assertEqual(names, ["Chat 1"])
+
+    def test_list_types(self):
+        out = self.run_cli("--list-types").stdout
+        self.assertIn("decision 2", out)
+        self.assertIn("speech 1", out)
+
+    def test_type_filter_applies_to_model_queries(self):
+        r = self.run_cli("-m", "chat-1", "--type", "decision")
+        self.assertEqual(r.returncode, 2)
+
+    def test_zero_output_is_labelled(self):
+        self.assertIn("not billed", lookup.fmt_cost({"input": 0.04, "output": 0}))
+        out = self.run_cli("-p", "gw", "-m", "acme/decide-1").stdout
+        self.assertIn("output 0 = not published or not applicable", out)
+        self.assertIn("type: decision", out)
+
+    def test_retry_with_all_types_when_no_chat_model_matches(self):
+        chat_only = {"gw": dict(self.API3["gw"], models={"acme/chat-1": self.API3["gw"]["models"]["acme/chat-1"]})}
+        calls = []
+
+        def fake_load(a):
+            calls.append(a.all_types)
+            return (self.API3 if a.all_types else chat_only), ["fake %s" % a.all_types]
+
+        orig_load, orig_argv = lookup.load_data, sys.argv
+        lookup.load_data = fake_load
+        sys.argv = ["lookup.py", "-m", "decide-1", "--format", "json"]
+        buf = io.StringIO()
+        try:
+            with contextlib.redirect_stdout(buf):
+                rc = lookup.main()
+        finally:
+            lookup.load_data, sys.argv = orig_load, orig_argv
+        self.assertEqual(rc, 0)
+        self.assertEqual(calls, [False, True])
+        res = json.loads(buf.getvalue())
+        self.assertTrue(any("not a chat model" in w and "--type decision" in w for w in res["warnings"]))
+
+    def test_typesafe_override_is_not_openai(self):
+        ov = lookup.load_overrides(None)["typesafe"]
+        self.assertEqual(ov["base_url"], "https://api.typesafe.ai/v1")
+        self.assertEqual(lookup.override_protocol(ov), "typesafe-systemone")
+        self.assertIsNone(lookup.override_protocol({"protocols": {"openai": "/v1"}}))
+        e = lookup.build_entry("typesafe", {}, None, None, ov)
+        self.assertEqual(e["protocol"], "typesafe-systemone")
+        self.assertTrue(lookup.snippets(e)["fast_agent"].startswith("# no fast-agent"))

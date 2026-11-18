@@ -225,6 +225,79 @@ def match_models(q, prov):
     return sorted(out, key=lambda x: (-x[0], x[1]))
 
 
+CHAT_TYPES = (None, "chat")
+
+
+def model_type(m):
+    """models.dev 'type': None means an ordinary chat/text model."""
+    return (m or {}).get("type") or "chat"
+
+
+def model_ok(m, a):
+    """True when a model passes --type / --input-modality / --output-modality."""
+    if a.type and model_type(m) not in a.type:
+        return False
+    mod = (m or {}).get("modalities") or {}
+    if a.input_modality and not set(a.input_modality) <= set(mod.get("input") or []):
+        return False
+    if a.output_modality and not set(a.output_modality) <= set(mod.get("output") or []):
+        return False
+    return True
+
+
+def apply_filters(data, a):
+    """Drop models that fail the category filters (keeps providers, empties their model lists)."""
+    if not (a.type or a.input_modality or a.output_modality):
+        return data
+    return {pid: dict(p, models={mid: m for mid, m in (p.get("models") or {}).items() if model_ok(m, a)})
+            for pid, p in data.items()}
+
+
+def browse(data, a):
+    """One row per model (grouped across providers): type, providers, cheapest price, example ids."""
+    groups = {}
+    for pid, p in data.items():
+        for mid, m in (p.get("models") or {}).items():
+            g = groups.setdefault(model_key(mid, m), {"name": m.get("name") or mid, "type": model_type(m),
+                                                        "providers": set(), "ids": set(), "min_in": None, "min_out": None,
+                                                        "input": set(), "output": set()})
+            g["providers"].add(pid)
+            g["ids"].add(mid)
+            mod = m.get("modalities") or {}
+            g["input"].update(mod.get("input") or [])
+            g["output"].update(mod.get("output") or [])
+            c = m.get("cost") or {}
+            for f, k in (("input", "min_in"), ("output", "min_out")):
+                if isinstance(c.get(f), (int, float)) and (g[k] is None or c[f] < g[k]):
+                    g[k] = c[f]
+    rows = sorted(groups.values(), key=lambda g: (-len(g["providers"]), g["name"]))
+    return [{"name": g["name"], "type": g["type"], "providers": len(g["providers"]),
+             "cheapest_usd_per_1m": {"input": g["min_in"], "output": g["min_out"]},
+             "input": sorted(g["input"]), "output": sorted(g["output"]),
+             "example_ids": sorted(g["ids"])[:3]} for g in rows]
+
+
+def render_browse(rows, a, notes):
+    flt = ", ".join(x for x in ("type=" + "|".join(a.type) if a.type else "",
+                                "input=" + "+".join(a.input_modality) if a.input_modality else "",
+                                "output=" + "+".join(a.output_modality) if a.output_modality else "") if x)
+    L = ["# Models matching %s" % flt, "", "_%s_" % DATA_NOTICE, "",
+         "_Data: %s_" % "; ".join(notes), "",
+         "%d models. Cheapest price is the lowest any provider lists (USD per 1M tokens); 0 can mean not billed or not published." % len(rows), "",
+         "| Model | Type | Providers | Cheapest in / out | Input | Output | Example ids |", "|---|---|---|---|---|---|---|"]
+    for r in rows[: a.limit if a.limit > 8 else 50]:
+        c = r["cheapest_usd_per_1m"]
+        L.append("| %s | %s | %d | %s / %s | %s | %s | %s |" % (
+            clean(r["name"], 80), r["type"], r["providers"], money(c["input"]), money(c["output"]),
+            ",".join(r["input"]), ",".join(r["output"]), ", ".join("`%s`" % clean(i, 60) for i in r["example_ids"])))
+    if len(rows) > max(a.limit, 50):
+        L.append("")
+        L.append("_%d more; add --limit %d_" % (len(rows) - max(a.limit, 50), len(rows)))
+    L.append("")
+    L.append("Next: `lookup.py --model <example id>` for providers, endpoints and prices.")
+    return "\n".join(L)
+
+
 def is_exact(q, mid, m=None):
     """True when the query names this model exactly (ignoring case, punctuation and a provider prefix)."""
     qn = norm((q or "").split("/")[-1])
@@ -287,6 +360,13 @@ def signup_candidates(base_url, docs, ov):
     return c
 
 
+def override_protocol(ov):
+    """An override that lists only non-OpenAI, non-Anthropic protocols names the API shape itself."""
+    raw = ov.get("protocols")
+    ps = [p for p in raw if isinstance(p, str)] if isinstance(raw, list) else []
+    return ps[0] if ps and not any(p in ("openai", "anthropic") or p.startswith("openai") for p in ps) else None
+
+
 def protocol_of(npm, base_url):
     n = (npm or "").lower()
     if "anthropic" in n:
@@ -304,6 +384,8 @@ def fmt_cost(c):
     if not c:
         return None
     s = "%s in / %s out per 1M tokens" % (money(c.get("input")), money(c.get("output")))
+    if c.get("output") == 0 and c.get("input"):
+        s += " (output 0: not billed, e.g. a decision or embedding model, or not published)"
     if c.get("cache_read") is not None:
         s += " (cache read %s)" % money(c["cache_read"])
     return s
@@ -389,8 +471,13 @@ def portkey_params(general, key):
 def portkey_info(pid, model_id, args, md_cost=None):
     pricing, psrc, errs = portkey_load("pricing", pid, args)
     if pricing is None:
-        kinds = sorted({"404" if "404" in e else "unreachable" for e in errs})
-        return {"error": "no Portkey pricing file for %s (%d locations tried: %s)" % (pid, len(errs), ", ".join(kinds) or "none")}
+        per = []
+        for e in errs:
+            host = urlparse(e.split(": ")[0]).hostname or "local"
+            why = "no file (404)" if "404" in e else "blocked or unreachable"
+            if (host, why) not in per:
+                per.append((host, why))
+        return {"error": "no Portkey pricing file for %s (%s)" % (pid, "; ".join("%s: %s" % x for x in per) or "nothing tried")}
     info = {"source": psrc}
     key = portkey_model_key(model_id, pricing) if model_id else None
     if model_id and not key:
@@ -563,9 +650,10 @@ def build_entry(pid, prov, mid, model, ov, manual=None):
         "provider_name": manual.get("name") or prov.get("name") or ov.get("name") or pid,
         "base_url": base, "base_url_source": bsrc,
         "env": env, "npm": npm, "docs": docs,
-        "protocol": protocol_of(npm, base),
+        "protocol": override_protocol(ov) or protocol_of(npm, base),
         "model": {
             "id": mid or manual.get("model_id"), "name": m.get("name"),
+            "type": m.get("type"),
             "limit": m.get("limit"), "cost": fmt_cost(m.get("cost")), "cost_usd_per_1m": m.get("cost"),
             "modalities": m.get("modalities"), "reasoning": m.get("reasoning"),
             "tool_call": m.get("tool_call"), "status": m.get("status"),
@@ -573,7 +661,7 @@ def build_entry(pid, prov, mid, model, ov, manual=None):
         } if (mid or manual.get("model_id")) else None,
         "signup_candidates": signup_candidates(base, docs, ov),
         "hosts_to_allowlist": ov.get("hosts") or [h for h in [host_of(base)] if h],
-        "extras": {k: ov[k] for k in ("models_endpoint", "protocols", "headers", "quirks", "verified", "source", "note") if ov.get(k)},
+        "extras": {k: ov[k] for k in ("website", "models_endpoint", "protocols", "headers", "quirks", "verified", "source", "note") if ov.get(k)},
         "data_source": prov.get("_src"),
         "opencode_package": prov.get("opencodeai"),
     }
@@ -676,9 +764,11 @@ def render_md(res):
         if m:
             L.append("- Model: `%s`%s%s" % (m["id"], " (%s)" % m["name"] if m["name"] else "",
                                              "  **(closest match, NOT the exact id asked for)**" if m.get("exact_match") is False else ""))
-            for k in ("limit", "cost", "modalities", "reasoning", "tool_call", "status", "release_date", "open_weights"):
+            for k in ("type", "limit", "cost", "modalities", "reasoning", "tool_call", "status", "release_date", "open_weights"):
                 if m.get(k) is not None:
-                    L.append("  - %s: %s" % (k, json.dumps(m[k]) if not isinstance(m[k], str) else m[k]))
+                    L.append("  - %s: %s%s" % (k, json.dumps(m[k]) if not isinstance(m[k], str) else m[k],
+                                               " (output 0 = not published or not applicable)"
+                                               if k == "limit" and isinstance(m[k], dict) and m[k].get("output") == 0 else ""))
         L.append("- Sign-up / key page candidates (inferred, NOT verified):")
         for c in e["signup_candidates"] or [{"url": None, "confidence": "none", "basis": "no base URL or docs"}]:
             L.append("  - %s [%s] %s" % (c["url"] or "(none)", c["confidence"], c["basis"]))
@@ -735,6 +825,11 @@ def main():
     ap.add_argument("--limit", type=int, default=8, help="max providers listed for a model-only query")
     ap.add_argument("--portkey", action="store_true", help="add Portkey-AI/models pricing and param ranges")
     ap.add_argument("--portkey-dir", help="local clone of Portkey-AI/models (implies --portkey, no network)")
+    ap.add_argument("--type", help="model type(s), comma-separated: chat, decision, image, embedding, video, "
+                    "transcription, speech, reranking, realtime (implies --all-types)")
+    ap.add_argument("--input-modality", help="required input modalities, comma-separated: text, image, pdf, video, audio")
+    ap.add_argument("--output-modality", help="required output modalities, comma-separated: text, image, audio, video")
+    ap.add_argument("--list-types", action="store_true", help="count models by type and modality, then exit")
     ap.add_argument("--all-matches", action="store_true", help="model-only query: also list near matches when exact ones exist")
     ap.add_argument("--litellm", action="store_true", help="add LiteLLM pricing, limits, deprecation and source links")
     ap.add_argument("--litellm-file", help="local copy of LiteLLM's model_prices_and_context_window.json (implies --litellm)")
@@ -747,6 +842,10 @@ def main():
     ov = load_overrides(a.overrides)
     a.extra_list = a.extra_list or bool(a.extra_list_file)
     a.litellm = a.litellm or bool(a.litellm_file)
+    split = lambda v: [x.strip().lower() for x in v.split(",") if x.strip()] if v else []
+    a.type, a.input_modality, a.output_modality = split(a.type), split(a.input_modality), split(a.output_modality)
+    if a.type or a.input_modality or a.output_modality or a.list_types:
+        a.all_types = True
 
     # manual mode: no data needed
     if a.base_url:
@@ -761,6 +860,35 @@ def main():
         return 0
 
     data, notes = load_data(a)
+    if a.list_types:
+        from collections import Counter
+        t, mi, mo = Counter(), Counter(), Counter()
+        for p in data.values():
+            for m in (p.get("models") or {}).values():
+                t[model_type(m)] += 1
+                mi.update((m.get("modalities") or {}).get("input") or [])
+                mo.update((m.get("modalities") or {}).get("output") or [])
+        for label, c in (("type", t), ("input modality", mi), ("output modality", mo)):
+            print("%s: %s" % (label, ", ".join("%s %d" % kv for kv in c.most_common())))
+        print("(counts are provider-model entries; browse with --type / --input-modality / --output-modality)")
+        return 0 if data else 3
+    data = apply_filters(data, a)
+    if (a.type or a.input_modality or a.output_modality) and not (a.provider or a.model):
+        rows = browse(data, a)
+        if a.format == "json":
+            print(json.dumps({"_notice": DATA_NOTICE, "notes": notes, "models": clean_tree(rows)}, indent=2))
+        else:
+            print(render_browse(rows, a, notes))
+        return 0 if rows else 2
+    retried = []
+    if a.model and not a.all_types and data and not any(match_models(a.model, p) for p in data.values()):
+        a.all_types = True
+        data, more = load_data(a)
+        notes += more
+        types = sorted({model_type(x[2]) for p in data.values() for x in match_models(a.model, p)})
+        if types:
+            retried.append("%r is not a chat model; found it with --all-types (type: %s). "
+                           "Browse similar models with --type %s" % (a.model, ", ".join(types), types[0]))
     if a.list_providers:
         for pid in sorted(data):
             p = data[pid]
@@ -769,7 +897,7 @@ def main():
     if not (a.provider or a.model):
         ap.error("give --provider and/or --model (or --list-providers, or manual flags)")
 
-    warnings = []
+    warnings = list(retried)
     if not data:
         warnings.append("no remote data loaded; results come only from the override table")
     entries, also = [], []

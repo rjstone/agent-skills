@@ -3,8 +3,12 @@
   "openrouter": {
     "name": "OpenRouter",
     "base_url": "https://openrouter.ai/api/v1",
-    "env": ["OPENROUTER_API_KEY"],
-    "hosts": ["openrouter.ai"],
+    "env": [
+      "OPENROUTER_API_KEY"
+    ],
+    "hosts": [
+      "openrouter.ai"
+    ],
     "signup_url": null,
     "models_endpoint": "https://openrouter.ai/api/v1/models",
     "quirks": [
@@ -19,8 +23,12 @@
   "opencode": {
     "name": "OpenCode Zen (Console pay-as-you-go)",
     "base_url": "https://opencode.ai/inference/openai/v1",
-    "env": ["OPENCODE_API_KEY"],
-    "hosts": ["opencode.ai"],
+    "env": [
+      "OPENCODE_API_KEY"
+    ],
+    "hosts": [
+      "opencode.ai"
+    ],
     "signup_url": "https://opencode.ai/console",
     "docs": "https://opencode.ai/docs/console/api/inference/",
     "models_endpoint": "https://opencode.ai/inference/v1/models",
@@ -48,8 +56,12 @@
   "opencode-go": {
     "name": "OpenCode Go (subscription)",
     "base_url": "https://opencode.ai/inference/go/openai/v1",
-    "env": ["OPENCODE_API_KEY"],
-    "hosts": ["opencode.ai"],
+    "env": [
+      "OPENCODE_API_KEY"
+    ],
+    "hosts": [
+      "opencode.ai"
+    ],
     "signup_url": "https://opencode.ai/console",
     "docs": "https://opencode.ai/docs/console/go/",
     "models_endpoint": "https://opencode.ai/inference/go/v1/models",
@@ -77,18 +89,29 @@
   "anthropic": {
     "name": "Anthropic",
     "base_url": "https://api.anthropic.com/v1",
-    "env": ["ANTHROPIC_API_KEY"],
-    "hosts": ["api.anthropic.com"],
+    "env": [
+      "ANTHROPIC_API_KEY"
+    ],
+    "hosts": [
+      "api.anthropic.com"
+    ],
     "signup_url": null,
-    "headers": {"x-api-key": "<key>", "anthropic-version": "2023-06-01"},
+    "headers": {
+      "x-api-key": "<key>",
+      "anthropic-version": "2023-06-01"
+    },
     "unverified": true,
     "note": "Author's general knowledge; not checked against live docs."
   },
   "openai": {
     "name": "OpenAI",
     "base_url": "https://api.openai.com/v1",
-    "env": ["OPENAI_API_KEY"],
-    "hosts": ["api.openai.com"],
+    "env": [
+      "OPENAI_API_KEY"
+    ],
+    "hosts": [
+      "api.openai.com"
+    ],
     "signup_url": null,
     "unverified": true,
     "note": "Author's general knowledge; not checked against live docs."
@@ -96,8 +119,12 @@
   "google": {
     "name": "Google Gemini API",
     "base_url": "https://generativelanguage.googleapis.com/v1beta",
-    "env": ["GEMINI_API_KEY"],
-    "hosts": ["generativelanguage.googleapis.com"],
+    "env": [
+      "GEMINI_API_KEY"
+    ],
+    "hosts": [
+      "generativelanguage.googleapis.com"
+    ],
     "signup_url": null,
     "unverified": true,
     "note": "googleapis.com is shared infrastructure, so apex inference does not apply. Keys are typically issued through Google AI Studio; confirm the current URL in the docs."
@@ -105,8 +132,12 @@
   "mistral": {
     "name": "Mistral",
     "base_url": "https://api.mistral.ai/v1",
-    "env": ["MISTRAL_API_KEY"],
-    "hosts": ["api.mistral.ai"],
+    "env": [
+      "MISTRAL_API_KEY"
+    ],
+    "hosts": [
+      "api.mistral.ai"
+    ],
     "signup_url": null,
     "unverified": true,
     "note": "Author's general knowledge; not checked against live docs."
@@ -114,8 +145,12 @@
   "xai": {
     "name": "xAI",
     "base_url": "https://api.x.ai/v1",
-    "env": ["XAI_API_KEY"],
-    "hosts": ["api.x.ai"],
+    "env": [
+      "XAI_API_KEY"
+    ],
+    "hosts": [
+      "api.x.ai"
+    ],
     "signup_url": null,
     "unverified": true,
     "note": "Author's general knowledge; not checked against live docs."
@@ -123,10 +158,38 @@
   "groq": {
     "name": "Groq",
     "base_url": "https://api.groq.com/openai/v1",
-    "env": ["GROQ_API_KEY"],
-    "hosts": ["api.groq.com"],
+    "env": [
+      "GROQ_API_KEY"
+    ],
+    "hosts": [
+      "api.groq.com"
+    ],
     "signup_url": null,
     "unverified": true,
     "note": "Author's general knowledge; not checked against live docs."
+  },
+  "typesafe": {
+    "name": "TypeSafe AI",
+    "base_url": "https://api.typesafe.ai/v1",
+    "env": [
+      "TYPESAFE_AI_API_KEY"
+    ],
+    "hosts": [
+      "api.typesafe.ai"
+    ],
+    "signup_url": null,
+    "website": "https://typesafe.ai",
+    "docs": "https://docs.typesafe.ai",
+    "protocols": [
+      "typesafe-systemone"
+    ],
+    "quirks": [
+      "Not an OpenAI chat API: decisions go to POST https://api.typesafe.ai/v1/systemone with Authorization: Bearer <key>",
+      "Jev is a decision model (models.dev type 'decision'): it returns choices, scores and probabilities, so output price/limit 0 is expected",
+      "OpenAPI spec: https://api.typesafe.ai/openapi.json",
+      "Also served by gateways (OpenRouter, Vercel AI Gateway, Cloudflare AI Gateway, ...): find them with lookup.py --type decision"
+    ],
+    "verified": "2026-11-18",
+    "source": "https://docs.typesafe.ai/api/system-one ; https://ai-sdk.dev/providers/ai-sdk-providers/typesafe-ai"
   }
 }

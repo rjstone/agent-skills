@@ -33,3 +33,21 @@ New findings, fixed in the same PR:
 Not done (noted): LiteLLM-only hosts are not listed (the card is built from
 models.dev); Portkey's per-URL failure reasons; odd-precision prices from
 currency conversion.
+
+## Round 3 (typesafe jev, "a decision model that isn't jev", muse wonder)
+
+Answers were good (Jev via gateways, gpt-oss-120b as the reasoning pick,
+Muse Wonder at $4 / $20 from 12 providers). Fixed in the same PR:
+
+1. A name that is not a chat model (Jev, a `decision` model) said "No model
+   matches"; the lookup now retries with all types and names the type.
+2. Output price / limit 0 labelled as "not billed or not published".
+3. SKILL.md: model ids differ by provider; reuse the id from the model search.
+4. Portkey says which location failed and how (blocked vs 404).
+
+Added (the user, 2026-11-18): categories. `--type` (models.dev `type`:
+chat, decision, image, embedding, video, transcription, speech, reranking,
+realtime), `--input-modality` / `--output-modality`, a browse table grouped
+across providers, `--list-types`. A `typesafe` override from Typesafe's public
+docs (base URL, key variable, website, its own decisions API protocol), and
+override `protocols` lists without OpenAI/Anthropic now set the card's protocol.
