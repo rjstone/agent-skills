@@ -103,6 +103,11 @@ items are done.
       to date"), a `check`/`repair` command, verifying files after download.
       `list` does not warn for a DevDocs docvol whose meta.json entry_count
       masks a corrupt index.json (detecting it needs reading the index).
+      When every docvol of a family is unusable, a notes write prints
+      "wrote" and then exits 5 (or 2); warn after the write instead. A
+      meta.json missing a key gives a cryptic "'slug'; repair with: ..."
+      (prefix "unreadable meta.json"). `list` shows an unusable WAL docset
+      as "0 entries" (with a warning); say "unusable" in the row instead.
 
 #### Reference: other docset and DevDocs readers (skimmed 2026-11-17)
 
