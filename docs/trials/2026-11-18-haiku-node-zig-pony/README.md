@@ -31,8 +31,11 @@ as Claude Code general-purpose subagents.
 | node, web | ✅ | ✅ | ✅ | 3 | 9 | 39 s | 117k |
 | zig, web | ✅ | ✅ | ½ `@Int` right, `std.builtin.Signedness` again | 2.5 | 10 | 33 s | 121k |
 | pony, web | ✅ | ❌ gave today's `AmbientAuth` (no `None`), not 0.38.1's union | ½ order right; `next` parameter types wrong | 1.5 | 15 | 41 s | 123k |
+| node, web via MCP (Firecrawl) | ✅ | ✅ | ✅ | 3 | 10 | 39 s | 155k |
+| zig, web via MCP (Firecrawl) | ✅ | ✅ | ✅ | 3 | 7 | 57 s | 132k |
+| pony, web via MCP (Firecrawl) | ✅ | ❌ today's `AmbientAuth val`, "high" confidence | ½ order right; `next` default is today's `RejectAlways[B]`, 0.38.1 has `qualify` | 1.5 | 7 | 23 s | 132k |
 
-Totals: skill 9/9 (every answer cites a REF), web 7/9, no skill 5.5/9.
+Totals: skill 9/9 (every answer cites a REF), web via MCP 7.5/9, built-in web 7/9, no skill 5.5/9.
 
 ## Observations
 
@@ -60,3 +63,18 @@ Totals: skill 9/9 (every answer cites a REF), web 7/9, no skill 5.5/9.
   docshelf answers from the pinned 0.38.1 docvol.
 - The web arm cost more than the skill: 9-15 tool calls and 33-41 s per
   three questions, against 8 calls and 21-29 s.
+
+## Web via MCP arm
+
+- Each agent could pick one search/scrape MCP service (Firecrawl, Exa,
+  Brave, Parallel); all three picked Firecrawl. Its fetches run server-side,
+  so the sandbox allowlist did not block ziglang.org or stdlib.ponylang.io.
+- With the real pages reachable, Zig rose to 3/3. Pony did not improve:
+  stdlib.ponylang.io serves only the latest release, and the agent took it
+  for 0.38.1 ("high" confidence) and answered P2 and P3's default with
+  today's API. Version drift, not access, is what the web arms miss.
+- Cost: 7-10 tool calls, 23-57 s and 132-155k tokens per three questions;
+  the skill used 8 calls, 21-29 s and 119-123k tokens.
+- The Node run created a one-minute "noop" scheduled message in the
+  session against its instructions; the controller deleted it before it
+  fired. (A second rule slip by a Haiku subagent in this trial; see above.)
