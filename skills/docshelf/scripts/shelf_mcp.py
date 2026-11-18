@@ -168,8 +168,9 @@ def _schema(c: shelf_cli.Command) -> dict:
         if p.nargs in ("+", "*") or p.repeat:
             prop = {"type": "array", "items": prop}
         prop["description"] = p.help
-        if p.default is not None:
-            prop["default"] = p.default
+        default = shelf_cli.param_default(p)
+        if default is not None:
+            prop["default"] = default
         props[name] = prop
         if _positional(p) and p.nargs != "*":
             required.append(name)

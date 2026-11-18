@@ -1963,6 +1963,11 @@ class FtsIdentifierTests(unittest.TestCase):
     def db(self):
         return os.path.join(self.cache, "devdocs", "py", ".docshelf", "fts.sqlite")
 
+    def test_match_terms_non_identifier_no_ids(self):
+        for q in ("printf(3)", "vector<int>"):
+            self.assertNotIn("ids:", " ".join(shelf_lookup._match_terms(q)), q)
+        self.assertIn("ids:", " ".join(shelf_lookup._match_terms("fooBar")))
+
     def test_identifier_with_underscore_ranks_first(self):
         r = self.cli("fts", "return_exceptions", "-d", "py", "--json")
         self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
@@ -2315,6 +2320,38 @@ class NetworkTests(unittest.TestCase):
         self.assertIn("python~3.15", err)
         self.assertEqual(self.main("install", "zzz")[0], 5)
 
+    def test_unknown_name_said_once(self):
+        self.write_manifest(self.rows)
+        code, out, err = self.main("install", "zzz")
+        self.assertEqual(code, 5)
+        self.assertNotIn("zzz: no DevDocs", err)
+        self.assertIn("no DevDocs documentation matches 'zzz'", err)
+
+    def test_install_write_errors_are_cache_errors(self):
+        import errno
+        self.write_manifest(self.rows)
+        real_open = open
+
+        def deny_temp(*a, **k):
+            raise PermissionError(13, "Permission denied")
+
+        def full_meta(path, *a, **k):
+            if os.path.basename(str(path)).startswith("meta.json."):
+                raise OSError(errno.ENOSPC, "No space left on device")
+            return real_open(path, *a, **k)
+        with mock.patch.object(shelf_devdocs, "make_temp", deny_temp):
+            code, out, err = self.main("install", "node", "python~3.14")
+        self.assertEqual(code, 2, err)
+        self.assertIn("cannot write", err)
+        self.assertIn("not tried: python~3.14", err)
+        self.assertNotIn("Traceback", err)
+        shutil.rmtree(os.path.join(self.root, "node"), ignore_errors=True)
+        with mock.patch("builtins.open", full_meta):
+            code, out, err = self.main("install", "node", "python~3.14")
+        self.assertEqual(code, 2, err)
+        self.assertIn("cannot write", err)
+        self.assertIn("not tried: python~3.14", err)
+
     def test_install_up_to_date(self):
         self.main("install", "python")
         before = len(self.net.fetched)
@@ -2485,7 +2522,7 @@ class NetworkTests(unittest.TestCase):
         self.assertEqual(code, 7)
         self.assertTrue(err.startswith("node: cannot reach"), err)
         code, _, err = self.main("install", "zzz")
-        self.assertTrue(err.startswith("zzz: no DevDocs"), err)
+        self.assertTrue(err.startswith("no DevDocs documentation matches 'zzz'"), err)
         # already named: no second prefix
         del self.net.pages["%s/python~3.15/index.json"
                            % shelf_devdocs.DOCUMENTS_BASE]
@@ -2985,6 +3022,20 @@ class TypesTests(unittest.TestCase):
 
 
 class ParamDefaultsTests(unittest.TestCase):
+    def test_schema_defaults_use_param_default(self):
+        import shelf_mcp
+        schemas = {t["name"]: t["inputSchema"] for t in shelf_mcp.tool_schemas()}
+        checked = 0
+        for c in shelf_mcp._mcp_commands():
+            props = schemas[c.name]["properties"]
+            for p in shelf_mcp._tool_params(c):
+                want = shelf_cli.param_default(p)
+                if want is not None:
+                    self.assertEqual(props[shelf_mcp._prop_name(p)].get("default"),
+                                     want, (c.name, p.flags))
+                    checked += 1
+        self.assertGreater(checked, 0)
+
     def test_param_defaults_match_argparse(self):
         parser = shelf_cli.build_parser()
         for c in shelf_cli.COMMANDS:
@@ -3115,7 +3166,7 @@ class McpTests(unittest.TestCase):
         kind = prop["type"]
         if kind == "array":
             kind = prop["items"]["type"] + "[]"
-        if "default" in prop:
+        if "default" in prop and prop["default"] is not False:  # a flag's
             kind += "=%s" % prop["default"]
         if "minimum" in prop:
             kind += ">=%s" % prop["minimum"]
@@ -5671,7 +5722,8 @@ class DashReadOnlyTests(unittest.TestCase):
                                    "python~3.11")
         self.assertEqual(code, 5, (out, err))
         self.assertIn("skipped, Dash/Zeal docset", err)
-        self.assertIn("nosuchdoc: no DevDocs documentation", err)
+        self.assertIn("no DevDocs documentation matches 'nosuchdoc'", err)
+        self.assertNotIn("nosuchdoc: no DevDocs", err)
         self.assertTrue(out.startswith("installed python~3.11"), out)
 
     def test_remove_and_update_family_matching_docvol_and_docset(self):
@@ -7592,6 +7644,25 @@ class DamagedDocvolTests(unittest.TestCase):
         r = self.cli("list")
         self.assertEqual(r.returncode, 0, r.stderr)
         self.assertNotIn("Traceback", r.stderr)
+
+    def test_list_warns_damaged_once(self):
+        self.make("beta")
+        docs = os.path.join(self.tmp, "docs")
+        path = make_docset(docs, "Lib", [("os", "Module", "os.html")],
+                           {"os.html": "<h1>os</h1>"})
+        idx = os.path.join(path, "Contents", "Resources", "docSet.dsidx")
+        with open(idx, "r+b") as f:
+            f.truncate(20)
+        r = self.cli("list")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        lines = [l for l in r.stderr.splitlines()
+                 if l.startswith("warning:") and "Lib" in l]
+        self.assertEqual(len(lines), 1, r.stderr)
+        self.assertIn("reinstall it in Dash or Zeal", lines[0])
+        self.assertEqual(r.stderr.count("warning:"), 1, r.stderr)
+        self.assertIn("Lib  ", r.stdout)
+        self.assertIn("0 entries", r.stdout)
+        self.assertIn("beta  Beta  1  1 entries", r.stdout)
 
 
 class NoShadowedTestCaseNamesTests(unittest.TestCase):

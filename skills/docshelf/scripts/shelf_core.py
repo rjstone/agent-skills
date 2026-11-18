@@ -24,7 +24,11 @@ STALE_TMP_SECONDS = 3600
 def sweep_stale_tmp(folder: str, max_age: float = STALE_TMP_SECONDS) -> None:
     """Remove '*.tmp', '*.tmp-journal' and '*.tmp-wal' files in folder older
     than max_age seconds (leftovers of a killed run, SQLite's included);
-    nothing else is touched. Errors are ignored."""
+    nothing else is touched. Errors are ignored.
+
+    A live temp file is never old: whoever writes it keeps its mtime fresh,
+    so the age test alone spares it. The owner's pid is not checked:
+    os.kill(pid, 0) terminates the process on Windows."""
     try:
         names = os.listdir(folder)
     except OSError:

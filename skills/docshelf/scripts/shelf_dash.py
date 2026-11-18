@@ -195,6 +195,7 @@ class DashDocvol(Docvol):
         self._pages: Optional[List[str]] = None
         self._repeats: Optional[Repeats] = None
         self._count: Optional[int] = None
+        self.damage_error: Optional[CLIError] = None
         self._by_id: Optional[dict] = None  # ref -> Entry, built on first resolve
         self._tarix_prefix: Optional[str] = None  # "<Name>.docset/", probed once
         self._tarix_probed = False
@@ -283,7 +284,8 @@ class DashDocvol(Docvol):
                         "SELECT COUNT(*) FROM %s" % _table(con)).fetchone()[0])
             except (sqlite3.Error, ValueError, OSError) as e:
                 # silent: commands that read the index report it (once) via
-                # DamagedDocvol; `list` shows 0
+                # DamagedDocvol; `list` reads damage_error and warns
+                self.damage_error = self._index_error(e)
                 self._count = 0
                 return 0
             try:

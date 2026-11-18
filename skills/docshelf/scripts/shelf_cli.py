@@ -62,12 +62,16 @@ def cmd_list(cfg: Config, args: argparse.Namespace) -> int:
         print("no docvols installed (install NAME; sources QUERY finds names)")
         return 0
     for d in docvols:
+        count = d.entry_count  # a damaged docset counts 0, noting why
+        damage = getattr(d, "damage_error", None)
+        if damage is not None:
+            shelf_core.warn("docvol %s: %s" % (d.name, damage))
         twins = [o.name for o in docvols if shelf_backends.same_documentation(d, o)]
         also = ("  also as %s %s" % ("DevDocs" if d.read_only else "docset",
                                      ", ".join(twins)) if twins else "")
         print("%s  %s  %s  %d entries  %s  %s%s" % (
             d.name, d.display_name,
-            d.release, d.entry_count, "full" if d.full_size else "small",
+            d.release, count, "full" if d.full_size else "small",
             d.source, also))
     return 0
 

@@ -505,7 +505,10 @@ def install(cfg: Config, row: dict) -> str:
     try:
         sweep_stale_tmp(folder)
         for n in names:
-            fd, tmps[n] = make_temp(folder, prefix=n + ".", sweep=False)
+            try:
+                fd, tmps[n] = make_temp(folder, prefix=n + ".", sweep=False)
+            except OSError as e:
+                raise _cache_error(folder, e)
             os.close(fd)
         for n in names[:2]:
             try:
@@ -529,11 +532,14 @@ def install(cfg: Config, row: dict) -> str:
                 "installedAt": _utc_now(), "alias": row.get("alias") or None,
                 "version": str(row.get("version") or ""),
                 "entry_count": len(idx["entries"])}
-        with open(tmps["meta.json"], "w", encoding="utf-8") as f:
-            json.dump(meta, f, ensure_ascii=False)
-        os.replace(tmps["index.json"], os.path.join(folder, "index.json"))
-        os.replace(tmps["db.json"], os.path.join(folder, "db.json"))
-        os.replace(tmps["meta.json"], meta_path)
+        try:
+            with open(tmps["meta.json"], "w", encoding="utf-8") as f:
+                json.dump(meta, f, ensure_ascii=False)
+            os.replace(tmps["index.json"], os.path.join(folder, "index.json"))
+            os.replace(tmps["db.json"], os.path.join(folder, "db.json"))
+            os.replace(tmps["meta.json"], meta_path)
+        except OSError as e:
+            raise _cache_error(folder, e)
     except BaseException:
         for t in tmps.values():
             _discard(t)
@@ -677,7 +683,7 @@ def _each(items, action, label=str) -> int:
         except CLIError as e:
             name = label(item)
             stop = isinstance(e, CacheError)
-            if not str(e).startswith(name + ": "):
+            if not (str(e).startswith(name + ": ") or repr(name) in str(e)):
                 e = CLIError("%s: %s" % (name, e), e.code)
             failures.append(e)
             if stop:

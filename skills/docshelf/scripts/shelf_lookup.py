@@ -452,10 +452,14 @@ def _match_terms(query) -> Tuple[str, ...]:
     for tok in _query_tokens(query):
         # punctuation around a word is no part of it (the text index drops it)
         core = re.sub(r"^\W+|\W+$", "", tok)
-        forms = _ident_forms(core) if _IDENT_RE.fullmatch(core) else None
-        # plain words also try `ids`, which holds camelCase pieces
-        terms.append("(%s OR ids:%s)" % (
-            _quote(tok), _quote(forms[0] if forms else core.lower())))
+        # plain words also try `ids`, which holds camelCase pieces; a word
+        # that is no identifier ("printf(3)") has no `ids` form
+        if _IDENT_RE.fullmatch(core):
+            forms = _ident_forms(core)
+            terms.append("(%s OR ids:%s)" % (
+                _quote(tok), _quote(forms[0] if forms else core.lower())))
+        else:
+            terms.append(_quote(tok))
     return tuple(terms)
 
 
