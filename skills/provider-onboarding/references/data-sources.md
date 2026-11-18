@@ -105,6 +105,8 @@ Don't re-review these unless they change shape:
   database migrations; the current catalog is a signed feed from its own service (free tier 30 days late).
 - `cheaper-inference/OmniRoute` - free-tier gateway app built around reusing Claude Code, Codex,
   Cursor and Copilot logins (client-fingerprint files); no data file, provider details live in app code.
+- `latere-ai/lux` - self-hosted gateway; only an example catalog (7 providers, 94 models) that
+  is a 2026-09 snapshot its README says users must keep current themselves.
 - `jeffkit/recursive-providers` (CC0) - 12 providers mirrored from LiteLLM; not a source, but its
   `key_url` values are a good seed for `signup_url` in the overrides once checked.
 
