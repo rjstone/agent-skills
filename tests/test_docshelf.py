@@ -3728,6 +3728,130 @@ class FinalReviewTests(unittest.TestCase):
         self.assertIn("a \u2192 b".encode("utf-8"), r.stdout)
 
 
+class NotesRetryTests(unittest.TestCase):
+    """Another writer changing the notes file mid-write (TODO 6.9.2)."""
+
+    def setUp(self):
+        folder, self.cache, self.notes, self.env = temp_env(self)
+        make_devdocs(self.cache, "python~3.13", name="Python", release="1",
+                     entries=[("Guide", "Guide", "guide")],
+                     pages={"guide": "<h1>Guide</h1><p>Text.</p>"})
+        self.file = os.path.join(self.notes, "python.md")
+        patcher = mock.patch.dict(os.environ, self.env)
+        patcher.start()
+        self.addCleanup(patcher.stop)
+        self.cfg = shelf_core.load_config(folder, os.environ)
+
+    def args(self, **kw):
+        base = dict(docvol="python", set=None, delete=None, text=None,
+                    path=False, check=False, json=False)
+        base.update(kw)
+        return types.SimpleNamespace(**base)
+
+    def put(self, text):
+        os.makedirs(self.notes, exist_ok=True)
+        with open(self.file, "w", encoding="utf-8", newline="") as f:
+            f.write(text)
+
+    def read(self):
+        with open(self.file, encoding="utf-8", newline="") as f:
+            return f.read()
+
+    def run_notes(self, others, **kw):
+        """Run cmd_notes; before our i-th re-check (after the first read) the
+        i-th callable in `others` (repeating the last) changes the file."""
+        real = shelf_notes._read_notes_strict
+        calls = []
+
+        def wrapped(path):
+            if len(calls) % 2 == 1 and others:  # re-check calls
+                others[min(len(calls) // 2, len(others) - 1)]()
+            calls.append(path)
+            return real(path)
+
+        out = io.StringIO()
+        with mock.patch.object(shelf_notes, "_read_notes_strict", wrapped), \
+                contextlib.redirect_stdout(out):
+            return shelf_notes.cmd_notes(self.cfg, self.args(**kw)), out.getvalue()
+
+    def test_concurrent_set_keeps_both(self):
+        self.put("## X\nx\n")
+        done = []
+
+        def other():
+            if not done:
+                done.append(1)
+                self.put("## X\nx\n\n## B\nb\n")
+        code, _ = self.run_notes([other], set="A", text="a")
+        self.assertEqual(code, 0)
+        self.assertEqual(self.read(), "## X\nx\n\n## B\nb\n\n## A\na\n")
+
+    def test_gives_up_after_three(self):
+        self.put("## X\nx\n")
+        n = []
+
+        def other():
+            n.append(1)
+            self.put("## X\nx\n\n## O%d\no\n" % len(n))
+        with self.assertRaises(CLIError) as cm:
+            self.run_notes([other], set="A", text="a")
+        self.assertEqual(cm.exception.code, 2)
+        self.assertIn("notes changed by another writer; not written", str(cm.exception))
+        self.assertEqual(len(n), shelf_notes.NOTES_TRIES)
+        self.assertEqual(self.read(), "## X\nx\n\n## O3\no\n")
+        self.assertEqual(os.listdir(self.notes), ["python.md"])
+
+    def test_file_appeared(self):
+        done = []
+
+        def other():
+            if not done:
+                done.append(1)
+                self.put("## B\nb\n")
+        code, _ = self.run_notes([other], set="A", text="a")
+        self.assertEqual(code, 0)
+        self.assertEqual(self.read(), "## B\nb\n\n## A\na\n")
+
+    def test_file_deleted_set_and_delete(self):
+        self.put("## X\nx\n")
+
+        def gone():
+            if os.path.exists(self.file):
+                os.remove(self.file)
+        code, _ = self.run_notes([gone], set="A", text="a")
+        self.assertEqual(code, 0)
+        self.assertEqual(self.read(), "## A\na\n")
+        self.put("## X\nx\n")
+        with self.assertRaises(CLIError) as cm:
+            self.run_notes([gone], delete="X")
+        self.assertEqual(cm.exception.code, 5)
+        self.assertIn("no notes file yet", str(cm.exception))
+
+    def test_crlf_kept_on_retry(self):
+        self.put("## X\nx\n")
+        done = []
+
+        def other():
+            if not done:
+                done.append(1)
+                self.put("## X\r\nx\r\n\r\n## B\r\nb\r\n")
+        self.run_notes([other], set="A", text="a")
+        self.assertEqual(self.read(),
+                         "## X\r\nx\r\n\r\n## B\r\nb\r\n\r\n## A\r\na\r\n")
+
+    def test_replace_permission_error(self):
+        self.put("## X\nx\n")
+        with mock.patch.object(shelf_notes.os, "replace",
+                               side_effect=PermissionError("in use")):
+            with self.assertRaises(CLIError) as cm, \
+                    contextlib.redirect_stdout(io.StringIO()):
+                shelf_notes.cmd_notes(self.cfg, self.args(set="A", text="a"))
+        self.assertEqual(cm.exception.code, 2)
+        self.assertIn("cannot write", str(cm.exception))
+        self.assertEqual(self.read(), "## X\nx\n")
+        self.assertEqual(os.listdir(self.notes), ["python.md"])
+
+
 class NotesWriteTests(unittest.TestCase):
     def setUp(self):
         tmp = tempfile.TemporaryDirectory()

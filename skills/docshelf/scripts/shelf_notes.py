@@ -390,7 +390,15 @@ def _new_file_mode() -> int:
     return umask_mode()
 
 
-def _write_notes(path, text):
+NOTES_TRIES = 3  # reads of the file per write when another writer interferes
+_NO_CHECK = object()
+
+
+class NotesChanged(Exception):
+    """The notes file changed between our read and our write."""
+
+
+def _write_notes(path, text, expect=_NO_CHECK):
     if os.path.islink(path) and not os.path.exists(path):
         raise CLIError("cannot write %s: it is a symlink to a missing file; "
                        "not written" % path, 2)
@@ -413,6 +421,11 @@ def _write_notes(path, text):
         os.chmod(tmp, mode)  # keep the existing file's mode
         with os.fdopen(fd, "w", encoding="utf-8", newline="") as f:
             f.write(text)
+        # Compare-and-replace: if another writer changed the file since we
+        # read it, give up this attempt. The window between this re-read and
+        # os.replace remains (microseconds instead of the whole edit).
+        if expect is not _NO_CHECK and _read_notes_strict(path) != expect:
+            raise NotesChanged(path)
         os.replace(tmp, path)
     except OSError as e:
         shelf_devdocs._discard(tmp)
@@ -422,17 +435,27 @@ def _write_notes(path, text):
         raise
 
 
-def _write_request(cfg, args, path, text):
+def _write_request(cfg, args, path):
     if args.set is not None and args.delete is not None:
         raise CLIError("--set and --delete cannot be used together", 2)
     if args.set is not None and args.text is None:
         raise CLIError("--set needs --text", 2)
     if args.text is not None and args.set is None:
         raise CLIError("--text only goes with --set", 2)
+    if args.set is not None and any(_HEADING.match(l) for l in _split(args.text)):
+        raise CLIError("--text must not contain a line starting with '## ' "
+                       "(that starts a new section; use one --set each)", 2)
+    for _ in range(NOTES_TRIES):
+        text = _read_notes_strict(path)
+        try:
+            return _apply_request(args, path, text)
+        except NotesChanged:
+            continue
+    raise CLIError("notes changed by another writer; not written: %s" % path, 2)
+
+
+def _apply_request(args, path, text):
     if args.set is not None:
-        if any(_HEADING.match(l) for l in _split(args.text)):
-            raise CLIError("--text must not contain a line starting with '## ' "
-                           "(that starts a new section; use one --set each)", 2)
         new = set_section(text or "", args.set, args.text)
     else:
         if text is None:
@@ -445,7 +468,7 @@ def _write_request(cfg, args, path, text):
     out = new
     if text and text.count("\r\n") * 2 > text.count("\n"):
         out = new.replace("\n", "\r\n")  # keep a CRLF file CRLF
-    _write_notes(path, out)
+    _write_notes(path, out, expect=text)
     print("wrote " + path)
     return new
 
@@ -470,7 +493,7 @@ def cmd_notes(cfg: Config, args) -> int:
         print(path)
         return 0
     if writing:
-        text = _write_request(cfg, args, path, _read_notes_strict(path))
+        text = _write_request(cfg, args, path)
         args.check = True
     else:
         _, text = read_notes(cfg, family)
