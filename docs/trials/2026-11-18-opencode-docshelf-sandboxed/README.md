@@ -105,7 +105,8 @@ hyphens (U+2010-U+2015, U+2212) as `-`: nemotron-120b wrote
 - No run passed `-d` to `show` or `toc` this time, so 0.8.1's change was
   not exercised; no run failed on it either.
 - New usage slips (mimo): `search "--permission"` (a query starting with
-  `--` is read as an option; `search -- --permission` works) and
+  `--` is read as an option; `search -d node -- --permission` works:
+  options before `--`) and
   `list HTTP` (`list` takes no arguments).
 - Luna stayed the cheapest and fastest of the models that always used the
   skill; totals moved by up to ~30% per model between rounds.
