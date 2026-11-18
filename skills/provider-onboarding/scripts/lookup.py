@@ -20,8 +20,35 @@ import urllib.error
 import urllib.request
 from urllib.parse import urlparse
 
+VERSION = "0.3.0"
 DEFAULT_URLS = "https://models.dev/api.json,https://models.opencode.ai/api.json"
-UA = "provider-onboarding/1.0"
+UA = "provider-onboarding/" + VERSION
+
+# Portkey-AI/models: detailed pricing (cents per token) and gateway param ranges.
+# The API is tried first; the GitHub repo's raw files are the fallback.
+PORTKEY_BASES = ("https://configs.portkey.ai",
+                 "https://raw.githubusercontent.com/Portkey-AI/models/main")
+# models.dev provider id -> Portkey file name, where they differ (both sides
+# checked against live data, 2026-11-18); unlisted ids are tried as is.
+PORTKEY_IDS = {
+    "amazon-bedrock": "bedrock", "azure": "azure-openai", "google-vertex": "vertex-ai",
+    "google-vertex-anthropic": "vertex-ai", "mistral": "mistral-ai", "xai": "x-ai",
+    "togetherai": "together-ai", "perplexity": "perplexity-ai", "moonshotai": "moonshot",
+    "moonshotai-cn": "moonshot", "zai": "z-ai", "zhipuai": "zhipu", "alibaba": "dashscope",
+    "alibaba-cn": "dashscope", "cloudflare-workers-ai": "workers-ai", "azure-cognitive-services": "azure-ai",
+    "nearai": "near-ai",
+}
+# Community provider list (no license, no sources): last resort, read at run time,
+# never copied. Session-cookie, app-login and anonymous web endpoints are skipped.
+EXTRA_LIST_URL = "https://raw.githubusercontent.com/foisalislambd/all-llm-provider-list/main/data/providers.json"
+EXTRA_SKIP = {"Web Cookie", "OAuth", "No-auth"}
+EXTRA_TAG = "community list (UNVERIFIED; confirm in provider docs)"
+
+PORTKEY_TOKEN_FIELDS = (("request_token", "input"), ("response_token", "output"),
+                        ("cache_read_input_token", "cache_read"),
+                        ("cache_write_input_token", "cache_write"),
+                        ("request_audio_token", "audio_input"),
+                        ("response_audio_token", "audio_output"))
 TTL = 3600
 
 MULTI_TLDS = {"co.uk", "org.uk", "ac.uk", "com.au", "co.jp", "com.br", "co.in",
@@ -239,6 +266,142 @@ def fmt_cost(c):
     return s
 
 
+# ---------- Portkey ----------
+
+def portkey_names(pid):
+    out = []
+    for n in (PORTKEY_IDS.get(pid), pid):
+        if n and n not in out:
+            out.append(n)
+    return out
+
+
+def portkey_load(kind, pid, args):
+    """Return (data, source, errors) for Portkey's <kind>/<name>.json, or (None, None, errors)."""
+    errors = []
+    for name in portkey_names(pid):
+        if args.portkey_dir:
+            f = os.path.join(args.portkey_dir, kind, name + ".json")
+            if os.path.exists(f):
+                try:
+                    return json.load(open(f)), f, errors
+                except Exception as e:
+                    errors.append("%s: %s" % (f, e))
+            continue
+        cache_dir = args.cache_dir or os.path.join(tempfile.gettempdir(), "provider-onboarding-cache")
+        for base in PORTKEY_BASES:
+            url = "%s/%s/%s.json" % (base, kind, name)
+            try:
+                data, how = fetch(url, cache_dir, args.refresh)
+                return data, "%s (%s)" % (url, how), errors
+            except Exception as e:
+                errors.append("%s: %s" % (url, e))
+    return None, None, errors
+
+
+def portkey_model_key(q, data):
+    keys = [k for k in (data or {}) if k != "default" and isinstance(data[k], dict)]
+    q = (q or "").split("/")[-1]
+    for k in keys:
+        if k == q:
+            return k
+    hits = sorted(((score(q, k), k) for k in keys), key=lambda x: (-x[0], x[1]))
+    return hits[0][1] if hits and hits[0][0] else None
+
+
+def per_million(cents):
+    """Portkey cents per token -> USD per 1M tokens."""
+    return round(cents * 1e4, 6) if isinstance(cents, (int, float)) else None
+
+
+def portkey_pricing(model):
+    pc = (model or {}).get("pricing_config") or {}
+    pay, batch = pc.get("pay_as_you_go") or {}, pc.get("batch_config") or {}
+    out = {}
+    for src, dst in PORTKEY_TOKEN_FIELDS:
+        v = per_million((pay.get(src) or {}).get("price"))
+        if v is not None:
+            out[dst] = v
+    for src, dst in (("request_token", "batch_input"), ("response_token", "batch_output")):
+        v = per_million((batch.get(src) or {}).get("price"))
+        if v is not None:
+            out[dst] = v
+    units = {k: round(v["price"] / 100, 6) for k, v in (pay.get("additional_units") or {}).items()
+             if isinstance(v, dict) and isinstance(v.get("price"), (int, float))}
+    if units:
+        out["per_unit_usd"] = units
+    return out
+
+
+def portkey_params(general, key):
+    m = (general or {}).get(key) or {}
+    params = m.get("params") or ((general or {}).get("default") or {}).get("params") or []
+    out = {}
+    for p in params:
+        if isinstance(p, dict) and ("minValue" in p or "maxValue" in p):
+            out[p["key"]] = {k2: p[k1] for k1, k2 in (("minValue", "min"), ("maxValue", "max"), ("defaultValue", "default")) if k1 in p}
+    return out
+
+
+def portkey_info(pid, model_id, args):
+    pricing, psrc, errs = portkey_load("pricing", pid, args)
+    if pricing is None:
+        return {"error": "no Portkey pricing file for %s (tried %s)" % (pid, "; ".join(errs) or "nothing")}
+    info = {"source": psrc}
+    key = portkey_model_key(model_id, pricing) if model_id else None
+    if model_id and not key:
+        info["error"] = "Portkey has %s pricing but no model matching %r" % (pid, model_id)
+        return info
+    if key:
+        info["model_key"] = key
+        info["pricing_usd"] = portkey_pricing(pricing[key])
+    general, gsrc, _ = portkey_load("general", pid, args)
+    if general is not None:
+        info["params"] = portkey_params(general, key)
+        info["params_source"] = gsrc
+    return info
+
+
+# ---------- community list ----------
+
+def load_extra(args):
+    """Return (usable providers, note). Skips EXTRA_SKIP and non-URL endpoints."""
+    try:
+        if args.extra_list_file:
+            data, src = json.load(open(args.extra_list_file)), args.extra_list_file
+        else:
+            cache_dir = args.cache_dir or os.path.join(tempfile.gettempdir(), "provider-onboarding-cache")
+            data, how = fetch(EXTRA_LIST_URL, cache_dir, args.refresh)
+            src = "%s (%s)" % (EXTRA_LIST_URL, how)
+    except Exception as e:
+        return [], "FAILED community list: %s" % e
+    ok = [p for p in (data if isinstance(data, list) else [])
+          if isinstance(p, dict) and p.get("category") not in EXTRA_SKIP
+          and str(p.get("api_base_url") or "").startswith("http")]
+    return ok, "loaded %s (%d usable providers)" % (src, len(ok))
+
+
+def match_extra(q, providers):
+    hits = []
+    for p in providers:
+        s = score(q, p.get("slug"), p.get("name"), *(p.get("aliases") or []))
+        if s:
+            hits.append((s, p.get("slug") or "", p))
+    hits.sort(key=lambda x: (-x[0], x[1]))
+    return [(h[0], h[2]) for h in hits]
+
+
+def extra_entry(p, model_id):
+    prov = {"name": p.get("name"), "api": p["api_base_url"].rstrip("/"),
+            "env": [p["env_variable"]] if p.get("env_variable") else [],
+            "doc": p.get("website"), "_src": EXTRA_TAG,
+            "npm": "@ai-sdk/openai-compatible" if p.get("openai_compatible") else None}
+    e = build_entry(p.get("slug") or norm(p.get("name")), prov, model_id, {}, {})
+    e["base_url_source"] = EXTRA_TAG
+    e["extras"]["community_list"] = {k: p[k] for k in ("category", "website", "popular_models", "notes") if p.get(k)}
+    return e
+
+
 # ---------- entry construction ----------
 
 def build_entry(pid, prov, mid, model, ov, manual=None):
@@ -343,6 +506,13 @@ def render_md(res):
         L.append("- Sign-up / key page candidates (inferred, NOT verified):")
         for c in e["signup_candidates"] or [{"url": None, "confidence": "none", "basis": "no base URL or docs"}]:
             L.append("  - %s [%s] %s" % (c["url"] or "(none)", c["confidence"], c["basis"]))
+        pk = e.get("portkey")
+        if pk:
+            L.append("- Portkey: %s  _[%s]_" % (pk.get("error") or ("model `%s`" % pk["model_key"] if pk.get("model_key") else "provider file found; give a model id for prices"), pk.get("source") or "Portkey-AI/models"))
+            if pk.get("pricing_usd"):
+                L.append("  - pricing (USD per 1M tokens; per_unit_usd per call): %s" % json.dumps(pk["pricing_usd"]))
+            if pk.get("params"):
+                L.append("  - gateway param ranges: %s" % json.dumps(pk["params"]))
         for k, v in e["extras"].items():
             L.append("- %s: %s" % (k, json.dumps(v) if not isinstance(v, str) else v))
         sn = snippets(e)
@@ -371,16 +541,25 @@ def main():
     ap.add_argument("--list-providers", action="store_true")
     ap.add_argument("--format", choices=["md", "json"], default="md")
     ap.add_argument("--limit", type=int, default=8, help="max providers listed for a model-only query")
+    ap.add_argument("--portkey", action="store_true", help="add Portkey-AI/models pricing and param ranges")
+    ap.add_argument("--portkey-dir", help="local clone of Portkey-AI/models (implies --portkey, no network)")
+    ap.add_argument("--extra-list", action="store_true", help="last resort: community provider list when models.dev has no match")
+    ap.add_argument("--extra-list-file", help="local copy of that list's data/providers.json (implies --extra-list)")
+    ap.add_argument("--version", action="version", version="%(prog)s " + VERSION)
     ap.add_argument("--name"); ap.add_argument("--base-url"); ap.add_argument("--env-var"); ap.add_argument("--model-id")
     a = ap.parse_args()
 
     ov = load_overrides(a.overrides)
+    a.extra_list = a.extra_list or bool(a.extra_list_file)
 
     # manual mode: no data needed
     if a.base_url:
         manual = {"name": a.name, "base_url": a.base_url, "env": a.env_var, "model_id": a.model_id}
         pid = norm(a.name or a.provider or urlparse(a.base_url).hostname) or "custom"
         e = build_entry(pid, {}, a.model_id, {}, {}, manual)
+        if a.portkey or a.portkey_dir:
+            hyph = re.sub(r"[^a-z0-9]+", "-", (a.name or pid).lower()).strip("-")
+            e["portkey"] = portkey_info(hyph or pid, a.model_id, a)
         res = {"query": "manual: %s" % (a.name or a.base_url), "notes": ["manual mode"], "entries": [e]}
         print(json.dumps(res, indent=2) if a.format == "json" else render_md(res))
         return 0
@@ -402,13 +581,24 @@ def main():
 
     if a.provider:
         pm = match_providers(a.provider, data, ov)
-        if not pm:
+        best = pm[0][0] if pm else 0
+        if a.extra_list and best < 80:  # no match, or only a weak fuzzy one
+            extra, note = load_extra(a)
+            notes.append(note)
+            hits = match_extra(a.provider, extra)
+            if hits and hits[0][0] > best:
+                for s, p in hits[:2]:
+                    entries.append(extra_entry(p, a.model))
+                warnings.append("provider found only in the community list; every field is unverified")
+                pm = []
+        if not pm and not entries:
             if not data:
                 sys.stderr.write(FALLBACK_HELP)
                 return 3
             names = difflib.get_close_matches(norm(a.provider), [norm(k) for k in data], n=5, cutoff=0.4)
             sys.stderr.write("No provider matches %r. Closest: %s\nTry --list-providers, or manual mode.\n" % (a.provider, names or "none"))
             return 2
+    if a.provider and pm:
         top = pm[0][0]
         close = [pid for s, pid in pm if s >= top - 10][:3]
         if len(close) > 1:
@@ -436,7 +626,7 @@ def main():
                         also.append({"provider_id": pid, "provider_name": e["provider_name"], "base_url": e["base_url"],
                                      "model_id": mid, "cost": e["model"]["cost"]})
                         break
-    else:
+    elif not a.provider:
         if not data:
             sys.stderr.write(FALLBACK_HELP)
             return 3
@@ -453,6 +643,9 @@ def main():
         for s, pid, mid, m in hits[: a.limit]:
             entries.append(build_entry(pid, data[pid], mid, m, ov.get(pid, {})))
 
+    if a.portkey or a.portkey_dir:
+        for e in entries:
+            e["portkey"] = portkey_info(e["provider_id"], (e["model"] or {}).get("id"), a)
     res = {"query": query, "notes": notes, "warnings": warnings, "entries": entries, "also_served_by": also[:10]}
     if a.format == "json":
         for e in res["entries"]:
