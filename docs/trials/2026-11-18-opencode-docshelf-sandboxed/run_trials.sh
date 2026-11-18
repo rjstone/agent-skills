@@ -26,12 +26,19 @@
 #   TIMEOUT       seconds per run (default 600)
 #   NODE_DIR      Node.js folder with bin/opencode (default: from `which opencode`)
 #   SANDBOX_USER  host user bwrap runs as (default: sandboxer; created if missing)
+#   ARM           skill (default): docshelf installed as a skill in
+#                 ~/.claude/skills; mcp: no skill, docshelf's scripts (without
+#                 SKILL.md) in ~/.mcp-docshelf served as the opencode MCP
+#                 server "docshelf"
+#   SKILL_DIR     the docshelf skill folder to use (default: this repo's)
 #   SMOKE         if set, each run prints what it can see instead of running
 #                 a model (env names, /, /root, the repo, docshelf list)
 set -u
 HERE=$(cd "$(dirname "$0")" && pwd)
 REPO=$(cd "$HERE/../../.." && pwd)
-SKILL="$REPO/skills/docshelf"
+SKILL="${SKILL_DIR:-$REPO/skills/docshelf}"
+ARM="${ARM:-skill}"
+case $ARM in skill|mcp) ;; *) echo "ARM must be skill or mcp" >&2; exit 2 ;; esac
 [ $# -gt 0 ] || { echo "usage: run_trials.sh PROVIDER/MODEL..." >&2; exit 2; }
 command -v bwrap >/dev/null || { echo "bwrap not found (apt-get install -y bubblewrap)" >&2; exit 2; }
 SRC_CACHE="$(cd "${SRC_CACHE:?set SRC_CACHE}" && pwd)" || exit 2
@@ -128,11 +135,25 @@ one_model() {
   W="$B/work"
   rm -rf "$B"
   mkdir -p "$W/.claude/skills" "$W/.cache/docshelf/devdocs" "$W/.config/opencode" "$B/out"
-  cp -r "$SKILL" "$W/.claude/skills/docshelf"
-  find "$W/.claude/skills/docshelf" -name __pycache__ -prune -exec rm -rf {} +
+  if [ "$ARM" = skill ]; then
+    cp -r "$SKILL" "$W/.claude/skills/docshelf"
+  else  # the server's code only: no SKILL.md for a model to find
+    mkdir -p "$W/.mcp-docshelf" && cp -r "$SKILL/scripts" "$W/.mcp-docshelf/"
+  fi
+  find "$W" -name __pycache__ -prune -exec rm -rf {} +
   for d in zig node pony; do cp -r "$SRC_CACHE/devdocs/$d" "$W/.cache/docshelf/devdocs/"; done
   [ -f "$SRC_CACHE/devdocs/docs.json" ] && cp "$SRC_CACHE/devdocs/docs.json" "$W/.cache/docshelf/devdocs/"
-  cp "$HERE/opencode.json" "$W/.config/opencode/opencode.json"
+  if [ "$ARM" = skill ]; then
+    cp "$HERE/opencode.json" "$W/.config/opencode/opencode.json"
+  else
+    python3 - "$HERE/opencode.json" "$W/.config/opencode/opencode.json" <<'PY'
+import json, sys
+cfg = json.load(open(sys.argv[1]))
+cfg["mcp"] = {"docshelf": {"type": "local", "command": [
+    "python3", "/work/.mcp-docshelf/scripts/docshelf.py", "--mcp"]}}
+json.dump(cfg, open(sys.argv[2], "w"), indent=2)
+PY
+  fi
   for set in zig node pony http; do mkdir -p "$W/proj/$set"; done
   chown -R "$SANDBOX_USER:" "$W"
   for set in zig node pony http; do

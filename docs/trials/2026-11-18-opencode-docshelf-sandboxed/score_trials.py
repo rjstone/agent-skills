@@ -99,6 +99,7 @@ for d in dirs:
         if not os.path.exists(path):
             continue
         skill, cmds, bad, other, texts, errs = False, [], [], [], [], []
+        mcp_calls = 0
         io_chars = tok_in = 0
         for e in events(path):
             t, part = e.get("type"), e.get("part") or {}
@@ -110,7 +111,19 @@ for d in dirs:
                 if part.get("tool") == "skill" and "docshelf" in blob:
                     skill = True
                 cmd = inp.get("command", "")
-                if "docshelf.py" in cmd:
+                code = inp.get("code", "") if isinstance(inp.get("code"), str) else ""
+                if part.get("tool") == "execute" and "tools.docshelf." in code:
+                    # opencode's code mode: JS calling tools.docshelf.<tool>(...)
+                    mcp_calls += len(re.findall(r"tools\.docshelf\.\w+\s*\(", code))
+                    io_chars += len(code) + len(out)
+                    if st.get("status") == "error" or ERROR.search(out):
+                        bad.append(("execute " + short(code, 120), out))
+                elif str(part.get("tool", "")).startswith("docshelf"):
+                    mcp_calls += 1  # the MCP server's tools (ARM=mcp)
+                    io_chars += len(json.dumps(inp)) + len(out)
+                    if (st.get("status") == "error" or ERROR.search(out)):
+                        bad.append((part.get("tool") + " " + blob, out))
+                elif "docshelf.py" in cmd:
                     cmds.append(cmd)
                     io_chars += len(typed(cmd)) + len(out)
                     if "--help" not in cmd and ERROR.search(out):
@@ -126,10 +139,10 @@ for d in dirs:
         # models write hyphens as U+2010-U+2015 or U+2212 (e.g. "Retry\u2011After")
         reply = re.sub("[\u2010-\u2015\u2212]", "-", "\n".join(texts))
         miss = [n for n, rx in CHECKS[run] if not re.search(rx, reply)]
-        print("  %-5s %s | skill=%s docshelf-calls=%d errors=%d other-tools=%d "
-              "docshelf-io~tok=%d input-tokens=%d"
+        print("  %-5s %s | skill=%s docshelf-calls=%d mcp-calls=%d errors=%d "
+              "other-tools=%d docshelf-io~tok=%d input-tokens=%d"
               % (run, summ.get(run, "no summary"), "Y" if skill else "N", len(cmds),
-                 len(bad), len(other), io_chars // 4, tok_in))
+                 mcp_calls, len(bad), len(other), io_chars // 4, tok_in))
         if miss:
             print("        answers missing: %s" % ", ".join(miss))
         for x in errs:
