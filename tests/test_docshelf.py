@@ -1963,6 +1963,11 @@ class FtsIdentifierTests(unittest.TestCase):
     def db(self):
         return os.path.join(self.cache, "devdocs", "py", ".docshelf", "fts.sqlite")
 
+    def test_match_terms_non_identifier_no_ids(self):
+        for q in ("printf(3)", "vector<int>"):
+            self.assertNotIn("ids:", " ".join(shelf_lookup._match_terms(q)), q)
+        self.assertIn("ids:", " ".join(shelf_lookup._match_terms("fooBar")))
+
     def test_identifier_with_underscore_ranks_first(self):
         r = self.cli("fts", "return_exceptions", "-d", "py", "--json")
         self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
@@ -2315,6 +2320,38 @@ class NetworkTests(unittest.TestCase):
         self.assertIn("python~3.15", err)
         self.assertEqual(self.main("install", "zzz")[0], 5)
 
+    def test_unknown_name_said_once(self):
+        self.write_manifest(self.rows)
+        code, out, err = self.main("install", "zzz")
+        self.assertEqual(code, 5)
+        self.assertNotIn("zzz: no DevDocs", err)
+        self.assertIn("no DevDocs documentation matches 'zzz'", err)
+
+    def test_install_write_errors_are_cache_errors(self):
+        import errno
+        self.write_manifest(self.rows)
+        real_open = open
+
+        def deny_temp(*a, **k):
+            raise PermissionError(13, "Permission denied")
+
+        def full_meta(path, *a, **k):
+            if os.path.basename(str(path)).startswith("meta.json."):
+                raise OSError(errno.ENOSPC, "No space left on device")
+            return real_open(path, *a, **k)
+        with mock.patch.object(shelf_devdocs, "make_temp", deny_temp):
+            code, out, err = self.main("install", "node", "python~3.14")
+        self.assertEqual(code, 2, err)
+        self.assertIn("cannot write", err)
+        self.assertIn("not tried: python~3.14", err)
+        self.assertNotIn("Traceback", err)
+        shutil.rmtree(os.path.join(self.root, "node"), ignore_errors=True)
+        with mock.patch("builtins.open", full_meta):
+            code, out, err = self.main("install", "node", "python~3.14")
+        self.assertEqual(code, 2, err)
+        self.assertIn("cannot write", err)
+        self.assertIn("not tried: python~3.14", err)
+
     def test_install_up_to_date(self):
         self.main("install", "python")
         before = len(self.net.fetched)
@@ -2392,6 +2429,22 @@ class NetworkTests(unittest.TestCase):
         d = shelf_devdocs.DevDocsDocvol(os.path.join(self.root, "python~3.14"))
         self.assertEqual(d.entry_count, 2)
         self.assertNotIn("entry_count", self.meta("python~3.14"))  # no write
+
+    def test_meta_untouched_with_entry_count(self):
+        self.main("install", "python~3.14")
+        path = os.path.join(self.root, "python~3.14", "meta.json")
+
+        def state():
+            with open(path, "rb") as f:
+                return f.read(), os.stat(path).st_mtime_ns
+        before = state()
+        code, out, err = self.main("install", "python~3.14")
+        self.assertEqual((code, err), (0, ""))
+        self.assertTrue(out.startswith("up to date python~3.14"), out)
+        self.assertEqual(state(), before)
+        self.assertEqual(self.main("list")[0], 0)
+        self.assertEqual(self.main("search", "intro", "-d", "python~3.14")[0], 0)
+        self.assertEqual(state(), before)
 
     def test_installed_files_get_umask_permissions(self):
         old = os.umask(0o022)
@@ -2485,7 +2538,7 @@ class NetworkTests(unittest.TestCase):
         self.assertEqual(code, 7)
         self.assertTrue(err.startswith("node: cannot reach"), err)
         code, _, err = self.main("install", "zzz")
-        self.assertTrue(err.startswith("zzz: no DevDocs"), err)
+        self.assertTrue(err.startswith("no DevDocs documentation matches 'zzz'"), err)
         # already named: no second prefix
         del self.net.pages["%s/python~3.15/index.json"
                            % shelf_devdocs.DOCUMENTS_BASE]
@@ -2764,8 +2817,8 @@ Only if you need these, see `<command> --help`:
 Global: --version, --mcp (run as a stdio MCP server; references/mcp.md).
 Exit codes: 0 ok; 1 notes --check found problems; 2 usage error, ambiguous
   name or no FTS5; 4 search scope too wide (use -d, a project list or --all)
-  or unknown -d name; 5 not found (docvol, page or entry); 7 network
-  (DevDocs could not be reached)
+  or unknown -d name; 5 not found or damaged (docvol, page or entry); 7
+  network (DevDocs could not be reached), or an unreadable docset archive
 """
 
 
@@ -2985,6 +3038,20 @@ class TypesTests(unittest.TestCase):
 
 
 class ParamDefaultsTests(unittest.TestCase):
+    def test_schema_defaults_use_param_default(self):
+        import shelf_mcp
+        schemas = {t["name"]: t["inputSchema"] for t in shelf_mcp.tool_schemas()}
+        checked = 0
+        for c in shelf_mcp._mcp_commands():
+            props = schemas[c.name]["properties"]
+            for p in shelf_mcp._tool_params(c):
+                want = shelf_cli.param_default(p)
+                if want is not None:
+                    self.assertEqual(props[shelf_mcp._prop_name(p)].get("default"),
+                                     want, (c.name, p.flags))
+                    checked += 1
+        self.assertGreater(checked, 0)
+
     def test_param_defaults_match_argparse(self):
         parser = shelf_cli.build_parser()
         for c in shelf_cli.COMMANDS:
@@ -3115,7 +3182,7 @@ class McpTests(unittest.TestCase):
         kind = prop["type"]
         if kind == "array":
             kind = prop["items"]["type"] + "[]"
-        if "default" in prop:
+        if "default" in prop and prop["default"] is not False:  # a flag's
             kind += "=%s" % prop["default"]
         if "minimum" in prop:
             kind += ">=%s" % prop["minimum"]
@@ -3370,6 +3437,101 @@ class McpExplainTests(unittest.TestCase):
         self.assertNotIn("docshelf.py", text)
         self.assertNotRegex(text, r"(?<![\w-])--[a-z]")
         self.assertNotRegex(text, r"(?<![\w-])-d\b")
+
+    # -- hint lines in normal output and stderr (6.13.12) --
+
+    def mcp_env(self, slugs=(("alpha", "1"),), pages=None, entries=None):
+        tmp, cache, _notes, env = temp_env(self)
+        env["DOCSHELF_DOCSET_DIRS"] = os.path.join(tmp, "docs")
+        entries = entries or [("Guide%d" % i, "Guide", "p%d" % i)
+                              for i in range(6)]
+        pages = pages or {p: "<h1>%s</h1><p>hello</p>" % n
+                          for n, _t, p in entries}
+        folders = [make_devdocs(cache, slug, name=slug.title(), release=rel,
+                                entries=entries, pages=pages)
+                   for slug, rel in slugs]
+        patcher = mock.patch.dict(os.environ, env)
+        patcher.start()
+        self.addCleanup(patcher.stop)
+        return folders
+
+    def call(self, tool, **arguments):
+        import shelf_mcp
+        r = shelf_mcp.call_tool(tool, arguments)
+        return r["content"][0]["text"]
+
+    def test_search_cut_hint_tool_wording(self):
+        self.mcp_env()
+        text = self.call("search", query="Guide", max_lines=2)
+        self.assertIn("more lines cut", text)
+        self.assertIn("max_lines", text)
+        self.assertNotIn("--max-lines", text)
+        self.assertNotRegex(text, r"(?<![\w-])-d\b")
+
+    def test_family_note_tool_wording(self):
+        self.mcp_env(slugs=(("alpha~1", "1"), ("alpha~2", "2")))
+        text = self.call("search", query="Guide")
+        self.assertIn("note: searching 2 docvols of alpha", text)
+        self.assertNotIn("-d NAME", text)
+
+    def test_fts_cut_hint_tool_wording(self):
+        self.mcp_env()
+        text = self.call("fts", query="hello", max_lines=4)
+        self.assertIn("more hits cut", text)
+        self.assertNotIn("--max-lines", text)
+        self.assertNotRegex(text, r"(?<![\w-])-d\b")
+
+    def test_toc_hint_tool_wording(self):
+        page = "".join("<h2>H%d</h2><p>x</p>" % i for i in range(6))
+        self.mcp_env(entries=[("Guide", "Guide", "p")],
+                     pages={"p": "<h1>T</h1>" + page})
+        text = self.call("toc", ref="alpha:p", max_lines=2)
+        self.assertIn("more lines cut", text)
+        self.assertNotIn("--max-lines", text)
+        self.assertNotIn("show REF", text)
+
+    def test_stderr_explained(self):
+        folders = self.mcp_env(slugs=(("alpha", "1"), ("beta", "1")))
+        with open(os.path.join(folders[0], "index.json"), "w") as f:
+            f.write("{not json")
+        text = self.call("search", query="Guide")
+        self.assertIn("warning: skipping", text)
+        self.assertIn("the `remove` tool", text)
+        self.assertIn("the `install` tool", text)
+        self.assertIn('the `remove` tool with name "alpha", then', text)
+        self.assertNotIn("docshelf.py", text)
+
+    def test_show_cap_line_tool_wording(self):
+        body = "".join("<p>line %d</p>" % i for i in range(30))
+        self.mcp_env(entries=[("Guide", "Guide", "p")],
+                     pages={"p": "<h1>Guide</h1>" + body})
+        text = self.call("show", ref="alpha:p", max_lines=5)
+        self.assertIn("more lines", text)
+        self.assertNotIn("--offset", text)
+        self.assertNotIn("--full", text)
+
+    def test_doc_text_untouched(self):
+        body = "raise --max-lines and docshelf.py install x"
+        self.mcp_env(entries=[("Guide", "Guide", "p")],
+                     pages={"p": "<h1>Guide</h1><p>%s</p>" % body})
+        text = self.call("show", ref="alpha:p")
+        self.assertIn(body, text)
+
+    def test_rewriter_reset_after_call(self):
+        import shelf_mcp
+        self.mcp_env()
+        self.call("search", query="Guide", max_lines=2)
+        self.assertIsNone(shelf_core.HINT_REWRITER)
+        r = shelf_mcp.call_tool("search", {"query": "Guide", "docvol": "nope"})
+        self.assertTrue(r["isError"])
+        with mock.patch.object(shelf_core, "load_config",
+                               side_effect=RuntimeError("boom")):
+            r = shelf_mcp.call_tool("search", {"query": "Guide"})
+        self.assertIn("internal error", r["content"][0]["text"])
+        self.assertIsNone(shelf_core.HINT_REWRITER)
+        env = {k: v for k, v in os.environ.items()}
+        out = run_cli("search", "Guide", "--max-lines", "2", env=env)
+        self.assertIn("--max-lines", out.stdout)
 
     def test_unknown_docvol_see_list(self):
         out = self.explain("unknown docvol 'x' (see: docshelf.py list)")
@@ -3692,7 +3854,7 @@ class FinalReviewTests(unittest.TestCase):
         self.write_file(os.path.join(folder, "db.json"), '{"guide":')
         code, _, err = self.main("show", "py:guide")
         self.assertEqual(code, 5, err)
-        self.assertIn("reinstall", err)
+        self.assertIn("docshelf.py remove py, then docshelf.py install py", err)
         self.assertNotIn("Traceback", err)
 
     # I7
@@ -3726,6 +3888,256 @@ class FinalReviewTests(unittest.TestCase):
                            capture_output=True, env={**clean_env(), **env})
         self.assertEqual(r.returncode, 0, r.stderr)
         self.assertIn("a \u2192 b".encode("utf-8"), r.stdout)
+
+
+class NotesDamagedFamilyTests(unittest.TestCase):
+    """A damaged family member must not turn a good notes write into exit 5."""
+
+    def setUp(self):
+        self.tmp, self.cache, self.notes, self.env = temp_env(self)
+        self.env["DOCSHELF_DOCSET_DIRS"] = os.path.join(self.tmp, "docs")
+
+    def cli(self, *args):
+        return run_cli(*args, env=self.env, cwd=self.tmp)
+
+    def check(self, family):
+        for args in (("notes", family, "--set", "Guide", "--text", "hi"),
+                     ("notes", family, "--check")):
+            r = self.cli(*args)
+            self.assertEqual(r.returncode, 0, (args, r.stdout, r.stderr))
+            self.assertIn("skipping docvol", r.stderr)
+            self.assertNotIn("Traceback", r.stderr)
+        self.assertTrue(os.path.exists(os.path.join(self.notes, family + ".md")))
+
+    def test_devdocs_family(self):
+        for slug in ("alpha~1", "alpha~2"):
+            f = make_devdocs(self.cache, slug, name="Alpha", release="1",
+                             entries=[("Guide", "Guide", "guide")],
+                             pages={"guide": "<h1>Guide</h1><p>x</p>"})
+        mp = os.path.join(f, "meta.json")
+        with open(mp, encoding="utf-8") as fh:
+            meta = json.load(fh)
+        meta["entry_count"] = 1  # so discovery keeps it and use finds it damaged
+        with open(mp, "w", encoding="utf-8") as fh:
+            json.dump(meta, fh)
+        with open(os.path.join(f, "index.json"), "w") as fh:
+            fh.write("{not json")
+        self.check("alpha")
+
+    def test_docset_family(self):
+        docs = os.path.join(self.tmp, "docs")
+        make_docset(docs, "Lib_1", [("Guide", "Guide", "g.html")],
+                    {"g.html": "<h1>Guide</h1>"})
+        bad = make_docset(docs, "Lib_2", [("Guide", "Guide", "g.html")],
+                          {"g.html": "<h1>Guide</h1>"})
+        with open(os.path.join(bad, "Contents", "Resources", "docSet.dsidx"),
+                  "r+b") as fh:
+            fh.truncate(20)
+        self.check("lib")
+
+    def _db_family(self, damage):
+        for slug in ("alpha~1", "alpha~2"):
+            f = make_devdocs(self.cache, slug, name="Alpha", release="1",
+                             entries=[("Guide", "Guide", "guide")],
+                             pages={"guide": "<h1>Guide</h1><p>x</p>"})
+        damage(os.path.join(f, "db.json"))
+
+    def check_once(self):
+        for args in (("notes", "alpha", "--set", "Guide", "--text", "hi"),
+                     ("notes", "alpha", "--check")):
+            r = self.cli(*args)
+            self.assertEqual(r.returncode, 0, (args, r.stdout, r.stderr))
+            self.assertEqual(r.stderr.count("skipping docvol alpha~2"), 1, r.stderr)
+            self.assertNotIn("Traceback", r.stderr)
+        self.assertIn("wrote", self.cli("notes", "alpha", "--set", "Guide",
+                                        "--text", "hi2").stdout)
+
+    def test_damaged_db_json_family_member(self):
+        def damage(path):
+            with open(path, "w") as fh:
+                fh.write("{not json")
+        self._db_family(damage)
+        self.check_once()
+
+    def test_missing_db_json_family_member(self):
+        self._db_family(os.remove)
+        self.check_once()
+
+
+class NotesRetryTests(unittest.TestCase):
+    """Another writer changing the notes file mid-write (TODO 6.9.2)."""
+
+    def setUp(self):
+        folder, self.cache, self.notes, self.env = temp_env(self)
+        make_devdocs(self.cache, "python~3.13", name="Python", release="1",
+                     entries=[("Guide", "Guide", "guide")],
+                     pages={"guide": "<h1>Guide</h1><p>Text.</p>"})
+        self.file = os.path.join(self.notes, "python.md")
+        patcher = mock.patch.dict(os.environ, self.env)
+        patcher.start()
+        self.addCleanup(patcher.stop)
+        self.cfg = shelf_core.load_config(folder, os.environ)
+
+    def args(self, **kw):
+        base = dict(docvol="python", set=None, delete=None, text=None,
+                    path=False, check=False, json=False)
+        base.update(kw)
+        return types.SimpleNamespace(**base)
+
+    def put(self, text):
+        os.makedirs(self.notes, exist_ok=True)
+        with open(self.file, "w", encoding="utf-8", newline="") as f:
+            f.write(text)
+
+    def read(self):
+        with open(self.file, encoding="utf-8", newline="") as f:
+            return f.read()
+
+    def run_notes(self, others, **kw):
+        """Run cmd_notes; before our i-th re-check (after the first read) the
+        i-th callable in `others` (repeating the last) changes the file."""
+        real = shelf_notes._read_notes_strict
+        calls = []
+
+        def wrapped(path):
+            if len(calls) % 2 == 1 and others:  # re-check calls
+                others[min(len(calls) // 2, len(others) - 1)]()
+            calls.append(path)
+            return real(path)
+
+        out = io.StringIO()
+        with mock.patch.object(shelf_notes, "_read_notes_strict", wrapped), \
+                contextlib.redirect_stdout(out):
+            return shelf_notes.cmd_notes(self.cfg, self.args(**kw)), out.getvalue()
+
+    def test_concurrent_set_keeps_both(self):
+        self.put("## X\nx\n")
+        done = []
+
+        def other():
+            if not done:
+                done.append(1)
+                self.put("## X\nx\n\n## B\nb\n")
+        code, _ = self.run_notes([other], set="A", text="a")
+        self.assertEqual(code, 0)
+        self.assertEqual(self.read(), "## X\nx\n\n## B\nb\n\n## A\na\n")
+
+    def test_gives_up_after_three(self):
+        self.put("## X\nx\n")
+        n = []
+
+        def other():
+            n.append(1)
+            self.put("## X\nx\n\n## O%d\no\n" % len(n))
+        with self.assertRaises(CLIError) as cm:
+            self.run_notes([other], set="A", text="a")
+        self.assertEqual(cm.exception.code, 2)
+        self.assertIn("notes changed by another writer; not written", str(cm.exception))
+        self.assertEqual(len(n), shelf_notes.NOTES_TRIES)
+        self.assertEqual(self.read(), "## X\nx\n\n## O3\no\n")
+        self.assertEqual(os.listdir(self.notes), ["python.md"])
+
+    def test_file_appeared(self):
+        done = []
+
+        def other():
+            if not done:
+                done.append(1)
+                self.put("## B\nb\n")
+        code, _ = self.run_notes([other], set="A", text="a")
+        self.assertEqual(code, 0)
+        self.assertEqual(self.read(), "## B\nb\n\n## A\na\n")
+
+    def test_file_deleted_set_and_delete(self):
+        self.put("## X\nx\n")
+
+        def gone():
+            if os.path.exists(self.file):
+                os.remove(self.file)
+        code, _ = self.run_notes([gone], set="A", text="a")
+        self.assertEqual(code, 0)
+        self.assertEqual(self.read(), "## A\na\n")
+        self.put("## X\nx\n")
+        with self.assertRaises(CLIError) as cm:
+            self.run_notes([gone], delete="X")
+        self.assertEqual(cm.exception.code, 5)
+        self.assertIn("no notes file yet", str(cm.exception))
+
+    def test_crlf_kept_on_retry(self):
+        self.put("## X\nx\n")
+        done = []
+
+        def other():
+            if not done:
+                done.append(1)
+                self.put("## X\r\nx\r\n\r\n## B\r\nb\r\n")
+        self.run_notes([other], set="A", text="a")
+        self.assertEqual(self.read(),
+                         "## X\r\nx\r\n\r\n## B\r\nb\r\n\r\n## A\r\na\r\n")
+
+    def test_replace_permission_error_once_retries(self):
+        self.put("## X\nx\n")
+        real = os.replace
+        calls = []
+
+        def flaky(src, dst):
+            if dst != self.file:
+                return real(src, dst)  # other users of os.replace
+            calls.append(1)
+            if len(calls) == 1:
+                raise PermissionError("in use")
+            return real(src, dst)
+
+        with mock.patch.object(shelf_notes.os, "replace", side_effect=flaky), \
+                mock.patch.object(shelf_notes.time, "sleep") as sleep, \
+                contextlib.redirect_stdout(io.StringIO()):
+            self.assertEqual(shelf_notes.cmd_notes(
+                self.cfg, self.args(set="A", text="a")), 0)
+        self.assertEqual(len(calls), 2)
+        sleep.assert_called_once()
+        self.assertEqual(self.read(), "## X\nx\n\n## A\na\n")
+        self.assertEqual(os.listdir(self.notes), ["python.md"])
+
+    def test_reread_permission_error_once_retries(self):
+        self.put("## X\nx\n")
+        real = shelf_notes._read_notes_strict
+        calls = []
+
+        def flaky(path):
+            calls.append(1)
+            if len(calls) == 2:  # the compare-and-replace re-read
+                raise shelf_notes.NotesBusy("cannot read: in use; not written")
+            return real(path)
+
+        with mock.patch.object(shelf_notes, "_read_notes_strict", flaky), \
+                mock.patch.object(shelf_notes.time, "sleep"), \
+                contextlib.redirect_stdout(io.StringIO()):
+            self.assertEqual(shelf_notes.cmd_notes(
+                self.cfg, self.args(set="A", text="a")), 0)
+        self.assertIn("## A", self.read())
+
+    def test_replace_permission_error_persistent_tries_all(self):
+        self.put("## X\nx\n")
+        with mock.patch.object(shelf_notes.os, "replace",
+                               side_effect=PermissionError("in use")) as rep, \
+                mock.patch.object(shelf_notes.time, "sleep"):
+            with self.assertRaises(CLIError) as cm, \
+                    contextlib.redirect_stdout(io.StringIO()):
+                shelf_notes.cmd_notes(self.cfg, self.args(set="A", text="a"))
+        self.assertEqual(rep.call_count, shelf_notes.NOTES_TRIES)
+        self.assertIn("cannot write", str(cm.exception))
+
+    def test_replace_permission_error(self):
+        self.put("## X\nx\n")
+        with mock.patch.object(shelf_notes.os, "replace",
+                               side_effect=PermissionError("in use")):
+            with self.assertRaises(CLIError) as cm, \
+                    contextlib.redirect_stdout(io.StringIO()):
+                shelf_notes.cmd_notes(self.cfg, self.args(set="A", text="a"))
+        self.assertEqual(cm.exception.code, 2)
+        self.assertIn("cannot write", str(cm.exception))
+        self.assertEqual(self.read(), "## X\nx\n")
+        self.assertEqual(os.listdir(self.notes), ["python.md"])
 
 
 class NotesWriteTests(unittest.TestCase):
@@ -5462,7 +5874,8 @@ class DashReadOnlyTests(unittest.TestCase):
                                    "python~3.11")
         self.assertEqual(code, 5, (out, err))
         self.assertIn("skipped, Dash/Zeal docset", err)
-        self.assertIn("nosuchdoc: no DevDocs documentation", err)
+        self.assertIn("no DevDocs documentation matches 'nosuchdoc'", err)
+        self.assertNotIn("nosuchdoc: no DevDocs", err)
         self.assertTrue(out.startswith("installed python~3.11"), out)
 
     def test_remove_and_update_family_matching_docvol_and_docset(self):
@@ -5477,6 +5890,26 @@ class DashReadOnlyTests(unittest.TestCase):
             self.assertIn("python~3.11", err)
             self.assertIn("give one", err)
             self.assertTrue(os.path.isdir(folder))
+
+    def test_family_remove_keeps_docset(self):
+        # a family name shared by a DevDocs docvol and a docset is ambiguous
+        # (exit 2, nothing removed); removing the DevDocs docvol by name
+        # leaves the docset folder and its files alone
+        folder = self.docset()
+        self.assertEqual(self.main("install", "python~3.12", "--force")[0], 0)
+        before = self.snapshot(folder)
+        devdocs = os.path.join(self.cache, "devdocs", "python~3.12")
+        code, out, err = self.main("remove", "python")
+        self.assertEqual(code, 2, (out, err))
+        self.assertIn("python matches Python_3, python~3.12; give one", err)
+        self.assertTrue(os.path.isdir(devdocs))
+        self.assertEqual(self.snapshot(folder), before)
+        code, out, err = self.main("remove", "python~3.12")
+        self.assertEqual((code, err), (0, ""))
+        self.assertEqual(out, "removed python~3.12 (notes untouched)\n")
+        self.assertFalse(os.path.exists(devdocs))
+        self.assertTrue(os.path.isdir(folder))
+        self.assertEqual(self.snapshot(folder), before)
 
     def test_install_other_version_is_not_redundant(self):
         self.docset()
@@ -5855,8 +6288,8 @@ class DashCatalogTests(unittest.TestCase):
         self.assertFalse(r["isError"], text)
         self.assertIn("python~3.12", text)
         self.assertIn("cannot reach api.zealdocs.org", text)
-        self.assertIn("assets/allowlist.txt", text)
-        self.assertNotIn(shelf_mcp.HINTS["assets/allowlist.txt"], text)
+        self.assertIn(shelf_mcp.HINTS["assets/allowlist.txt"], text)
+        self.assertNotIn("assets/allowlist.txt", text)
 
     def test_catalog_notes_name_the_lists_that_fell_back(self):
         self.zeal_install()
@@ -5920,6 +6353,35 @@ class DashCatalogTests(unittest.TestCase):
         self.assertIn("note: the Dash/Zeal official list could not be loaded", err)
         self.assertIn("note: the Dash/Zeal user-contributed list could not be loaded",
                       err)
+
+    def test_catalog_note_after_list(self):
+        self.zeal_install()
+        for u in (shelf_dash.FEEDS_LIST_URL, shelf_dash.CONTRIB_LIST_URL):
+            self.net.pages[u] = shelf_devdocs.NetError(u, "blocked")
+        both = io.StringIO()  # one stream: the order the user sees
+        with contextlib.redirect_stdout(both), contextlib.redirect_stderr(both):
+            code = shelf_cli.main(["sources", "python"])
+        self.assertEqual(code, 0)
+        lines = both.getvalue().splitlines()
+        note = next(i for i, ln in enumerate(lines)
+                    if "came from Zeal's catalog" in ln)
+        last_list = max(i for i, ln in enumerate(lines)
+                        if "(Dash/Zeal: download in the app" in ln)
+        self.assertGreater(note, last_list, lines)
+
+    def test_second_catalog_failure(self):
+        # the official list loads from GitHub; the contributed list fails there
+        # and in Zeal's catalog: the first list's hits stay, a note says why
+        self.zeal_install()
+        self.block_urls(shelf_dash.CONTRIB_LIST_URL, shelf_dash.ZEAL_CATALOG_URL)
+        code, out, err = self.main("sources", "python")
+        self.assertEqual(code, 0, err)
+        self.assertIn("python~3.12", out)
+        self.assertIn("Python_3  (Dash/Zeal: download in the app, official)", out)
+        self.assertEqual(err.count("note: the Dash/Zeal user-contributed list "
+                                   "could not be loaded"), 1, err)
+        self.assertNotIn("official list could not be loaded", err)
+        self.assertNotIn("Traceback", err)
 
     def test_catalog_cached_for_a_week(self):
         self.zeal_install()
@@ -6858,7 +7320,7 @@ class FinalReviewFixTests(unittest.TestCase):
             self.assertEqual(r.returncode, 5, r.stderr)
             self.assertNotIn("Traceback", r.stderr)
             self.assertIn("vite", r.stderr)
-            self.assertIn("reinstall", r.stderr)
+            self.assertIn("docshelf.py remove vite, then docshelf.py install vite", r.stderr)
 
     # 3. the WAL copy can vanish between opens of one DashDocvol
     def test_deleted_wal_copy_is_recopied(self):
@@ -7251,6 +7713,280 @@ class RenderEdgeTests(unittest.TestCase):
     def test_a_name_is_still_an_anchor(self):
         blocks = self.blocks('<p><a name="old">x</a></p>')
         self.assertEqual(blocks[0].ids, ["old"])
+
+
+class DamagedDocvolTests(unittest.TestCase):
+    """6.13.25: a damaged docvol is skipped with a warning and repair advice
+    unless it was named with -d."""
+    REPAIR = "docshelf.py remove alpha, then docshelf.py install alpha"
+
+    def setUp(self):
+        self.tmp, self.cache, _notes, self.env = temp_env(self)
+        self.env["DOCSHELF_DOCSET_DIRS"] = os.path.join(self.tmp, "docs")
+
+    def cli(self, *args):
+        return run_cli(*args, env=self.env, cwd=self.tmp)
+
+    def make(self, slug, with_count=True, **kw):
+        folder = make_devdocs(self.cache, slug, name=kw.pop("name", slug.title()),
+                              release="1", entries=[("Guide", "Guide", "guide")],
+                              pages={"guide": "<h1>Guide</h1><p>hello</p>"}, **kw)
+        mp = os.path.join(folder, "meta.json")
+        with open(mp, encoding="utf-8") as f:
+            meta = json.load(f)
+        if with_count:
+            meta["entry_count"] = 1
+        else:
+            meta.pop("entry_count", None)
+        with open(mp, "w", encoding="utf-8") as f:
+            json.dump(meta, f)
+        return folder
+
+    def corrupt(self, folder, which="index.json"):
+        with open(os.path.join(folder, which), "w") as f:
+            f.write("{not json")
+
+    def pair(self, **kw):
+        alpha = self.make("alpha", **kw)
+        self.make("beta")
+        self.corrupt(alpha)
+        return alpha
+
+    def test_search_skips_damaged(self):
+        self.pair()
+        r = self.cli("search", "Guide")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertIn("beta:guide", r.stdout)
+        self.assertNotIn("alpha:", r.stdout)
+        self.assertIn("skipping docvol alpha", r.stderr)
+        self.assertIn(self.REPAIR, r.stderr)
+        self.assertNotIn("Traceback", r.stderr)
+        for cmd in (("list",), ("suggest",)):
+            r = self.cli(*cmd)
+            self.assertEqual(r.returncode, 0, cmd)
+            self.assertNotIn("Traceback", r.stderr)
+
+    def test_named_damaged_exits_5(self):
+        self.pair()
+        r = self.cli("search", "-d", "alpha", "Guide")
+        self.assertEqual(r.returncode, 5, r.stderr)
+        self.assertIn(self.REPAIR, r.stderr)
+
+    def test_family_d_is_strict(self):
+        a = self.make("alpha~1")
+        self.make("alpha~2")
+        self.corrupt(a)
+        r = self.cli("search", "-d", "alpha", "Guide")
+        self.assertEqual(r.returncode, 5, r.stderr)
+        self.assertIn("docshelf.py remove alpha~1", r.stderr)
+
+    def test_all_damaged_exits_5(self):
+        self.corrupt(self.make("alpha"))
+        self.corrupt(self.make("beta"))
+        r = self.cli("search", "Guide")
+        self.assertEqual(r.returncode, 5, r.stdout + r.stderr)
+        self.assertIn("docshelf.py remove", r.stderr)
+
+    def test_json_stays_valid(self):
+        self.pair()
+        r = self.cli("search", "--json", "Guide")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertEqual([i["docvol"] for i in json.loads(r.stdout)], ["beta"])
+        self.assertIn("skipping docvol alpha", r.stderr)
+
+    def test_types_and_fts_skip(self):
+        self.pair()
+        for cmd in (("types",), ("fts", "hello")):
+            r = self.cli(*cmd)
+            self.assertEqual(r.returncode, 0, (cmd, r.stderr))
+            self.assertIn("skipping docvol alpha", r.stderr)
+            self.assertIn("beta", r.stdout)
+
+    def test_damaged_db_json_skips(self):
+        alpha = self.make("alpha")
+        self.make("beta")
+        self.corrupt(alpha, "db.json")
+        for cmd in (("search", "hello"), ("fts", "hello")):
+            r = self.cli(*cmd)
+            self.assertEqual(r.returncode, 0, (cmd, r.stderr))
+            self.assertIn("skipping docvol alpha", r.stderr)
+            self.assertIn(self.REPAIR, r.stderr)
+            self.assertNotIn("Traceback", r.stderr)
+
+    def test_one_warning_old_and_new_cache(self):
+        for with_count in (True, False):
+            shutil.rmtree(self.cache, ignore_errors=True)
+            self.pair(with_count=with_count)
+            r = self.cli("search", "Guide")
+            self.assertEqual(r.returncode, 0, r.stderr)
+            lines = [l for l in r.stderr.splitlines()
+                     if l.startswith("warning:") and "alpha" in l]
+            self.assertEqual(len(lines), 1, r.stderr)
+            self.assertIn(self.REPAIR, lines[0])
+
+    def test_docset_damaged_index_exits_5_with_advice(self):
+        self.make("beta")
+        docs = os.path.join(self.tmp, "docs")
+        path = make_docset(docs, "Lib", [("os", "Module", "os.html")],
+                           {"os.html": "<h1>os</h1>"})
+        idx = os.path.join(path, "Contents", "Resources", "docSet.dsidx")
+        with open(idx, "r+b") as f:
+            f.truncate(20)
+        r = self.cli("search", "-d", "lib", "os")
+        self.assertEqual(r.returncode, 5, r.stderr)
+        self.assertIn("reinstall it in Dash or Zeal", r.stderr)
+        r = self.cli("search", "Guide")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertIn("beta:guide", r.stdout)
+        self.assertIn("skipping docvol Lib", r.stderr)
+        self.assertEqual(sum(1 for l in r.stderr.splitlines()
+                             if l.startswith("warning:") and "Lib" in l), 1,
+                         r.stderr)
+        r = self.cli("list")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertNotIn("Traceback", r.stderr)
+
+    def test_old_cache_named_damaged_exits_5_with_repair(self):
+        self.pair(with_count=False)  # discovery drops it; the folder is found
+        for args in (("search", "-d", "alpha", "Guide"), ("show", "alpha:guide")):
+            r = self.cli(*args)
+            self.assertEqual(r.returncode, 5, (args, r.stderr))
+            last = r.stderr.strip().splitlines()[-1]
+            self.assertNotIn("not installed", last)
+            self.assertIn(self.REPAIR, last)
+
+    def test_old_cache_install_is_clean_error(self):
+        self.make("alpha", with_count=False)
+        self.corrupt(os.path.join(self.cache, "devdocs", "alpha"))
+        r = self.cli("install", "alpha")
+        self.assertEqual(r.returncode, 5, r.stderr)
+        self.assertNotIn("ValueError", r.stderr)
+        self.assertNotIn("Traceback", r.stderr)
+        self.assertIn(self.REPAIR, r.stderr.strip().splitlines()[-1])
+
+    def test_old_cache_mcp_names_repair(self):
+        self.pair(with_count=False)
+        import shelf_mcp
+        with mock.patch.dict(os.environ, self.env):
+            res = shelf_mcp.call_tool("show", {"ref": "alpha:guide"})
+        text = res["content"][0]["text"]
+        self.assertTrue(res["isError"])
+        self.assertNotIn("not installed", text)
+        self.assertIn('the `remove` tool with name "alpha", then', text)
+
+    def test_docset_cache_write_error_is_not_damage(self):
+        docs = os.path.join(self.tmp, "docs")
+        make_docset(docs, "Lib", [("os", "Module", "os.html")],
+                    {"os.html": "<h1>os</h1>"}, wal=True)
+        with mock.patch.dict(os.environ, self.env), \
+                mock.patch.object(shelf_dash.shutil, "copyfile",
+                                  side_effect=PermissionError("denied")):
+            cfg = shelf_core.load_config()
+            d = shelf_backends.installed_docvols(cfg)[0]
+            with self.assertRaises(CLIError) as cm:
+                d.entries()
+        self.assertNotIsInstance(cm.exception, shelf_core.DamagedDocvol)
+        self.assertEqual(cm.exception.code, 2)
+        self.assertIn("cannot write", str(cm.exception))
+        self.assertNotIn("reinstall it in Dash", str(cm.exception))
+
+    def test_list_warns_damaged_once(self):
+        self.make("beta")
+        docs = os.path.join(self.tmp, "docs")
+        path = make_docset(docs, "Lib", [("os", "Module", "os.html")],
+                           {"os.html": "<h1>os</h1>"})
+        idx = os.path.join(path, "Contents", "Resources", "docSet.dsidx")
+        with open(idx, "r+b") as f:
+            f.truncate(20)
+        r = self.cli("list")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        lines = [l for l in r.stderr.splitlines()
+                 if l.startswith("warning:") and "Lib" in l]
+        self.assertEqual(len(lines), 1, r.stderr)
+        self.assertIn("reinstall it in Dash or Zeal", lines[0])
+        self.assertEqual(r.stderr.count("warning:"), 1, r.stderr)
+        self.assertIn("Lib  ", r.stdout)
+        self.assertIn("0 entries", r.stdout)
+        self.assertIn("beta  Beta  1  1 entries", r.stdout)
+
+
+    def test_meta_less_folder_gets_repair_advice(self):
+        os.makedirs(os.path.join(self.cache, "devdocs", "gamma"))
+        r = self.cli("show", "gamma:x")
+        self.assertEqual(r.returncode, 5, r.stderr)
+        self.assertIn("repair with: docshelf.py remove gamma, then "
+                      "docshelf.py install gamma", r.stderr)
+        self.assertEqual(r.stderr.count("repair with"), 1, r.stderr)
+        r = self.cli("remove", "gamma")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertFalse(os.path.exists(os.path.join(self.cache, "devdocs", "gamma")))
+
+    def test_meta_not_an_object_gets_repair_advice(self):
+        folder = os.path.join(self.cache, "devdocs", "gamma")
+        os.makedirs(folder)
+        with open(os.path.join(folder, "meta.json"), "w") as f:
+            f.write("[1]")
+        r = self.cli("show", "gamma:x")
+        self.assertEqual(r.returncode, 5, r.stderr)
+        self.assertIn("docshelf.py remove gamma, then docshelf.py install gamma",
+                      r.stderr)
+
+    def inproc(self, *argv):
+        out, err = io.StringIO(), io.StringIO()
+        with mock.patch.dict(os.environ, self.env), \
+                mock.patch.object(shelf_dash.shutil, "copyfile",
+                                  side_effect=PermissionError("denied")), \
+                contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
+            code = shelf_cli.main(list(argv))
+        return code, out.getvalue(), err.getvalue()
+
+    def wal_pair(self):
+        self.make("beta")
+        make_docset(os.path.join(self.tmp, "docs"), "Lib",
+                    [("Guide", "Module", "os.html")],
+                    {"os.html": "<h1>Guide</h1>"}, wal=True)
+
+    def test_unwritable_wal_docset_skipped_in_multi_commands(self):
+        self.wal_pair()
+        for args in (("search", "Guide"), ("fts", "hello"), ("types",)):
+            code, out, err = self.inproc(*args)
+            self.assertEqual(code, 0, (args, out, err))
+            self.assertEqual(err.count("skipping docvol Lib"), 1, err)
+            self.assertIn("cannot write", err)
+            self.assertIn("DOCSHELF_CACHE_DIR", err)
+            self.assertNotIn("reinstall", err)
+
+    def test_unwritable_wal_docset_named_fails_with_2(self):
+        self.wal_pair()
+        code, out, err = self.inproc("search", "Guide", "-d", "Lib")
+        self.assertEqual(code, 2, (out, err))
+        self.assertIn("cannot write", err)
+
+    def test_unwritable_wal_docset_alone_exits_2(self):
+        make_docset(os.path.join(self.tmp, "docs"), "Lib",
+                    [("Guide", "Module", "os.html")],
+                    {"os.html": "<h1>Guide</h1>"}, wal=True)
+        code, out, err = self.inproc("search", "Guide")
+        self.assertEqual(code, 2, (out, err))
+
+    def test_list_unwritable_wal_docset_warns_once(self):
+        self.wal_pair()
+        code, out, err = self.inproc("list")
+        self.assertEqual(code, 0, (out, err))
+        self.assertEqual(err.count("cannot write"), 1, err)
+        self.assertIn("beta  Beta  1  1 entries", out)
+
+    def test_notes_write_unwritable_wal_family_member(self):
+        self.make("beta~1", name="Beta")
+        self.make("beta~2", name="Beta")
+        make_docset(os.path.join(self.tmp, "docs"), "Beta_3",
+                    [("Guide", "Module", "os.html")],
+                    {"os.html": "<h1>Guide</h1>"}, wal=True)
+        code, out, err = self.inproc("notes", "beta", "--set", "Guide",
+                                     "--text", "hi")
+        self.assertEqual(code, 0, (out, err))
+        self.assertIn("wrote", out)
+        self.assertEqual(err.count("skipping docvol Beta_3"), 1, err)
 
 
 class NoShadowedTestCaseNamesTests(unittest.TestCase):

@@ -124,7 +124,8 @@ def _rewrite(message: str) -> str:
         return "%s with %s %s" % (tool, _prop_name(pos),
                                   json.dumps([arg] if many else arg))
 
-    message = re.sub(r"docshelf\.py (%s)(?: ([^\s)]+))?" % alt, program, message)
+    message = re.sub(r"docshelf\.py (%s)(?: ([^\s)]*[^\s),;:.]))?" % alt,
+                     program, message)
 
     def needs(m):  # install needs NAME
         pos = _first_positional(cmds[m.group(1)])
@@ -168,8 +169,9 @@ def _schema(c: shelf_cli.Command) -> dict:
         if p.nargs in ("+", "*") or p.repeat:
             prop = {"type": "array", "items": prop}
         prop["description"] = p.help
-        if p.default is not None:
-            prop["default"] = p.default
+        default = shelf_cli.param_default(p)
+        if default is not None:
+            prop["default"] = default
         props[name] = prop
         if _positional(p) and p.nargs != "*":
             required.append(name)
@@ -260,17 +262,24 @@ def call_tool(name: str, arguments: Any) -> dict:
     message = cfg = None
     try:
         with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
+            shelf_core.HINT_REWRITER = explain
             cfg = shelf_core.load_config()
             code = c.func(cfg, ns)
     except CLIError as e:
         code, message = e.code, explain(str(e))
-        if e.docvol and cfg:
+        damaged = e.docvol and cfg and shelf_devdocs.damaged_message(
+            cfg, e.docvol)
+        if damaged:
+            code, message = 5, explain(damaged)
+        elif e.docvol and cfg:
             message = shelf_devdocs.not_installed_message(
                 cfg, e.docvol, lambda slug: "run the `install` tool with names "
                 + json.dumps([slug])) or message
     except Exception as e:  # keep serving whatever a command does
         code, message = 1, "internal error: %s: %s" % (type(e).__name__, e)
-    text = out.getvalue() + err.getvalue()
+    finally:
+        shelf_core.HINT_REWRITER = None
+    text = out.getvalue() + explain(err.getvalue())
     if message is not None:
         text += message
     return _result(text, bool(code))

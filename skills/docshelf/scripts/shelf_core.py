@@ -7,10 +7,10 @@ import tempfile
 import time
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
-from typing import Dict, Iterator, List, Optional, Tuple
+from typing import Callable, Dict, Iterator, List, Optional, Tuple
 from urllib.parse import unquote
 
-VERSION = "0.7.2"
+VERSION = "0.7.3"
 PROJECT_FILE = ".docshelf.json"
 
 
@@ -24,7 +24,11 @@ STALE_TMP_SECONDS = 3600
 def sweep_stale_tmp(folder: str, max_age: float = STALE_TMP_SECONDS) -> None:
     """Remove '*.tmp', '*.tmp-journal' and '*.tmp-wal' files in folder older
     than max_age seconds (leftovers of a killed run, SQLite's included);
-    nothing else is touched. Errors are ignored."""
+    nothing else is touched. Errors are ignored.
+
+    A live temp file is never old: whoever writes it keeps its mtime fresh,
+    so the age test alone spares it. The owner's pid is not checked:
+    os.kill(pid, 0) terminates the process on Windows."""
     try:
         names = os.listdir(folder)
     except OSError:
@@ -75,6 +79,39 @@ class CLIError(Exception):
     def __init__(self, message: str, code: int = 2):
         super().__init__(message)
         self.code = code
+
+
+class UnusableDocvol(CLIError):
+    """A docvol that cannot be used right now (default exit code 2, e.g. its
+    cache copy cannot be written); multi-docvol commands skip it with a
+    warning unless it was named with -d."""
+
+
+class DamagedDocvol(UnusableDocvol):
+    """A docvol whose files cannot be read (exit code 5)."""
+
+    def __init__(self, message: str):
+        super().__init__(message, 5)
+
+
+def skip_damaged(docs: list, strict: bool, probe) -> list:
+    """The docvols for which probe(d) does not raise UnusableDocvol. A damaged
+    one is re-raised when strict (the user named docvols with -d), else
+    warned about and dropped; the first error is raised when none is left."""
+    kept, first = [], None
+    for d in docs:
+        try:
+            probe(d)
+        except UnusableDocvol as e:
+            if strict:
+                raise
+            warn("skipping docvol %s: %s" % (d.name, e))
+            first = first or e
+            continue
+        kept.append(d)
+    if docs and not kept and first is not None:
+        raise first
+    return kept
 
 
 class ScopeError(CLIError):
@@ -425,6 +462,16 @@ def select_docvols(cfg, all_docvols, names, use_all) -> List[Docvol]:
         % (len(full), listed, PROJECT_FILE))
 
 
+# Set by the MCP tool call while it runs: turns CLI wording in our own hint
+# lines into tool wording. Never applied to text that came from the docs.
+HINT_REWRITER: Optional[Callable[[str], str]] = None
+
+
+def hint(text: str) -> str:
+    """Our own hint text, in tool wording while an MCP call runs."""
+    return HINT_REWRITER(text) if HINT_REWRITER else text
+
+
 def same_family_note(docs) -> Optional[str]:
     """Note for the first family with two or more docvols in docs, or None."""
     groups: Dict[str, List[str]] = {}
@@ -432,8 +479,8 @@ def same_family_note(docs) -> Optional[str]:
         groups.setdefault(d.family, []).append(d.name)
     for family, names in groups.items():
         if len(names) > 1:
-            return ("note: searching %d docvols of %s (%s); -d NAME picks one"
-                    % (len(names), family, ", ".join(names)))
+            return hint("note: searching %d docvols of %s (%s); -d NAME picks one"
+                        % (len(names), family, ", ".join(names)))
     return None
 
 

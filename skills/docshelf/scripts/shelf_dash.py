@@ -18,7 +18,7 @@ from datetime import datetime
 from typing import List, NamedTuple, Optional, Tuple
 from urllib.parse import unquote, urlsplit
 
-from shelf_core import CLIError, Docvol, Entry, make_temp, resolve_doc_path, warn
+from shelf_core import CLIError, DamagedDocvol, UnusableDocvol, Docvol, Entry, make_temp, resolve_doc_path, warn
 
 INDEX_REL = ("Contents", "Resources", "docSet.dsidx")
 DOCS_REL = ("Contents", "Resources", "Documents")
@@ -195,6 +195,7 @@ class DashDocvol(Docvol):
         self._pages: Optional[List[str]] = None
         self._repeats: Optional[Repeats] = None
         self._count: Optional[int] = None
+        self.damage_error: Optional[CLIError] = None
         self._by_id: Optional[dict] = None  # ref -> Entry, built on first resolve
         self._tarix_prefix: Optional[str] = None  # "<Name>.docset/", probed once
         self._tarix_probed = False
@@ -228,25 +229,35 @@ class DashDocvol(Docvol):
         if os.path.isfile(dest) and (sub in self._copied
                                      or _load_json(stamp_file).get("stamp") == stamp):
             return dest
-        os.makedirs(dest_dir, exist_ok=True)
         moves = []
+        reading = False  # an OSError while True is about the docset itself
         try:
+            os.makedirs(dest_dir, exist_ok=True)
             for suffix in ("", "-wal"):
                 if os.path.exists(path + suffix):
                     fd, tmp = make_temp(dest_dir)
                     os.close(fd)
                     moves.append((tmp, dest + suffix))
+                    reading = True
+                    open(path + suffix, "rb").close()  # is the docset readable?
+                    reading = False
                     shutil.copyfile(path + suffix, tmp)
             for old in (stamp_file, dest + "-wal", dest + "-shm"):
                 if os.path.exists(old):
                     os.remove(old)
             for tmp, final in moves:
                 os.replace(tmp, final)
+            _write_json(stamp_file, {"stamp": stamp})
+        except OSError as e:
+            if reading:
+                raise  # the docset cannot be read: damaged
+            raise UnusableDocvol("cannot write %s: %s (check free disk space "
+                                 "and that DOCSHELF_CACHE_DIR is a writable "
+                                 "folder)" % (dest_dir, e), 2)
         finally:
             for tmp, _ in moves:
                 if os.path.exists(tmp):
                     os.remove(tmp)
-        _write_json(stamp_file, {"stamp": stamp})
         self._copied.add(sub)
         return dest
 
@@ -261,14 +272,15 @@ class DashDocvol(Docvol):
         return _Conn(self._open_db(self.index_file, "index"))
 
     def _index_error(self, e: Exception) -> CLIError:
-        return CLIError("cannot read the index of docset %s (%s): %s"
-                        % (self.name, self.path, e), 7)
+        return DamagedDocvol("cannot read the index of docset %s (%s): %s; "
+                             "reinstall it in Dash or Zeal"
+                             % (self.name, self.path, e))
 
     @property
     def entry_count(self) -> int:
         """Rows in the index, read only when asked for and cached in
-        data_dir()/count.json under stamp(); 0 (with a warning) when the
-        index cannot be read."""
+        data_dir()/count.json under stamp(); 0 (silently; callers that read
+        the index report it) when the index cannot be read."""
         if self._count is None:
             cache = os.path.join(self.data_dir(), "count.json")
             stamp = self.stamp()
@@ -280,8 +292,14 @@ class DashDocvol(Docvol):
                 with self._connect() as con:
                     self._count = int(con.execute(
                         "SELECT COUNT(*) FROM %s" % _table(con)).fetchone()[0])
+            except UnusableDocvol as e:  # e.g. the cache copy cannot be written
+                self.damage_error = e
+                self._count = 0
+                return 0
             except (sqlite3.Error, ValueError, OSError) as e:
-                warn(str(self._index_error(e)))
+                # silent: commands that read the index report it (once) via
+                # DamagedDocvol; `list` reads damage_error and warns
+                self.damage_error = self._index_error(e)
                 self._count = 0
                 return 0
             try:

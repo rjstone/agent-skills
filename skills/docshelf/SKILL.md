@@ -6,7 +6,7 @@ license: MIT
 metadata:
   author: Robert Stone
   source: https://github.com/rjstone/agent-skills
-  version: "0.7.2"
+  version: "0.7.3"
   credits: "DevDocs, devdocs-mcp, Zeal"
 ---
 
@@ -77,7 +77,7 @@ User-contributed docsets carry their own licences.
 - Docsets, their folders, REF forms or the message for step 3:
   [references/dash-zeal.md](references/dash-zeal.md).
 - A needed docvol is missing, or before `sources`, `install`, `update` or
-  `remove`, or on exit 7 (network):
+  `remove`, or on exit 7 (network, or an unreadable docset archive):
   [references/getting-docvols.md](references/getting-docvols.md). `sources`,
   `install` and `update` use the network; lookups do not.
 - Before writing notes: [references/notes.md](references/notes.md).

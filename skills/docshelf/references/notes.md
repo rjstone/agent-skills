@@ -36,3 +36,7 @@ leaves the file unchanged; otherwise it prints `wrote <path>` and the
 finds no such section).
 A notes file that is already over a size limit refuses every write until
 a write brings it under the limits.
+Parallel writers are safe: a write that finds the file changed by another
+writer re-reads and retries (3 tries in all); if every try finds a change, exit 2.
+A file another process holds open (a Windows sharing violation) is retried
+the same way, then reported as "cannot write" (exit 2).

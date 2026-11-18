@@ -14,7 +14,8 @@ from typing import Dict, List, Optional, Tuple
 from urllib.parse import urlsplit
 
 import shelf_backends  # imports this module back; used only inside functions
-from shelf_core import (VERSION, CLIError, warn, Config, Docvol, Entry, make_temp,
+import shelf_core
+from shelf_core import (VERSION, CLIError, DamagedDocvol, warn, Config, Docvol, Entry, make_temp,
                         pick_docvol, sweep_stale_tmp)
 
 DERIVED = ".docshelf"
@@ -129,14 +130,14 @@ class DevDocsDocvol(Docvol):
         if not os.path.isfile(os.path.join(folder, "index.json")):
             # a cheap check that reads nothing: installed_docvols() skips a
             # docvol without its index, entry_count or not
-            raise OSError("index.json is missing")
+            raise OSError("index.json is missing; " + _repair(self.name))
         count = meta.get("entry_count")
         if isinstance(count, int) and not isinstance(count, bool) and count >= 0:
             self.entry_count = count  # stored at install: index.json stays unread
         else:  # an install from before entry_count: count the index
             try:
                 self.entry_count = len(self.entries())
-            except CLIError as e:  # discovery skips a damaged docvol
+            except DamagedDocvol as e:  # discovery skips a damaged docvol
                 raise ValueError(str(e))
 
     def data_dir(self) -> str:
@@ -158,9 +159,8 @@ class DevDocsDocvol(Docvol):
                                      anchor or None))
             except (ValueError, KeyError, TypeError, AttributeError) as e:
                 # with entry_count the constructor no longer reads the index
-                raise CLIError("docvol %s: damaged index.json (%s); reinstall "
-                               "with: docshelf.py install %s"
-                               % (self.name, e, self.name), 5)
+                raise DamagedDocvol("docvol %s: damaged index.json (%s); %s"
+                                    % (self.name, e, _repair(self.name)))
             self._entries = out
         return self._entries
 
@@ -168,7 +168,8 @@ class DevDocsDocvol(Docvol):
         try:
             st = os.stat(self.db_path)
         except OSError:
-            raise CLIError("docvol %s: db.json is missing" % self.name, 5)
+            raise DamagedDocvol("docvol %s: db.json is missing; %s"
+                                % (self.name, _repair(self.name)))
         return st.st_size, st.st_mtime_ns
 
     def page_index(self) -> Dict[str, Tuple[int, int]]:
@@ -187,8 +188,8 @@ class DevDocsDocvol(Docvol):
             try:
                 index = build_page_index(self.db_path)
             except ValueError as e:
-                raise CLIError("docvol %s: damaged db.json (%s); reinstall with: "
-                               "docshelf.py install %s" % (self.name, e, self.name), 5)
+                raise DamagedDocvol("docvol %s: damaged db.json (%s); %s"
+                                    % (self.name, e, _repair(self.name)))
             self._write_page_index(index, size, mtime)
         self._index, self._idx_stat = index, (size, mtime)
         return index
@@ -235,6 +236,11 @@ class DevDocsDocvol(Docvol):
 
     def stamp(self) -> str:
         return "%d|%d" % (self.mtime, self._db_stat()[0])
+
+
+def _repair(name: str) -> str:
+    return ("repair with: docshelf.py remove %s, then docshelf.py install %s"
+            % (name, name))
 
 
 def installed_docvols(cfg: Config) -> List[DevDocsDocvol]:
@@ -391,6 +397,22 @@ def not_installed_message(cfg: Config, name: str, how) -> Optional[str]:
     return None
 
 
+def damaged_message(cfg: Config, name: str) -> Optional[str]:
+    """For a docvol name that is not loadable but has a folder in the cache
+    (a damaged DevDocs copy discovery dropped): why, and how to repair it."""
+    folder = _unloadable_folder(cfg, name)
+    if folder is None:
+        return None
+    try:
+        DevDocsDocvol(os.path.join(devdocs_dir(cfg), folder))
+        return None  # it loads now: not damaged
+    except (OSError, ValueError, KeyError, TypeError) as e:
+        text = str(e)
+        if "repair with" not in text:  # e.g. a missing meta.json
+            text += "; " + _repair(folder)
+        return text
+
+
 def _manifest_rows(data) -> List[dict]:
     if not isinstance(data, list) or not all(
             isinstance(r, dict) and isinstance(r.get("slug"), str) for r in data):
@@ -500,7 +522,10 @@ def install(cfg: Config, row: dict) -> str:
     try:
         sweep_stale_tmp(folder)
         for n in names:
-            fd, tmps[n] = make_temp(folder, prefix=n + ".", sweep=False)
+            try:
+                fd, tmps[n] = make_temp(folder, prefix=n + ".", sweep=False)
+            except OSError as e:
+                raise _cache_error(folder, e)
             os.close(fd)
         for n in names[:2]:
             try:
@@ -524,11 +549,14 @@ def install(cfg: Config, row: dict) -> str:
                 "installedAt": _utc_now(), "alias": row.get("alias") or None,
                 "version": str(row.get("version") or ""),
                 "entry_count": len(idx["entries"])}
-        with open(tmps["meta.json"], "w", encoding="utf-8") as f:
-            json.dump(meta, f, ensure_ascii=False)
-        os.replace(tmps["index.json"], os.path.join(folder, "index.json"))
-        os.replace(tmps["db.json"], os.path.join(folder, "db.json"))
-        os.replace(tmps["meta.json"], meta_path)
+        try:
+            with open(tmps["meta.json"], "w", encoding="utf-8") as f:
+                json.dump(meta, f, ensure_ascii=False)
+            os.replace(tmps["index.json"], os.path.join(folder, "index.json"))
+            os.replace(tmps["db.json"], os.path.join(folder, "db.json"))
+            os.replace(tmps["meta.json"], meta_path)
+        except OSError as e:
+            raise _cache_error(folder, e)
     except BaseException:
         for t in tmps.values():
             _discard(t)
@@ -550,7 +578,10 @@ def remove(cfg: Config, slug: str) -> None:
 
 # --- commands --------------------------------------------------------------
 def _describe(cfg: Config, status: str, slug: str) -> str:
-    d = DevDocsDocvol(os.path.join(devdocs_dir(cfg), slug))
+    try:
+        d = DevDocsDocvol(os.path.join(devdocs_dir(cfg), slug))
+    except (ValueError, KeyError, TypeError) as e:  # an old-cache copy that
+        raise DamagedDocvol(str(e))  # cannot load; its text has the repair
     return "%s %s (%s %s, %d entries)" % (status, slug, d.display_name,
                                           d.release, d.entry_count)
 
@@ -672,7 +703,7 @@ def _each(items, action, label=str) -> int:
         except CLIError as e:
             name = label(item)
             stop = isinstance(e, CacheError)
-            if not str(e).startswith(name + ": "):
+            if not (str(e).startswith(name + ": ") or repr(name) in str(e)):
                 e = CLIError("%s: %s" % (name, e), e.code)
             failures.append(e)
             if stop:
@@ -726,7 +757,8 @@ def cmd_update(cfg, args) -> int:
             print("no DevDocs docvols to update (Dash/Zeal docsets are updated "
                   "in Dash or Zeal)")
         else:
-            print("no docvols installed (install NAME; sources QUERY finds names)")
+            print("no docvols installed (%s)"
+                  % shelf_core.hint("install NAME; sources QUERY finds names"))
         return 0
     rows = get_manifest(cfg, refresh=True)
     by_slug = {}

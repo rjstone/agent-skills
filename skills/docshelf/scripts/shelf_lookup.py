@@ -17,8 +17,9 @@ import shelf_dash
 import shelf_notes
 from shelf_render import (_print_lines, _page_title_line, page_title,
                           section_headings, section_lines, unquote_all)
-from shelf_core import (CLIError, Config, cap_lines, make_temp, pick_docvol, rank,
-                        same_family_note, select_docvols, short_name, warn)
+from shelf_core import (CLIError, Config, cap_lines, hint, make_temp,
+                        pick_docvol, rank, same_family_note, select_docvols,
+                        short_name, skip_damaged, warn)
 
 FUZZY_SHOWN = 0  # fuzzy hits shown when exact, prefix or substring hits exist
 
@@ -107,6 +108,20 @@ def _heading_hits(docs, query, words, page_of, max_rank) -> list:
     return hits
 
 
+def _is_strict(args) -> bool:
+    """True when the user named docvols with -d: a damaged one is an error."""
+    return bool(getattr(args, "docvol", None))
+
+
+def _probe_read(ds) -> None:
+    """Touch what search reads (entries; the page index of a docvol that has
+    one) so a damaged docvol fails here, before any output."""
+    ds.entries()
+    page_index = getattr(ds, "page_index", None)
+    if page_index is not None:
+        page_index()
+
+
 def _print_family_note(docs, args) -> None:
     note = same_family_note(docs)
     if note:
@@ -119,6 +134,8 @@ def cmd_search(cfg: Config, args: argparse.Namespace) -> int:
         raise CLIError("empty search query", 2)
     docs = select_docvols(cfg, shelf_backends.installed_docvols(cfg),
                           args.docvol or [], args.all)
+    strict = _is_strict(args)
+    docs = skip_damaged(docs, strict, _probe_read)
     _print_family_note(docs, args)
     words = args.query.lower().split()
     want_type = args.type.lower() if args.type else None
@@ -147,7 +164,7 @@ def cmd_search(cfg: Config, args: argparse.Namespace) -> int:
     # within a rank, entries with an anchor (a section) before whole pages
     hits.sort(key=lambda h: (h[0], h[4] in no_anchor) + h[1:5])
     hits, also = _fold_bare_entries(hits, no_anchor, page_of)
-    hint = "raise --max-lines or narrow the query, -d or --type"
+    hint_text = hint("raise --max-lines or narrow the query, -d or --type")
     if args.json:
         items = []
         for r, _l, n, d, ref, t in hits[:args.max_lines]:
@@ -165,8 +182,8 @@ def cmd_search(cfg: Config, args: argparse.Namespace) -> int:
         cut = 0
     lines = []
     if only_headings and hits and hits[0][5] == HEADING:
-        lines.append("no entry name matches %r; headings inside pages "
-                     "(show REF opens the section):" % args.query)
+        lines.append("no entry name matches %r; headings inside pages %s"
+                     % (args.query, hint("(show REF opens the section):")))
     for k, (r, _l, n, d, ref, t) in enumerate(hits):
         if r == 3 and (k == 0 or hits[k - 1][0] < 3):
             lines.append("no exact, prefix or substring matches; fuzzy matches "
@@ -192,7 +209,7 @@ def cmd_search(cfg: Config, args: argparse.Namespace) -> int:
             lines.append("no matches for %r (%s; fts searches the text inside "
                          "pages)" % (args.query, "entry names only" if want_type
                                      else "entry names and page headings"))
-    for line in cap_lines(lines, args.max_lines, hint):
+    for line in cap_lines(lines, args.max_lines, hint_text):
         print(line)
     return 0
 
@@ -263,8 +280,9 @@ def cmd_toc(cfg: Config, args: argparse.Namespace) -> int:
                                      ds.make_ref(page, head_id)))
     else:
         out.append("(no headings)")
-    for line in cap_lines(out, args.max_lines,
-                          "use show REF for a section, or raise --max-lines"):
+    for line in cap_lines(
+            out, args.max_lines,
+            hint("use show REF for a section, or raise --max-lines")):
         print(line)
     return 0
 
@@ -434,10 +452,14 @@ def _match_terms(query) -> Tuple[str, ...]:
     for tok in _query_tokens(query):
         # punctuation around a word is no part of it (the text index drops it)
         core = re.sub(r"^\W+|\W+$", "", tok)
-        forms = _ident_forms(core) if _IDENT_RE.fullmatch(core) else None
-        # plain words also try `ids`, which holds camelCase pieces
-        terms.append("(%s OR ids:%s)" % (
-            _quote(tok), _quote(forms[0] if forms else core.lower())))
+        # plain words also try `ids`, which holds camelCase pieces; a word
+        # that is no identifier ("printf(3)") has no `ids` form
+        if _IDENT_RE.fullmatch(core):
+            forms = _ident_forms(core)
+            terms.append("(%s OR ids:%s)" % (
+                _quote(tok), _quote(forms[0] if forms else core.lower())))
+        else:
+            terms.append(_quote(tok))
     return tuple(terms)
 
 
@@ -553,6 +575,8 @@ def cmd_index_text(cfg: Config, args: argparse.Namespace) -> int:
 def cmd_types(cfg: Config, args: argparse.Namespace) -> int:
     docs = select_docvols(cfg, shelf_backends.installed_docvols(cfg),
                           args.docvol or [], args.all)
+    strict = _is_strict(args)
+    docs = skip_damaged(docs, strict, lambda d: d.entries())
     _print_family_note(docs, args)
     for ds in docs:
         counts = collections.Counter(e.type or "(no type)" for e in ds.entries())
@@ -569,6 +593,8 @@ def cmd_fts(cfg: Config, args: argparse.Namespace) -> int:
     _need_fts()
     docs = select_docvols(cfg, shelf_backends.installed_docvols(cfg),
                           args.docvol or [], args.all)
+    strict = _is_strict(args)
+    docs = skip_damaged(docs, strict, _probe_read)
     _print_family_note(docs, args)
     if not fts_match_expr(args.query):  # before any index is built
         msg = "no searchable words in '%s'" % args.query
@@ -578,8 +604,7 @@ def cmd_fts(cfg: Config, args: argparse.Namespace) -> int:
         else:
             print(msg)
         return 0
-    for ds in docs:
-        ensure_fts(cfg, ds)
+    docs = skip_damaged(docs, strict, lambda d: ensure_fts(cfg, d))
     # text output takes two lines per hit: fetch enough hits to reach the line cap
     limit = args.max_lines if args.json else args.max_lines // 2 + 1
     hits = fts_search(cfg, docs, args.query, limit)
@@ -604,8 +629,8 @@ def cmd_fts(cfg: Config, args: argparse.Namespace) -> int:
         lines.append(h["ref"])
         lines.append("    " + h["snippet"])
     if len(hits) > room:
-        lines.append("... more hits cut; add words (e.g. the function name), "
-                     "-d, or raise --max-lines")
+        lines.append(hint("... more hits cut; add words (e.g. the function name), "
+                          "-d, or raise --max-lines"))
     # a cap too small for one hit plus the cut line still holds: REF line first
     for line in lines[:max(1, args.max_lines)]:
         print(line)

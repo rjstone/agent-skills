@@ -5,12 +5,14 @@ import os
 import re
 import stat
 import sys
+import time
 from typing import Dict, Iterable, List, Optional, Tuple
 
 import shelf_backends
 import shelf_dash
 import shelf_devdocs
 from shelf_core import (CLIError, Config, make_temp, pick_docvol, short_name,
+                        skip_damaged,
                         umask_mode, warn)
 
 NOTES_GENERAL_MAX = 50
@@ -72,6 +74,14 @@ def read_notes(cfg, family):
         return path, None
 
 
+class NotesBusy(CLIError):
+    """The notes file is held open by another process (a Windows sharing
+    violation shows as PermissionError); a write retries, then reports it."""
+
+    def __init__(self, message: str):
+        super().__init__(message, 2)
+
+
 def _read_notes_strict(path) -> Optional[str]:
     """For a write: the text, None only when the file does not exist. Any
     other read problem refuses the write, so no note is lost or altered."""
@@ -80,6 +90,8 @@ def _read_notes_strict(path) -> Optional[str]:
             raw = f.read()
     except FileNotFoundError:
         return None
+    except PermissionError as e:
+        raise NotesBusy("cannot read %s: %s; not written" % (path, e))
     except OSError as e:
         raise CLIError("cannot read %s: %s; not written" % (path, e), 2)
     try:
@@ -390,7 +402,16 @@ def _new_file_mode() -> int:
     return umask_mode()
 
 
-def _write_notes(path, text):
+NOTES_BUSY_WAIT = 0.05  # seconds to wait before retrying a busy notes file
+NOTES_TRIES = 3  # reads of the file per write when another writer interferes
+_NO_CHECK = object()
+
+
+class NotesChanged(Exception):
+    """The notes file changed between our read and our write."""
+
+
+def _write_notes(path, text, expect=_NO_CHECK):
     if os.path.islink(path) and not os.path.exists(path):
         raise CLIError("cannot write %s: it is a symlink to a missing file; "
                        "not written" % path, 2)
@@ -413,26 +434,50 @@ def _write_notes(path, text):
         os.chmod(tmp, mode)  # keep the existing file's mode
         with os.fdopen(fd, "w", encoding="utf-8", newline="") as f:
             f.write(text)
+        # Compare-and-replace: if another writer changed the file since we
+        # read it, give up this attempt. The window between this re-read and
+        # os.replace remains (microseconds instead of the whole edit).
+        if expect is not _NO_CHECK and _read_notes_strict(path) != expect:
+            raise NotesChanged(path)
         os.replace(tmp, path)
     except OSError as e:
         shelf_devdocs._discard(tmp)
+        if isinstance(e, PermissionError):
+            raise NotesBusy("cannot write %s: %s" % (path, e))
         raise CLIError("cannot write %s: %s" % (path, e), 2)
     except BaseException:
         shelf_devdocs._discard(tmp)
         raise
 
 
-def _write_request(cfg, args, path, text):
+def _write_request(cfg, args, path):
     if args.set is not None and args.delete is not None:
         raise CLIError("--set and --delete cannot be used together", 2)
     if args.set is not None and args.text is None:
         raise CLIError("--set needs --text", 2)
     if args.text is not None and args.set is None:
         raise CLIError("--text only goes with --set", 2)
+    if args.set is not None and any(_HEADING.match(l) for l in _split(args.text)):
+        raise CLIError("--text must not contain a line starting with '## ' "
+                       "(that starts a new section; use one --set each)", 2)
+    busy = None
+    for attempt in range(NOTES_TRIES):
+        try:
+            text = _read_notes_strict(path)
+            return _apply_request(args, path, text)
+        except NotesChanged:
+            busy = None
+        except NotesBusy as e:
+            busy = e
+            if attempt < NOTES_TRIES - 1:
+                time.sleep(NOTES_BUSY_WAIT)
+    if busy is not None:
+        raise busy
+    raise CLIError("notes changed by another writer; not written: %s" % path, 2)
+
+
+def _apply_request(args, path, text):
     if args.set is not None:
-        if any(_HEADING.match(l) for l in _split(args.text)):
-            raise CLIError("--text must not contain a line starting with '## ' "
-                           "(that starts a new section; use one --set each)", 2)
         new = set_section(text or "", args.set, args.text)
     else:
         if text is None:
@@ -445,7 +490,7 @@ def _write_request(cfg, args, path, text):
     out = new
     if text and text.count("\r\n") * 2 > text.count("\n"):
         out = new.replace("\n", "\r\n")  # keep a CRLF file CRLF
-    _write_notes(path, out)
+    _write_notes(path, out, expect=text)
     print("wrote " + path)
     return new
 
@@ -470,7 +515,7 @@ def cmd_notes(cfg: Config, args) -> int:
         print(path)
         return 0
     if writing:
-        text = _write_request(cfg, args, path, _read_notes_strict(path))
+        text = _write_request(cfg, args, path)
         args.check = True
     else:
         _, text = read_notes(cfg, family)
@@ -480,16 +525,22 @@ def cmd_notes(cfg: Config, args) -> int:
     if not args.check:
         sys.stdout.write(text)
         return 0
-    entries = [e for d in docvols if d.family == family for e in d.entries()]
+    probed = {}
+
+    def probe(d):  # everything read below, so a bad member is skipped once
+        probed[d.name] = (d.entries(), headings_index(d))
+
+    members = skip_damaged([d for d in docvols if d.family == family], False,
+                           probe)  # warns, drops unusable ones
+    entries = [e for d in members for e in probed[d.name][0]]
     names = {e.name.lower() for e in entries}
     page_headings = []
     skipped = 0
-    for d in docvols:
-        if d.family == family:
-            heads, bad = headings_index(d)
-            skipped += bad
-            for page, rows in heads.items():
-                page_headings += [(h, d.make_ref(page, a)) for h, a in rows]
+    for d in members:
+        heads, bad = probed[d.name][1]
+        skipped += bad
+        for page, rows in heads.items():
+            page_headings += [(h, d.make_ref(page, a)) for h, a in rows]
     warns = check_notes(text, names, {h for h, _r in page_headings})
     print("notes file present: %s" % path)
     for line in notes_matches(text, entries, page_headings):
