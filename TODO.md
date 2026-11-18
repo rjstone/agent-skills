@@ -80,34 +80,6 @@ items are done.
 
 #### 6. Deferred review items
 
-- [ ] 6.9 Notes
-  - [x] 6.9.2 No lock against concurrent writers of notes files (writes are
-        atomic; last writer wins).
-- [ ] 6.13 After the 0.6.1 reviews
-  - [x] 6.13.12 Over MCP, hint lines in normal output still use CLI wording
-        (`-d NAME picks one`, `raise --max-lines`, `show REF opens`);
-        `explain()` runs only on error text, since rewriting output could
-        change quoted doc text. This includes stderr notes such as the
-        catalog network note naming `assets/allowlist.txt`.
-  - [x] 6.13.18 A live temp older than one hour can be swept by a
-        concurrent process (a long fts build or install). Won't fix: a live
-        temp keeps a fresh mtime, and pid checks are unsafe on Windows.
-  - [x] 6.13.21 The `ids` term is useless for `printf(3)` / `vector<int>`
-        tokens.
-  - [x] 6.13.25 A docvol whose index can't be read (a corrupt DevDocs
-        `index.json` with `entry_count`, or a damaged docset index) stops
-        every search over all docvols; warn and skip it there instead (one
-        helper for every multi-docvol loop; `-d NAME` still exits 5).
-  - [x] 6.13.26 "zzz: no DevDocs documentation matches 'zzz'" repeats the
-        name after the new prefix.
-  - [x] 6.13.27 Tests missing: meta.json untouched when `entry_count` is
-        present; the docset folder survives a family `remove`.
-  - [x] 6.13.28 `make_temp` and install's meta.json write can raise a raw
-        OSError (not CacheError).
-  - [x] 6.13.29 The catalog note order (after the list) and the
-        second-list failure path are untested.
-  - [x] 6.13.30 The MCP tool schema reads `p.default` directly, a second
-        place that knows the default rule.
 - [ ] 6.14 Better recovery for broken docvols (the user, 2026-11-17). 0.7.3
       only skips them with a warning and repair advice (DevDocs: `remove`
       then `install`; docsets: reinstall in Dash/Zeal). Examine: `install`
@@ -121,71 +93,11 @@ items are done.
       (prefix "unreadable meta.json"). `list` shows an unusable WAL docset
       as "0 entries" (with a warning); say "unusable" in the row instead.
 
-#### 7. Output size (from the 2026-11-18 Haiku trial)
+#### 7. Output size
 
-Per-command counts are in `docs/trials/2026-11-18-haiku-node-zig-pony/`
-Done in 0.7.4 (lookup card: 7.1, 7.5 via the card) and 0.8.0 (defaults:
-7.2-7.4); results in that README's "Phase 1" and "Phase 2" sections.
-(`tools/replay_docshelf.py` re-measures a run).
-
-- [x] 7.1 Look at whether a shorter top-level `--help` is possible (about
-      3.9k characters; every trial run read it right after SKILL.md). Low
-      priority: it is paid once per session, before several queries
-      (the user, 2026-11-18).
-- [x] 7.2 `search` with a short or generic query prints about 3k
-      characters (`search Int -d zig`; `search node` over all docvols to
-      find a docvol's name). Consider a lower default `--max-lines`, or a
-      tighter cap for queries of 3 characters or less.
-- [x] 7.3 `toc` of a big page is large (`toc node:sqlite`, 60 lines, 4.4k
-      characters) where `show --grep` found the answer in 1.2k. Consider
-      pointing to `--grep` in the toc's cut line.
-- [x] 7.4 A `show` dominated by one long code example (zig
-      `Labeled-switch`, 3.8k characters, the answer in its first 5 lines)
-      has no smaller default. Consider a lower default line cap for
-      `show`, with the existing "N more lines; --offset" hint.
-- [x] 7.5 Teach CLI agents the MCP agents' query habits in SKILL.md
-      (the user, 2026-11-18). In the trial the same queries cost the same
-      over the CLI and `--mcp` (within 1-3%), but the MCP agents spent
-      1.6-2.4k tokens of docshelf I/O per three questions against
-      3.4-5.6k for the CLI agents, because of how they queried:
-      - they searched the exact entry name (`path.basename`,
-        `DatabaseSync`, `permission drop`); the CLI agents also ran broad
-        words (`search node` over all docvols, 3.0k characters;
-        `search Int -d zig`, 2.8k);
-      - they set a line cap on `show` (`max_lines`); the CLI agents read
-        whole sections and pages (`show pony:builtin-env`, 1.6k, after
-        reading its two fields);
-      - they went from `search` straight to `show REF`, without `toc` of a
-        big page (`toc node:sqlite`, 4.4k) or `--help`;
-      - they used `list`, not a search, to find a docvol's name.
-      The likely cause: the tool schemas show `max_lines` and `docvols` as
-      named parameters; SKILL.md mentions them less prominently. Try: a
-      short "Query habits" list near the top of SKILL.md (search the
-      exact name with `-d`; `show REF --max-lines 40` first, then
-      `--offset`; `show --grep` before `toc`; `list` for names; skip
-      `--help`, SKILL.md covers the commands). Measure with the same
-      nine questions and `tools/replay_docshelf.py` / `count_calls.py`
-      (docs/trials/2026-11-18-haiku-node-zig-pony/); keep 9/9 and aim
-      for MCP-level cost. Check the SKILL.md size cost of the addition
-      against the saving (each run reads SKILL.md once).
-
-- [x] 7.6 `show REF -d NAME` fails ("unrecognized arguments: -d") though
-      the REF names the docvol: three of eight opencode models did it in
-      the 2026-11-18 sandboxed trial (the card shows `-d` on `search` and
-      `fts`). Consider accepting `-d` on `show`/`toc` when it matches the
-      REF's docvol, or a hint in the error. One model also ran `sources`
-      with no query.
-      Done in 0.8.1: `show` and `toc` accept a `-d` naming the REF's docvol
-      or family; any other `-d` is an error naming the REF's docvol.
-      Also in 0.8.1 (round 2 of that trial): a query word starting with `-`
-      (`search "--permission"`) and arguments to `list` or `where` get a
-      hint instead of argparse's message.
-
-- [ ] 7.7 MCP argument slips seen in the 2026-11-18 MCP arms (the user,
-      2026-11-18): accept a string where `docvols` expects a list (models
-      sent `"[node]"`), and suggest the closest docvol name when one is
-      unknown (models invented `nodejs`, `node~26`, `mdn/http`). See
-      `docs/trials/2026-11-18-opencode-docshelf-sandboxed/` ("MCP arms").
+(none open; 7.1-7.7 done in 0.7.4-0.8.2, results in
+`docs/trials/2026-11-18-haiku-node-zig-pony/` and
+`docs/trials/2026-11-18-opencode-docshelf-sandboxed/`)
 
 #### Reference: other docset and DevDocs readers (skimmed 2026-11-17)
 
@@ -206,6 +118,21 @@ Docker transports, talking to the running Dash app, Readability/Turndown
 conversion, Apple's DocC format (needs brotli), downloading from Kapeli's
 servers.
 
+### provider-onboarding
+
+Follow-ups from PR #20 (0.6.0, five rounds of Haiku trials):
+
+- [ ] OpenAI's TTS models (`tts-1`, `gpt-4o-mini-tts`) aren't under `openai`
+      in models.dev, so `-p openai -m tts-1` has no model type and gets chat
+      snippets. An override with a `models` list, or a note in SKILL.md.
+- [ ] Providers only LiteLLM knows (e.g. Fireworks, Together for Kimi K2
+      Instruct) aren't listed: the card is built from models.dev.
+- [ ] A compact summary mode: `--limit 100 --litellm --portkey` can print
+      thousands of lines; agents grep it.
+- [ ] Check recursive-providers' `key_url` values (CC0) and add them to the
+      overrides as `signup_url` with a verified date.
+- [ ] Flag odd-precision prices (currency conversion, e.g. $0.57971).
+
 ### sandboxing
 
 - [ ] A real memory limit (resident memory, whole process tree): `--mem` is
@@ -217,12 +144,6 @@ servers.
 
 - [ ] Scheduled workflow: run each skill's `refresh_references.py` weekly and
       open a PR when the docs changed.
-
-## Consumers
-
-- [x] The project where `opencode-build` started: it installs the opencode
-      skills as copies with `npx skills add ... --copy` (for other harnesses)
-      and loads the HTTP catalog in opencode (the user, 2026-11-08).
 
 ## Ideas for later
 

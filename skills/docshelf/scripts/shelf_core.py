@@ -1,4 +1,5 @@
 """docshelf core: errors and configuration (cache, notes, project file)."""
+import difflib
 import json
 import os
 import re
@@ -10,7 +11,7 @@ from dataclasses import dataclass
 from typing import Callable, Dict, Iterator, List, Optional, Tuple
 from urllib.parse import unquote
 
-VERSION = "0.8.1"
+VERSION = "0.8.2"
 PROJECT_FILE = ".docshelf.json"
 
 
@@ -424,9 +425,35 @@ def pick_docvol(docvols, name, error=None) -> Docvol:
         if found:
             raise CLIError("%s matches %s; give one"
                            % (name, ", ".join(sorted(d.name for d in found))), 2)
-    err = error("unknown docvol %r (see: docshelf.py list)" % name)
+    close = _close_docvols(docvols, low)
+    err = error("unknown docvol %r%s (see: docshelf.py list)" % (
+        name, "; did you mean %s?" % " or ".join(repr(n) for n in close)
+        if close else ""))
     err.docvol = name
     raise err
+
+
+def _close_docvols(docvols, low) -> List[str]:
+    """Names of up to three docvols close to an unknown name (lowercase):
+    one whose name, alias, family or title is a part of it ('node~26',
+    'mdn/http'), else difflib's closest ('nodejs')."""
+    keys = {}
+    for d in docvols:
+        for k in [d.name, d.family, d.title] + list(d.aliases):
+            if k:
+                keys.setdefault(k.lower(), [])
+                if d.name not in keys[k.lower()]:
+                    keys[k.lower()].append(d.name)
+    parts = [p for p in re.split(r"[~/@:._\s-]+", low) if p]
+    hits = [k for k in keys if k in parts]
+    if not hits:
+        hits = difflib.get_close_matches(low, sorted(keys), 3, 0.6)
+    out = []
+    for k in hits:
+        for n in keys[k]:
+            if n not in out:
+                out.append(n)
+    return sorted(out)[:3]
 
 
 def select_docvols(cfg, all_docvols, names, use_all) -> List[Docvol]:

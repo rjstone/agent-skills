@@ -3302,6 +3302,21 @@ class McpTests(unittest.TestCase):
         self.assertIn("the `list` tool", text)
         self.assertNotIn("docshelf.py", text)
 
+    def test_docvols_as_string_list_accepted(self):
+        # models sent a JSON-looking string where docvols wants an array
+        for value in ("[alpha]", '["alpha"]', "alpha", "[alpha, alpha]"):
+            r = self.call("search", {"query": ["frobnicate"], "docvols": value})
+            self.assertFalse(r.get("isError"), (value, r))
+            self.assertIn("frobnicate", r["content"][0]["text"])
+
+    def test_unknown_docvol_suggests_closest(self):
+        for wrong in ("alphajs", "alpha~2", "mdn/alpha", "alpha-std", "alpha.js"):
+            r = self.call("search", {"query": ["x"], "docvols": [wrong]})
+            self.assertTrue(r["isError"])
+            text = r["content"][0]["text"]
+            self.assertIn("did you mean 'alpha'?", text, wrong)
+            self.assertIn("the `list` tool", text)
+
     def test_initialize_and_list(self):
         r = self.rpc("initialize", {"protocolVersion": "2024-11-05",
                                     "capabilities": {}})["result"]
@@ -4944,6 +4959,35 @@ class InstallHintTests(unittest.TestCase):
         self.assertEqual(r.returncode, 4)
         self.assertIn("unknown docvol 'nope'", r.stderr)
         self.assertNotIn("install", r.stderr)
+
+
+class DocvolSuggestTests(unittest.TestCase):
+    """An unknown docvol name suggests the closest installed one."""
+
+    def setUp(self):
+        SearchTests.setUp(self)
+        make_devdocs(self.cache, "alpha", name="Alpha", release="1",
+                     entries=[("x", "Function", "x")], pages={"x": "<p>t</p>"})
+        make_devdocs(self.cache, "zeta", name="Zeta", release="1",
+                     entries=[("y", "Function", "y")], pages={"y": "<p>t</p>"})
+
+    def cli(self, *args):
+        return run_cli(*args, env=self.env, cwd=self.tmp)
+
+    def test_scope_suggests(self):
+        r = self.cli("search", "x", "-d", "alphajs")
+        self.assertEqual(r.returncode, 4)
+        self.assertIn("unknown docvol 'alphajs'; did you mean 'alpha'?", r.stderr)
+
+    def test_ref_suggests(self):
+        r = self.cli("show", "alpha~9:x")
+        self.assertEqual(r.returncode, 5)
+        self.assertIn("did you mean 'alpha'?", r.stderr)
+
+    def test_nothing_close_no_suggestion(self):
+        r = self.cli("search", "x", "-d", "qqqqqq")
+        self.assertIn("unknown docvol 'qqqqqq'", r.stderr)
+        self.assertNotIn("did you mean", r.stderr)
 
 
 class GrepDashValueTests(unittest.TestCase):

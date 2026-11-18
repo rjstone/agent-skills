@@ -192,6 +192,21 @@ def _parser_defaults(c: shelf_cli.Command) -> dict:
     return shelf_cli.param_defaults(c)
 
 
+def _string_list(value: str):
+    """A string sent where an array is expected: "[a, b]" or '["a"]' is
+    that list (models send these); any other string is one item."""
+    v = value.strip()
+    if not (v.startswith("[") and v.endswith("]")):
+        return [value]
+    try:
+        parsed = json.loads(v)
+        if isinstance(parsed, list):
+            return parsed
+    except ValueError:
+        pass
+    return [x.strip().strip("'\"") for x in v[1:-1].split(",") if x.strip()]
+
+
 def _build_namespace(c: shelf_cli.Command, arguments: dict) -> argparse.Namespace:
     """Namespace as argparse would give it; raises ValueError on bad input."""
     ns = _parser_defaults(c)
@@ -216,6 +231,8 @@ def _build_namespace(c: shelf_cli.Command, arguments: dict) -> argparse.Namespac
             if _positional(p) and p.nargs != "*":
                 raise ValueError("missing required argument: %s" % name)
             continue
+        if many and isinstance(value, str):
+            value = _string_list(value)
         items = value if isinstance(value, list) else [value]
         if not many and isinstance(value, list):
             raise ValueError("argument %s must not be an array" % name)
