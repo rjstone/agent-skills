@@ -1,8 +1,8 @@
 # Trial: Haiku with and without docshelf (Node.js, Zig, Pony)
 
 Date: 2026-11-18. docshelf 0.7.3, DevDocs docvols `node` (Node.js 26.3.1),
-`zig` (Zig 0.17.1), `pony` (Pony 0.38.1), CLI. Model: Haiku, default effort,
-as Claude Code general-purpose subagents.
+`zig` (Zig 0.17.1), `pony` (Pony 0.38.1), CLI (the MCP arm: `--mcp` server).
+Model: Haiku, default effort, as Claude Code general-purpose subagents.
 
 ## Method
 
@@ -15,6 +15,9 @@ as Claude Code general-purpose subagents.
     is; no web search or fetch.
   - **web** (added later, see below): no skill; built-in WebSearch/WebFetch
     allowed.
+  - **docshelf MCP** (added last, see below): no skill, no Bash; only the
+    `mcp__docshelf__*` tools (docshelf `--mcp`, registered as a project MCP
+    server) and Write.
 - Answers are in `answers/<docs>-<arm>.md`. Grading: full 1, partial ½,
   wrong 0.
 
@@ -34,8 +37,12 @@ as Claude Code general-purpose subagents.
 | node, web via MCP (Firecrawl) | ✅ | ✅ | ✅ | 3 | 10 | 39 s | 155k |
 | zig, web via MCP (Firecrawl) | ✅ | ✅ | ✅ | 3 | 7 | 57 s | 132k |
 | pony, web via MCP (Firecrawl) | ✅ | ❌ today's `AmbientAuth val`, "high" confidence | ½ order right; `next` default is today's `RejectAlways[B]`, 0.38.1 has `qualify` | 1.5 | 7 | 23 s | 132k |
+| node, docshelf MCP | ✅ | ✅ | ✅ | 3 | 12 | 22 s | 117k |
+| zig, docshelf MCP | ✅ | ✅ | ✅ | 3 | 16 | 17 s | 116k |
+| pony, docshelf MCP | ✅ | ✅ | ✅ | 3 | 16 | 30 s | 117k |
 
-Totals: skill 9/9 (every answer cites a REF), web via MCP 7.5/9, built-in web 7/9, no skill 5.5/9.
+Totals: skill 9/9 (every answer cites a REF), docshelf MCP 9/9 (every answer
+cites a REF), web via MCP 7.5/9, built-in web 7/9, no skill 5.5/9.
 
 ## Observations
 
@@ -78,6 +85,62 @@ Totals: skill 9/9 (every answer cites a REF), web via MCP 7.5/9, built-in web 7/
 - The Node run created a one-minute "noop" scheduled message in the
   session against its instructions; the controller deleted it before it
   fired. (A second rule slip by a Haiku subagent in this trial; see above.)
+
+## docshelf MCP arm
+
+Run after the others, from a second session on branch `testing/docshelf`
+(`.mcp.json` registers `python3 skills/docshelf/scripts/docshelf.py --mcp`).
+The docvols were installed into the default cache by the controller (CLI);
+the MCP server had started before that and still listed all three at once,
+so it reads the cache on each call. DevDocs still served node 26.3.1, zig
+0.17.1 and pony 0.38.1 (the first `install node` failed on a truncated
+download, "unterminated string", and worked on retry). Tool calls and
+tokens below are in the table's "Tool calls" column (counted as in the
+other arms: ToolSearch, docshelf calls and Write all count).
+
+- **Scores:** 9/9, every answer cites the right REF (the same REFs as
+  `key.md`), confidence "high" except Zig Z3 "medium-high" (it did not open
+  the `std.lang.Signedness` declaration). Pony P3's order came from the
+  documented rule (the docs print no output) and the agent said so.
+- **What the agents did:** ToolSearch to load the schemas, then `list`
+  (every run, to confirm the version), `search` (entry names, then the
+  `docvols` filter), `show` with the REF, plus `fts` once in zig and once
+  in pony. None opened SKILL.md or any `--help`: the server's instruction
+  line and the tool descriptions were enough. `show` used `max_lines` (node,
+  zig) or `full` (pony) to keep output small.
+- **Cost vs the skill arm** (per-call counts from `tools/count_calls.py`,
+  (typed + printed) / 4): the docshelf calls cost about 2.4k tokens (node),
+  2.3k (zig, of which 0.4k the four failed calls below) and 1.6k (pony),
+  against 3.4-5.6k per run for the skill, because the MCP agents skip
+  SKILL.md (~1.6k) and `--help` (~1k) and orientation is ToolSearch plus
+  `list` (about 0.1k). The lookups alone are about the same (skill:
+  2.3-3.9k). Agent totals: 116-117k tokens against 119-123k, 17-30 s
+  against 21-29 s; the baseline context is most of the tokens, so the
+  difference is small. Tool calls are higher (12-16 against 8) because each
+  MCP call is one small lookup, and four of zig's 16 were failed calls.
+- **MCP-specific:**
+  - Zig's first four `search` calls failed with `InputValidationError`:
+    Haiku sent `{"query": divFloor, ...}` (a bare, unquoted word) although
+    `query` is an array of strings. docshelf's server never saw them. The
+    harness's error text ("could not be parsed as JSON ... unescaped
+    backslashes in file paths") names common causes that do not fit; the
+    agent corrected to `["divFloor"]` on the fifth call and made no more.
+  - docshelf itself returned no `isError`. Its no-match texts helped: zig's
+    "no matches for 'continue' (entry names and page headings; fts searches
+    the text inside pages)" led to `fts` and the `Labeled-switch` REF;
+    pony's "search wants all the words in one entry name. Best entry for
+    each word: ..." came after a three-word query and led to a better one.
+  - Node's `all: true` searches (one or two words) stayed short (57-165 characters)
+    because they named the entry (`path.basename`, `DatabaseSync`,
+    `permission drop`); only zig's `search Int` was large (2.8k characters,
+    all entries containing "Int"), as in the skill arm.
+- **Rule slips by the agent:** the node agent called `send_message`
+  (`session_id: "none"`, message "done") after finishing; the auto mode
+  classifier denied it, so nothing was sent. No scheduled task was created
+  this time (`list_triggers` shows none from 2026-11-18). That is the third
+  such slip by a Haiku subagent in this trial, so keep the "never call
+  session, messaging, scheduling ..." line in the prompt. The pony agent
+  wrote its answer file twice (same content).
 
 ## Skill runs: tokens per docshelf command
 

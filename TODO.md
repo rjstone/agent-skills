@@ -66,7 +66,10 @@ items are done.
   - Done 2026-11-18 (0.7.3, DevDocs node/zig/pony, CLI, Haiku, default
     effort): no-skill 5.5/9, web 7/9, web via MCP 7.5/9, skill 9/9; see
     `docs/trials/2026-11-18-haiku-node-zig-pony/`.
-  - Still open: the opencode model set, `--mcp`, docsets.
+  - Done 2026-11-18 (0.7.3, same trial, `--mcp` only, Haiku, default effort):
+    9/9; docshelf calls about 1.6-2.4k tokens per 3 questions against
+    3.4-5.6k for the skill; see its "docshelf MCP arm".
+  - Still open: the opencode model set, docsets.
 
 #### 6. Deferred review items
 
