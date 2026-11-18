@@ -40,6 +40,7 @@ import shelf_dash  # noqa: E402
 from shelf_core import CLIError  # noqa: E402
 import shelf_core  # noqa: E402
 import shelf_devdocs  # noqa: E402
+import shelf_mcp  # noqa: E402
 import shelf_lookup  # noqa: E402
 import shelf_notes  # noqa: E402
 import shelf_render  # noqa: E402
@@ -1073,8 +1074,8 @@ class SearchTests(unittest.TestCase):
         self.add("alpha", [("item%02d" % i, "Function", "p%d" % i)
                            for i in range(50)])
         lines = self.cli("search", "item").stdout.splitlines()
-        self.assertEqual(len(lines), 41)
-        self.assertTrue(lines[-1].startswith("... 10 more lines cut;"), lines[-1])
+        self.assertEqual(len(lines), 21)
+        self.assertTrue(lines[-1].startswith("... 30 more lines cut;"), lines[-1])
         self.assertIn("--max-lines", lines[-1])
         r = self.cli("search", "item", "--max-lines", "5")
         self.assertEqual(len(r.stdout.splitlines()), 6)
@@ -1143,7 +1144,7 @@ class ShowTests(unittest.TestCase):
         self.add("l", [("sec", "Section", "p#s")],
                  {"p": "<h2 id='s'>Sec</h2>" + body + "<h2 id='t'>Next</h2><p>other</p>"})
         r = self.cli("show", "l:p#s")
-        self.assertEqual(len(r.stdout.splitlines()), 151)
+        self.assertEqual(len(r.stdout.splitlines()), 41)
         self.assertIn("--full", r.stdout.splitlines()[-1])
         r = self.cli("show", "l:p#s", "--max-lines", "10")
         self.assertEqual(len(r.stdout.splitlines()), 11)
@@ -1221,6 +1222,61 @@ class ShowTests(unittest.TestCase):
         self.assertEqual(r.returncode, 0, r.stderr)
 
 
+class SmallDefaultsTests(unittest.TestCase):
+    """0.8.0 defaults: search 20 lines, toc 60 lines with a --grep pointer."""
+
+    def setUp(self):
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        self.tmp = os.path.realpath(tmp.name)
+        self.cache = os.path.join(self.tmp, "cache")
+        self.env = {"HOME": self.tmp, "USERPROFILE": self.tmp,
+                    "DOCSHELF_CACHE_DIR": self.cache,
+                    "DOCSHELF_NOTES_DIR": os.path.join(self.tmp, "notes")}
+        heads = "".join("<h2 id='h%d'>Head %d</h2><p>x</p>" % (i, i)
+                        for i in range(70))
+        make_devdocs(self.cache, "l", name="L", release="1",
+                     entries=[("item%02d" % i, "T", "p#h%d" % i)
+                              for i in range(30)],
+                     pages={"p": heads})
+
+    def cli(self, *args):
+        return run_cli(*args, env=self.env, cwd=self.tmp)
+
+    def test_search_default_20_lines(self):
+        lines = self.cli("search", "item", "-d", "l").stdout.splitlines()
+        hits = [l for l in lines if l.startswith("l:")]
+        self.assertEqual(len(hits), 20, lines)
+        self.assertTrue(any("more lines cut" in l for l in lines), lines)
+
+    def test_search_json_default_20_items(self):
+        r = self.cli("search", "item", "-d", "l", "--json")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertEqual(len(json.loads(r.stdout)), 20)
+
+    def test_toc_default_60_and_grep_hint(self):
+        lines = self.cli("toc", "l:p").stdout.splitlines()
+        refs = [l for l in lines if "l:p#h" in l]
+        self.assertEqual(len(refs), 60, lines[-3:])
+        self.assertIn("add --grep=TEXT for one option or row", lines[-1])
+
+    def test_toc_hint_reads_well_over_mcp(self):
+        with mock.patch.dict(os.environ, self.env):
+            r = shelf_mcp.call_tool("toc", {"ref": "l:p"})
+        last = r["content"][0]["text"].splitlines()[-1]
+        self.assertIn("add `grep`=TEXT for one option or row", last)
+        self.assertNotIn("tool `grep`", last)
+
+    def test_json_help_says_a_full_list_may_be_cut(self):
+        for name in ("search", "fts"):
+            text = " ".join(self.cli(name, "--help").stdout.split())
+            self.assertIn("may be cut", text, name)
+        by_name = {t["name"]: t for t in shelf_mcp.tool_schemas()}
+        for name in ("search", "fts"):
+            desc = by_name[name]["inputSchema"]["properties"]["json"]["description"]
+            self.assertIn("may be cut", desc, name)
+
+
 class ShowOffsetTests(unittest.TestCase):
     def setUp(self):
         tmp = tempfile.TemporaryDirectory()
@@ -1244,19 +1300,49 @@ class ShowOffsetTests(unittest.TestCase):
     def test_offset_skips_lines(self):
         full = self.full()
         self.assertEqual(len(full), 400)
-        r = self.cli("show", "l:p#s", "--offset", "150", "--no-notes")
+        r = self.cli("show", "l:p#s", "--offset", "40", "--no-notes")
         self.assertEqual(r.returncode, 0, r.stderr)
         out = r.stdout.splitlines()
-        self.assertEqual(out[0], full[150])
-        self.assertEqual(out[149], full[299])
+        self.assertEqual(out[0], full[40])
+        self.assertEqual(out[39], full[79])
 
     def test_cut_line_names_next_offset(self):
         r = self.cli("show", "l:p#s", "--no-notes")
         self.assertEqual(r.stdout.splitlines()[-1],
-                         "... 250 more lines; --offset 150 continues (or --full)")
-        r = self.cli("show", "l:p#s", "--offset", "150", "--no-notes")
+                         "... 360 more lines; --offset 40 continues (or --full)")
+        r = self.cli("show", "l:p#s", "--offset", "40", "--no-notes")
         self.assertEqual(r.stdout.splitlines()[-1],
-                         "... 100 more lines; --offset 300 continues (or --full)")
+                         "... 320 more lines; --offset 80 continues (or --full)")
+
+    def test_mcp_show_default_40_lines(self):
+        with mock.patch.dict(os.environ, self.env):
+            r = shelf_mcp.call_tool("show", {"ref": "l:p#s", "no_notes": True})
+        lines = r["content"][0]["text"].splitlines()
+        self.assertEqual(len(lines), 41)
+        # over MCP the hint names tool arguments (shelf_mcp.explain)
+        self.assertEqual(lines[-1],
+                         "... 360 more lines; `offset` 40 continues (or `full`)")
+
+    def test_grep_output_cut_at_default_shows_cut_line(self):
+        r = self.cli("show", "l:p#s", "--grep", "row", "--no-notes")
+        self.assertTrue(any(l.startswith("... ") and "--offset 40" in l
+                            for l in r.stdout.splitlines()), r.stdout[-300:])
+        # the footer must not claim every match is shown when the cap cut it
+        self.assertNotIn("are shown", r.stdout)
+        self.assertIn("399 lines contain 'row'", r.stdout)
+        # the whole grep output (--full) keeps the "all ... are shown" footer
+        r = self.cli("show", "l:p#s", "--grep", "row", "--full", "--no-notes")
+        self.assertIn("(all 399 lines containing 'row' are shown",
+                      r.stdout.splitlines()[-1])
+
+    def test_notes_after_cut_section(self):
+        w = self.cli("notes", "l", "--set", "sec", "--text", "remember this")
+        self.assertEqual(w.returncode, 0, w.stderr)
+        out = self.cli("show", "l:p#s").stdout
+        self.assertIn("--offset 40 continues", out)
+        self.assertIn("remember this", out)
+        self.assertLess(out.index("--offset 40 continues"),
+                        out.index("remember this"))
 
     def test_offset_with_full_prints_rest(self):
         full = self.full()
@@ -1280,7 +1366,9 @@ class ShowOffsetTests(unittest.TestCase):
         self.assertEqual(out[:3], hits[5:8])
         self.assertEqual(out[3], "... %d more lines; --offset 8 continues (or --full)"
                          % (len(hits) - 8))
-        self.assertTrue(out[4].startswith("(all "))
+        # an offset page is not the whole grep output: no "all ... shown"
+        self.assertTrue(out[4].startswith("("), out[4])
+        self.assertNotIn("are shown", out[4])
 
     def test_offset_zero_ok_negative_rejected(self):
         self.assertEqual(self.cli("show", "l:p#s", "--offset", "0").returncode, 0)
@@ -2753,73 +2841,36 @@ class NetworkTests(unittest.TestCase):
 
 
 TOP_HELP_EXPECTED = "docshelf " + shelf_core.VERSION + """\
-: look up DevDocs documentation offline (stdlib only).
-This is the command reference; `<command> --help` adds only the options
-listed at the end. REF = <docvol>:<path>[#anchor], as search and fts print
-them; <docvol> is the name `list` prints. A Dash/Zeal docset's REFs read
-<Name>:<id> (an entry) and <Name>:page:<path>[#anchor] (a page).
-A docvol is a DevDocs documentation or a read-only Dash/Zeal docset on disk,
-plus docshelf's own metadata, indexes and notes. -d NAME takes a docvol or
-a family name (all its docvols, with a note).
+: DevDocs docs and Dash/Zeal docsets, offline.
+REF = <docvol>:<path>[#anchor], as search and fts print it (a docset's:
+<Name>:<id> or <Name>:page:<path>[#anchor]). -d takes a docvol name (see
+list) or a family (all its versions).
 
-Look up (usual order):
-  search QUERY... [-d NAME]      entries whose names contain all the words,
-                                 and headings inside pages when no entry
-                                 name is an exact match; one REF per hit,
-                                 best first
-  show REF                       that entry's section (max 150 lines) plus
-                                 your notes for it
-  show REF --grep=TEXT           only lines containing TEXT, with their
-                                 heading, table header row, and a matching
-                                 term's definition (repeatable; plain text,
-                                 not a pattern, case-insensitive)
-  toc REF                        the page's headings, indented, each with
-                                 its REF (to show one section)
-  fts QUERY... [-d NAME]         words inside pages, 5 best hits with REFs;
-                                 include the function name: fts read_csv skip
-  types [-d NAME]                each docvol's entry types with counts, most
-                                 frequent first (the names `search --type`
-                                 takes)
+Look up:
+  search NAME... -d DOCVOL     entry names (and page headings) with all the
+                               words; the exact name works best
+  show REF                     read a section, 40 lines; the "... more
+                               lines" line gives the --offset N to go on
+  show REF --grep=TEXT         only the lines with TEXT (repeatable); try
+                               it before toc
+  fts WORDS... -d DOCVOL       words inside pages; include the function name
+  toc REF                      a long page's headings, each with its REF
+  list                         installed docvols and versions
 
-Notes (format: references/notes.md in the skill folder):
-  notes DOCVOL --path            the notes file to edit
-  notes DOCVOL --check           after editing: which REFs show each section,
-                                 then "ok"
-  notes DOCVOL --set HEADING --text TEXT   write a section (--delete HEADING
-                                 removes it), then the --check report
-
-Get and manage docvols (references/getting-docvols.md):
-  list                           docvols, versions, source (devdocs, zeal,
-                                 dash) and "also as" redundancy flags
-  suggest                        docvols for the project's build files
-                                 and version files, then a "docvols"
-                                 list to paste (no network)
-  sources QUERY...               documentations DevDocs offers, with sizes;
-                                 docsets Dash or Zeal could download
-  install [NAME...] [--force]    download one (NAME without a version = the
-                                 newest; no NAME = the project's docvols
-                                 list); skips documentation already on
-                                 disk as a docset unless --force; update
-                                 [NAME...]; remove NAME (DevDocs docvols
-                                 only: Dash or Zeal manages docsets)
-  where                          cache, notes folder, project file, docset
-                                 folders and Dash/Zeal apps found
-  index-text DOCVOL              build the fts index now
-
-Only if you need these, see `<command> --help`:
-  search     --type --all --max-lines --json
-  show       --full --max-lines --offset --no-notes
-  toc        --max-lines
-  fts        --all --max-lines --json
-  types      --all
-  sources    --refresh
-  install    --force
-Global: --version, --mcp (run as a stdio MCP server; references/mcp.md).
-Exit codes: 0 ok; 1 notes --check found problems; 2 usage error, ambiguous
-  name or no FTS5; 4 search scope too wide (use -d, a project list or --all)
-  or unknown -d name; 5 not found or damaged (docvol, page or entry); 7
-  network (DevDocs could not be reached), or an unreadable docset archive
+Other commands, each with its own --help: types, notes, suggest, sources,
+install, update, remove, where, index-text. Also --version, and --mcp
+(run as a stdio MCP server).
+Exit codes: 0 ok; 1 notes --check found problems; 2 usage or ambiguous
+name; 4 scope too wide or unknown -d; 5 not found or damaged; 7 network
+or unreadable docset archive.
 """
+
+# sha256 of json.dumps(shelf_mcp.tool_schemas(), sort_keys=True): help text
+# changes must not touch the MCP tools. Re-pinned for 0.8.0, whose only
+# schema changes are the max_lines defaults (search 20, show 40, toc 60) and
+# the search/fts `json` descriptions (a list as long as the cap may be cut).
+TOOL_SCHEMAS_SHA256 = (
+    "b6b4246bd1c31d445c1575a59c4f506c5830462fe53e96eb362610f17ab522f4")
 
 
 class HelpTests(unittest.TestCase):
@@ -2827,6 +2878,89 @@ class HelpTests(unittest.TestCase):
         r = run_cli("--help")
         self.assertEqual(r.returncode, 0, r.stderr)
         self.assertEqual(r.stdout, TOP_HELP_EXPECTED)
+
+    def test_top_help_fits(self):
+        text = shelf_cli.top_help()
+        self.assertLessEqual(len(text), 1600)
+        # room for a longer version than today's (0.10.10)
+        long = shelf_cli.TOP_HELP.format(version="0.10.10")
+        for line in text.splitlines() + long.splitlines():
+            self.assertLessEqual(len(line), 76, line)
+
+    def test_top_help_offset_hint_is_true(self):
+        # show's cut line reads "... N more lines; --offset N continues";
+        # notes or a --grep footer can follow it, so it is not the last line
+        text = " ".join(shelf_cli.top_help().split())
+        self.assertNotIn("last line", text)
+        self.assertIn("more lines", text)
+
+    def test_no_command_and_dash_h_print_card(self):
+        r = run_cli("-h")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertEqual(r.stdout, TOP_HELP_EXPECTED)
+        r = run_cli()  # no command: the card, as a usage error (exit 2)
+        self.assertEqual(r.returncode, 2, r.stderr)
+        self.assertEqual(r.stdout, TOP_HELP_EXPECTED)
+
+    def test_every_option_in_command_help(self):
+        for c in shelf_cli.COMMANDS:
+            out = run_cli(c.name, "--help").stdout
+            for p in c.params:
+                if p.flags[0].startswith("--"):
+                    self.assertIn(p.flags[0], out, c.name)
+
+    def test_moved_facts_in_command_help(self):
+        # phrases only the epilogs (shelf_cli.DETAILS) carry, not the
+        # option names: each fact the old top-level help gave survives
+        facts = {"install": ["newest", "is skipped unless --force"],
+                 "remove": ["devdocs docvols only", "dash or zeal"],
+                 "list": ["also as"], "suggest": ["no network"],
+                 "sources": ["dash or zeal"],
+                 "show": ["your notes for it", "table header row"],
+                 "types": ["search --type"], "fts": ["function name"],
+                 "notes": ["then ok", "--set writes"]}
+        for name, words in facts.items():
+            text = " ".join(run_cli(name, "--help").stdout.split()).lower()
+            for w in words:
+                self.assertIn(w, text, name)
+
+    def test_mcp_tools_list_unchanged(self):
+        import hashlib
+        s = json.dumps(shelf_mcp.tool_schemas(), sort_keys=True)
+        self.assertEqual(hashlib.sha256(s.encode()).hexdigest(),
+                         TOOL_SCHEMAS_SHA256)
+
+    def _skill_md(self):
+        with open(os.path.join(SKILL, "SKILL.md"), encoding="utf-8") as f:
+            return f.read()
+
+    def test_skill_md_not_larger(self):
+        # 6,398 at 0.7.3; phases 1 and 2 must not grow it past 0.7.4's size
+        self.assertLessEqual(os.path.getsize(os.path.join(SKILL, "SKILL.md")),
+                             6002)
+
+    def test_skill_md_keeps_reference_links(self):
+        text = self._skill_md()
+        for ref in ("notes.md", "getting-docvols.md", "dash-zeal.md",
+                    "mcp.md", "lookup-defaults.md"):
+            self.assertIn("references/" + ref, text)
+
+    def test_skill_md_no_rare_table_wording(self):
+        self.assertNotIn("names at its end", self._skill_md())
+
+    def test_card_states_current_show_default(self):
+        text = shelf_cli.top_help()
+        self.assertIn("40 lines", text)
+        self.assertNotIn("150", text)
+        self.assertNotIn("--max-lines 40", text)
+
+    def test_card_exit_line_names_ambiguous_name(self):
+        self.assertIn("2 usage or ambiguous name",
+                      " ".join(shelf_cli.top_help().split()))
+
+    def test_remove_help_says_notes_kept_once(self):
+        text = " ".join(run_cli("remove", "--help").stdout.split()).lower()
+        self.assertEqual(text.count("notes are kept"), 1, text)
 
     def test_every_command_in_help(self):
         text = shelf_cli.top_help()
@@ -3157,13 +3291,13 @@ class McpTests(unittest.TestCase):
         "list": ([], {}),
         "search": (["query"], {
             "query": "string[]", "docvols": "string[]", "type": "string",
-            "all": "boolean", "max_lines": "integer=40>=1",
+            "all": "boolean", "max_lines": "integer=20>=1",
             "json": "boolean"}),
         "show": (["ref"], {
             "ref": "string", "grep": "string[]", "full": "boolean",
-            "max_lines": "integer=150>=1", "offset": "integer=0>=0",
+            "max_lines": "integer=40>=1", "offset": "integer=0>=0",
             "no_notes": "boolean"}),
-        "toc": (["ref"], {"ref": "string", "max_lines": "integer=150>=1"}),
+        "toc": (["ref"], {"ref": "string", "max_lines": "integer=60>=1"}),
         "fts": (["query"], {
             "query": "string[]", "docvols": "string[]", "all": "boolean",
             "max_lines": "integer=11>=1", "json": "boolean"}),

@@ -17,13 +17,14 @@ SK = os.path.normpath(os.path.join(os.path.dirname(os.path.abspath(__file__)),
 ENV = dict(os.environ)
 
 def segments(cmd):
-    m = re.search(r"\bS=([^\s;&]+)", cmd)
-    svar = m.group(1) if m else None
+    # a shell variable holding the script path (S=.../docshelf.py; $S show ...)
+    svars = dict((v, p) for v, p in re.findall(
+        r"\b([A-Za-z_]\w*)=([^\s;&]*docshelf\.py)", cmd))
     for seg in re.split(r";|&&|\n", cmd):
         seg = seg.strip()
-        if svar:
-            seg = seg.replace("$S ", svar + " ")
-        if "docshelf.py" not in seg or seg.startswith(("export", "S=")):
+        for v, p in svars.items():
+            seg = seg.replace("$%s " % v, p + " ").replace('"$%s" ' % v, p + " ")
+        if "docshelf.py" not in seg or re.match(r"(export\s|[A-Za-z_]\w*=)", seg):
             continue
         yield seg
 
@@ -49,7 +50,9 @@ def run(path, title):
                 typed = "python scripts/docshelf.py " + args
                 out = subprocess.run(seg, shell=True, env=ENV, capture_output=True,
                                      text=True, cwd=SK)
-                rows.append((args[:62], len(typed), len(out.stdout) + len(out.stderr)))
+                shown = 0 if ">/dev/null" in seg.replace(" ", "") and "2>&1" in seg \
+                    else len(out.stdout) + len(out.stderr)  # the agent saw nothing
+                rows.append((args[:62], len(typed), shown))
     print("== " + title)
     print("%-64s %6s %7s %6s" % ("docshelf command (as run)", "typed", "out", "~tok"))
     ti = to = 0

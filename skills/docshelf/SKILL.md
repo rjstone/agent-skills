@@ -6,7 +6,7 @@ license: MIT
 metadata:
   author: Robert Stone
   source: https://github.com/rjstone/agent-skills
-  version: "0.7.3"
+  version: "0.8.0"
   credits: "DevDocs, devdocs-mcp, Zeal"
 ---
 
@@ -18,8 +18,8 @@ skill's folder). Stay in the
 project folder and give the script's full path; don't `cd` to the skill
 folder, because a project's `.docshelf.json` is found from the current
 folder. Run its `--help` first: that is the command reference, with the
-usual command lines. A subcommand's own `--help` only adds the rarer options
-that `--help` names at its end. This file covers what help can't. If
+usual command lines. Other commands' details: `<command> --help`. This
+file covers what help can't. If
 `docshelf` MCP tools (`mcp__docshelf__search` and so on) are available,
 use them instead of the script.
 
@@ -94,14 +94,9 @@ User-contributed docsets carry their own licences.
 - Hits below a "fuzzy matches" line only share letters in order; treat them
   as misses. Entries that open the same section are listed once.
 - For one option or row of a long section, `show REF --grep=TEXT` prints
-  every matching line, and a matching parameter name comes with its
-  description; `...` marks lines without a match, so there's no need to
-  rerun without `--grep` or to pipe the section through `grep`. REF is the
-  `<docvol>:<path>[#anchor]` that `search` and `fts` print.
-- `toc REF` prints a page's headings with their REFs: use it before
-  reading a long page, then `show` the section. `show` says where it cut
-  a long page; `show REF --offset N` continues from there. `types -d NAME`
-  lists a docvol's entry types (the names `search --type` takes).
+  the matching lines (40 at a time), and a matching parameter name comes
+  with its description; `...` marks lines without a match, so don't rerun
+  without `--grep` or pipe the section through `grep`.
 - Notes: write a lesson with `notes NAME --set HEADING --text TEXT` (or
   `--delete HEADING`); see [references/notes.md](references/notes.md).
 - Scope: a project `"docvols"` list in `.docshelf.json` limits searches to

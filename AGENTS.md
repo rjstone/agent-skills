@@ -189,6 +189,14 @@ metadata:
   snippets for an LLM provider or model; `scripts/lookup.py` reads
   models.dev data merged with `references/providers-overrides.json` (entries
   carry a `verified` date and `source`; re-verify before trusting old ones).
+  `--litellm` is the main detailed-pricing source (LiteLLM's price table:
+  sources, deprecation dates; the user, 2026-11-18); `--portkey` adds a
+  second pricing opinion from `Portkey-AI/models` (cents per token
+  upstream): `configs.portkey.ai` first, GitHub raw files as the fallback
+  (the user, 2026-11-18). `--extra-list` is a last-resort, unverified
+  community list (`foisalislambd/all-llm-provider-list`, no license: read at
+  run time, never copied), minus its cookie/OAuth/no-auth entries
+  (the user, 2026-11-18).
 - `opencode-cli` - opencode v2 CLI docs (commands, `cli.json`, keybinds,
   themes, web UI, ACP) cached like `opencode-build`, with its own refresh
   script copy and `ERRATA.md`.
