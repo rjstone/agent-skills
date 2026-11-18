@@ -3,8 +3,8 @@
 #
 #   run_trials.sh PROVIDER/MODEL [PROVIDER/MODEL ...]
 #
-# Adapted from the dash-docset harness (rjstone/experiments, branch
-# skill/dash-docset, docs/superpowers/trials/dash-docset/). Each model gets
+# Adapted from the harness of an earlier dash-docset opencode trial (kept
+# outside this repo). Each model gets
 # its own HOME whose only skill is a link to this repo's docshelf, and whose
 # default docshelf cache (~/.cache/docshelf) holds only the Zig docvol. The
 # prompt never names the skill: loading it from its description is part of

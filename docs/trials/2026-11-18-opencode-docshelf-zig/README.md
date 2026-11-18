@@ -9,10 +9,9 @@ is part of the test (as in the dash-docset opencode trials; the Haiku runs
 in `../2026-11-18-haiku-node-zig-pony/` named the skill instead). Questions
 Z1-Z3 and the answer key: that trial's `questions.md` and `key.md`.
 
-Models: the dash-docset opencode set (rjstone/experiments, branch
-`skill/dash-docset`, `docs/superpowers/plans/2026-11-14-dash-docset-after-plan.md`),
-keeping only models as strong as `nemotron-3-super-120b` or stronger (the
-user, 2026-11-18: smaller ones were not worth testing).
+Models: the set from an earlier dash-docset opencode trial (kept outside
+this repo), keeping only models as strong as `nemotron-3-super-120b` or
+stronger (the user, 2026-11-18: smaller ones were not worth testing).
 
 ## Results
 
