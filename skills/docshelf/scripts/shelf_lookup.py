@@ -282,8 +282,8 @@ def cmd_toc(cfg: Config, args: argparse.Namespace) -> int:
         out.append("(no headings)")
     for line in cap_lines(
             out, args.max_lines,
-            hint("use show REF for a section, show REF --grep=TEXT for one "
-                 "option or row, or raise --max-lines")):
+            hint("use show REF for a section (add --grep=TEXT for one "
+                 "option or row), or raise --max-lines")):
         print(line)
     return 0
 

@@ -1258,7 +1258,23 @@ class SmallDefaultsTests(unittest.TestCase):
         lines = self.cli("toc", "l:p").stdout.splitlines()
         refs = [l for l in lines if "l:p#h" in l]
         self.assertEqual(len(refs), 60, lines[-3:])
-        self.assertIn("show REF --grep=TEXT", lines[-1])
+        self.assertIn("add --grep=TEXT for one option or row", lines[-1])
+
+    def test_toc_hint_reads_well_over_mcp(self):
+        with mock.patch.dict(os.environ, self.env):
+            r = shelf_mcp.call_tool("toc", {"ref": "l:p"})
+        last = r["content"][0]["text"].splitlines()[-1]
+        self.assertIn("add `grep`=TEXT for one option or row", last)
+        self.assertNotIn("tool `grep`", last)
+
+    def test_json_help_says_a_full_list_may_be_cut(self):
+        for name in ("search", "fts"):
+            text = " ".join(self.cli(name, "--help").stdout.split())
+            self.assertIn("may be cut", text, name)
+        by_name = {t["name"]: t for t in shelf_mcp.tool_schemas()}
+        for name in ("search", "fts"):
+            desc = by_name[name]["inputSchema"]["properties"]["json"]["description"]
+            self.assertIn("may be cut", desc, name)
 
 
 class ShowOffsetTests(unittest.TestCase):
@@ -2844,16 +2860,17 @@ Look up:
 Other commands, each with its own --help: types, notes, suggest, sources,
 install, update, remove, where, index-text. Also --version, and --mcp
 (run as a stdio MCP server).
-Exit codes: 0 ok; 1 notes --check found problems; 2 usage; 4 scope too
-wide or unknown -d; 5 not found or damaged; 7 network or unreadable
-docset archive.
+Exit codes: 0 ok; 1 notes --check found problems; 2 usage or ambiguous
+name; 4 scope too wide or unknown -d; 5 not found or damaged; 7 network
+or unreadable docset archive.
 """
 
 # sha256 of json.dumps(shelf_mcp.tool_schemas(), sort_keys=True): help text
 # changes must not touch the MCP tools. Re-pinned for 0.8.0, whose only
-# schema change is the max_lines defaults (search 20, show 40, toc 60).
+# schema changes are the max_lines defaults (search 20, show 40, toc 60) and
+# the search/fts `json` descriptions (a list as long as the cap may be cut).
 TOOL_SCHEMAS_SHA256 = (
-    "897cd6ddd7efbb07b4f1791a6fb319c0ab7d1171cdc7a388a23661917fde3dad")
+    "b6b4246bd1c31d445c1575a59c4f506c5830462fe53e96eb362610f17ab522f4")
 
 
 class HelpTests(unittest.TestCase):
@@ -2936,6 +2953,14 @@ class HelpTests(unittest.TestCase):
         self.assertIn("40 lines", text)
         self.assertNotIn("150", text)
         self.assertNotIn("--max-lines 40", text)
+
+    def test_card_exit_line_names_ambiguous_name(self):
+        self.assertIn("2 usage or ambiguous name",
+                      " ".join(shelf_cli.top_help().split()))
+
+    def test_remove_help_says_notes_kept_once(self):
+        text = " ".join(run_cli("remove", "--help").stdout.split()).lower()
+        self.assertEqual(text.count("notes are kept"), 1, text)
 
     def test_every_command_in_help(self):
         text = shelf_cli.top_help()

@@ -88,7 +88,8 @@ COMMANDS: List[Command] = [
         Param(("--all",), "Search every installed docvol.", kind="flag"),
         Param(("--max-lines",), "Output line cap.", kind="posint",
               default=20),
-        Param(("--json",), "Print JSON.", kind="flag"),
+        Param(("--json",), "Print JSON (a list of hits; a list as long as "
+              "the line cap may be cut).", kind="flag"),
     ]),
     Command("show", "Show a page or section as text.", shelf_lookup.cmd_show, [
         Param(("ref",), "REF from search: <docvol>:<path>[#anchor]."),
@@ -114,7 +115,8 @@ COMMANDS: List[Command] = [
         Param(("--all",), "Search every installed docvol.", kind="flag"),
         Param(("--max-lines",), "Output line cap.", kind="posint",
               default=shelf_lookup.FTS_MAX_LINES),
-        Param(("--json",), "Print JSON.", kind="flag"),
+        Param(("--json",), "Print JSON (a list of hits; a list as long as "
+              "the line cap may be cut).", kind="flag"),
     ]),
     Command("types", "List each docvol's entry types with counts.",
             shelf_lookup.cmd_types, [
@@ -188,9 +190,9 @@ Look up:
 Other commands, each with its own --help: types, notes, suggest, sources,
 install, update, remove, where, index-text. Also --version, and --mcp
 (run as a stdio MCP server).
-Exit codes: 0 ok; 1 notes --check found problems; 2 usage; 4 scope too
-wide or unknown -d; 5 not found or damaged; 7 network or unreadable
-docset archive.
+Exit codes: 0 ok; 1 notes --check found problems; 2 usage or ambiguous
+name; 4 scope too wide or unknown -d; 5 not found or damaged; 7 network
+or unreadable docset archive.
 """
 
 # What the old top-level help said about each command beyond its summary;
@@ -219,8 +221,7 @@ DETAILS = {
                "on disk as a Dash/Zeal docset is skipped unless --force. See "
                "references/getting-docvols.md.",
     "update": "DevDocs docvols only; Dash or Zeal updates docsets.",
-    "remove": "DevDocs docvols only: Dash or Zeal manages docsets. Notes are "
-              "kept.",
+    "remove": "DevDocs docvols only: Dash or Zeal manages docsets.",
     "where": "Cache, notes folder, project file, docset folders and the "
              "Dash/Zeal apps found.",
     "index-text": "Builds the fts index now (the first fts builds it "
