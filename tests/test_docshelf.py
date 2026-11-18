@@ -2430,6 +2430,22 @@ class NetworkTests(unittest.TestCase):
         self.assertEqual(d.entry_count, 2)
         self.assertNotIn("entry_count", self.meta("python~3.14"))  # no write
 
+    def test_meta_untouched_with_entry_count(self):
+        self.main("install", "python~3.14")
+        path = os.path.join(self.root, "python~3.14", "meta.json")
+
+        def state():
+            with open(path, "rb") as f:
+                return f.read(), os.stat(path).st_mtime_ns
+        before = state()
+        code, out, err = self.main("install", "python~3.14")
+        self.assertEqual((code, err), (0, ""))
+        self.assertTrue(out.startswith("up to date python~3.14"), out)
+        self.assertEqual(state(), before)
+        self.assertEqual(self.main("list")[0], 0)
+        self.assertEqual(self.main("search", "intro", "-d", "python~3.14")[0], 0)
+        self.assertEqual(state(), before)
+
     def test_installed_files_get_umask_permissions(self):
         old = os.umask(0o022)
         self.addCleanup(os.umask, old)
@@ -5739,6 +5755,26 @@ class DashReadOnlyTests(unittest.TestCase):
             self.assertIn("give one", err)
             self.assertTrue(os.path.isdir(folder))
 
+    def test_family_remove_keeps_docset(self):
+        # a family name shared by a DevDocs docvol and a docset is ambiguous
+        # (exit 2, nothing removed); removing the DevDocs docvol by name
+        # leaves the docset folder and its files alone
+        folder = self.docset()
+        self.assertEqual(self.main("install", "python~3.12", "--force")[0], 0)
+        before = self.snapshot(folder)
+        devdocs = os.path.join(self.cache, "devdocs", "python~3.12")
+        code, out, err = self.main("remove", "python")
+        self.assertEqual(code, 2, (out, err))
+        self.assertIn("python matches Python_3, python~3.12; give one", err)
+        self.assertTrue(os.path.isdir(devdocs))
+        self.assertEqual(self.snapshot(folder), before)
+        code, out, err = self.main("remove", "python~3.12")
+        self.assertEqual((code, err), (0, ""))
+        self.assertEqual(out, "removed python~3.12 (notes untouched)\n")
+        self.assertFalse(os.path.exists(devdocs))
+        self.assertTrue(os.path.isdir(folder))
+        self.assertEqual(self.snapshot(folder), before)
+
     def test_install_other_version_is_not_redundant(self):
         self.docset()
         code, out, err = self.main("install", "python~3.11")
@@ -6181,6 +6217,35 @@ class DashCatalogTests(unittest.TestCase):
         self.assertIn("note: the Dash/Zeal official list could not be loaded", err)
         self.assertIn("note: the Dash/Zeal user-contributed list could not be loaded",
                       err)
+
+    def test_catalog_note_after_list(self):
+        self.zeal_install()
+        for u in (shelf_dash.FEEDS_LIST_URL, shelf_dash.CONTRIB_LIST_URL):
+            self.net.pages[u] = shelf_devdocs.NetError(u, "blocked")
+        both = io.StringIO()  # one stream: the order the user sees
+        with contextlib.redirect_stdout(both), contextlib.redirect_stderr(both):
+            code = shelf_cli.main(["sources", "python"])
+        self.assertEqual(code, 0)
+        lines = both.getvalue().splitlines()
+        note = next(i for i, ln in enumerate(lines)
+                    if "came from Zeal's catalog" in ln)
+        last_list = max(i for i, ln in enumerate(lines)
+                        if "(Dash/Zeal: download in the app" in ln)
+        self.assertGreater(note, last_list, lines)
+
+    def test_second_catalog_failure(self):
+        # the official list loads from GitHub; the contributed list fails there
+        # and in Zeal's catalog: the first list's hits stay, a note says why
+        self.zeal_install()
+        self.block_urls(shelf_dash.CONTRIB_LIST_URL, shelf_dash.ZEAL_CATALOG_URL)
+        code, out, err = self.main("sources", "python")
+        self.assertEqual(code, 0, err)
+        self.assertIn("python~3.12", out)
+        self.assertIn("Python_3  (Dash/Zeal: download in the app, official)", out)
+        self.assertEqual(err.count("note: the Dash/Zeal user-contributed list "
+                                   "could not be loaded"), 1, err)
+        self.assertNotIn("official list could not be loaded", err)
+        self.assertNotIn("Traceback", err)
 
     def test_catalog_cached_for_a_week(self):
         self.zeal_install()
