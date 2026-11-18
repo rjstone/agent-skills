@@ -169,12 +169,17 @@ Done in 0.7.4 (lookup card: 7.1, 7.5 via the card) and 0.8.0 (defaults:
       for MCP-level cost. Check the SKILL.md size cost of the addition
       against the saving (each run reads SKILL.md once).
 
-- [ ] 7.6 `show REF -d NAME` fails ("unrecognized arguments: -d") though
+- [x] 7.6 `show REF -d NAME` fails ("unrecognized arguments: -d") though
       the REF names the docvol: three of eight opencode models did it in
       the 2026-11-18 sandboxed trial (the card shows `-d` on `search` and
       `fts`). Consider accepting `-d` on `show`/`toc` when it matches the
       REF's docvol, or a hint in the error. One model also ran `sources`
       with no query.
+      Done in 0.8.1: `show` and `toc` accept a `-d` naming the REF's docvol
+      or family; any other `-d` is an error naming the REF's docvol.
+      Also in 0.8.1 (round 2 of that trial): a query word starting with `-`
+      (`search "--permission"`) and arguments to `list` or `where` get a
+      hint instead of argparse's message.
 
 - [ ] 7.7 MCP argument slips seen in the 2026-11-18 MCP arms (the user,
       2026-11-18): accept a string where `docvols` expects a list (models
