@@ -107,6 +107,9 @@ Don't re-review these unless they change shape:
   Cursor and Copilot logins (client-fingerprint files); no data file, provider details live in app code.
 - `latere-ai/lux` - self-hosted gateway; only an example catalog (7 providers, 94 models) that
   is a 2026-09 snapshot its README says users must keep current themselves.
+- `vercel-labs/provider-models-monitor` - model-id lists from the `/models` endpoints of 4 providers
+  (Anthropic, Google, OpenAI, xAI), ids only; updates arrive as PRs and `main` was last updated
+  2026-04-21. Checking the provider's own `/models` endpoint does the same job live.
 - `jeffkit/recursive-providers` (CC0) - 12 providers mirrored from LiteLLM; not a source, but its
   `key_url` values are a good seed for `signup_url` in the overrides once checked.
 
