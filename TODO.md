@@ -69,7 +69,11 @@ items are done.
   - Done 2026-11-18 (0.7.3, same trial, `--mcp` only, Haiku, default effort):
     9/9; docshelf calls about 1.6-2.4k tokens per 3 questions against
     3.4-5.6k for the skill; see its "docshelf MCP arm".
-  - Still open: the opencode model set, docsets.
+  - Done 2026-11-18 (0.8.0, Zig questions, opencode 2.3.0, eight models
+    from nemotron-3-super-120b up, prompt not naming the skill): 8/8 answered
+    3/3; 7 loaded docshelf, nemotron-3.5-super-vl grepped the cache files;
+    see `docs/trials/2026-11-18-opencode-docshelf-zig/`.
+  - Still open: docsets.
 
 #### 6. Deferred review items
 
