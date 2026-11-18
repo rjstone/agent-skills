@@ -73,7 +73,10 @@ items are done.
     from nemotron-3-super-120b up, prompt not naming the skill): 8/8 answered
     3/3; 7 loaded docshelf, nemotron-3.5-super-vl grepped the cache files;
     see `docs/trials/2026-11-18-opencode-docshelf-zig/`.
-  - Still open: docsets.
+  - Done 2026-11-18 (0.8.0, zig/node/pony/HTTP docset, same eight models,
+    bubblewrap sandbox): six answered all four sets; see
+    `docs/trials/2026-11-18-opencode-docshelf-sandboxed/`.
+  - Still open: a docsets-only trial with more docsets.
 
 #### 6. Deferred review items
 
@@ -165,6 +168,13 @@ Done in 0.7.4 (lookup card: 7.1, 7.5 via the card) and 0.8.0 (defaults:
       (docs/trials/2026-11-18-haiku-node-zig-pony/); keep 9/9 and aim
       for MCP-level cost. Check the SKILL.md size cost of the addition
       against the saving (each run reads SKILL.md once).
+
+- [ ] 7.6 `show REF -d NAME` fails ("unrecognized arguments: -d") though
+      the REF names the docvol: three of eight opencode models did it in
+      the 2026-11-18 sandboxed trial (the card shows `-d` on `search` and
+      `fts`). Consider accepting `-d` on `show`/`toc` when it matches the
+      REF's docvol, or a hint in the error. One model also ran `sources`
+      with no query.
 
 #### Reference: other docset and DevDocs readers (skimmed 2026-11-17)
 
