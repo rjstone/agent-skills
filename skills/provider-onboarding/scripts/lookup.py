@@ -289,6 +289,7 @@ def browse(data, a):
 
 
 def render_browse(rows, a, notes):
+    rows, notes = clean_tree(rows), clean_tree(notes)  # every remote field, like render_md
     flt = ", ".join(x for x in ("type=" + "|".join(a.type) if a.type else "",
                                 "input=" + "+".join(a.input_modality) if a.input_modality else "",
                                 "output=" + "+".join(a.output_modality) if a.output_modality else "") if x)
