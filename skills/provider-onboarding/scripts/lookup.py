@@ -282,7 +282,7 @@ def render_browse(rows, a, notes):
                                 "input=" + "+".join(a.input_modality) if a.input_modality else "",
                                 "output=" + "+".join(a.output_modality) if a.output_modality else "") if x)
     L = ["# Models matching %s" % flt, "", "_%s_" % DATA_NOTICE, "",
-         "_Data: %s_" % "; ".join(notes), "",
+         "_Data: %s_" % "; ".join(clean(n) for n in notes), "",
          "%d models. Cheapest price is the lowest any provider lists (USD per 1M tokens); 0 can mean not billed or not published." % len(rows), "",
          "| Model | Type | Providers | Cheapest in / out | Input | Output | Example ids |", "|---|---|---|---|---|---|---|"]
     for r in rows[: a.limit if a.limit > 8 else 50]:
@@ -876,7 +876,7 @@ def main():
     if (a.type or a.input_modality or a.output_modality) and not (a.provider or a.model):
         rows = browse(data, a)
         if a.format == "json":
-            print(json.dumps({"_notice": DATA_NOTICE, "notes": notes, "models": clean_tree(rows)}, indent=2))
+            print(json.dumps({"_notice": DATA_NOTICE, "notes": clean_tree(notes), "models": clean_tree(rows)}, indent=2))
         else:
             print(render_browse(rows, a, notes))
         return 0 if rows else 2
