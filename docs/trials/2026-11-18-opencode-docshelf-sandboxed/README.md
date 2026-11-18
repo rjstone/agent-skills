@@ -50,8 +50,8 @@ Per set (docshelf I/O, ~tokens, runs that used the skill):
 
 ## Observations
 
-- Six of eight answered every set correctly; five of them used docshelf
-  in every run.
+- Seven of eight answered every set correctly; five of them used
+  docshelf in every run.
 - Skipping the skill: nemotron-3.5-super-vl (all four) and Beam (zig,
   http) found the docs in their own home and read docshelf's cache files
   directly (`db.json` with `node -e`, docshelf's `fts.sqlite` with

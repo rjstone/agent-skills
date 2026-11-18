@@ -74,7 +74,7 @@ items are done.
     3/3; 7 loaded docshelf, nemotron-3.5-super-vl grepped the cache files;
     see `docs/trials/2026-11-18-opencode-docshelf-zig/`.
   - Done 2026-11-18 (0.8.0, zig/node/pony/HTTP docset, same eight models,
-    bubblewrap sandbox): six answered all four sets; see
+    bubblewrap sandbox): seven answered all four sets; see
     `docs/trials/2026-11-18-opencode-docshelf-sandboxed/`.
   - Still open: a docsets-only trial with more docsets.
 
