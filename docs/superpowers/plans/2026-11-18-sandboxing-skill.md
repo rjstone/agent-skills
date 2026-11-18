@@ -77,7 +77,7 @@ nested-agent recipe.
   `main(argv=None) -> int` (exit 2 on usage/preflight errors; otherwise
   `os.execvp`s the built command).
 
-- [ ] **Step 1: Write the failing unit tests** (no bwrap needed):
+- [x] **Step 1: Write the failing unit tests** (no bwrap needed):
   - `test_command_starts_with_env_i`: `build_command(...)[0:2] == ["env", "-i"]`.
   - `test_root_caller_uses_setpriv`: euid 0 -> `setpriv` with `--reuid`,
     `--no-new-privs`, `--bounding-set=-all` before `bwrap`.
@@ -107,8 +107,8 @@ nested-agent recipe.
   - `test_refuses_user_root`: `--user root` -> error.
   - `test_show_prints_command`: `main(["--show", "--", "true"])` prints the
     command, exit 0.
-- [ ] **Step 2: Run, verify they fail:** `python3 -m unittest tests.test_sandboxing -v`
-- [ ] **Step 3: Implement.** Bind set from the spec (read-only `/usr`, the
+- [x] **Step 2: Run, verify they fail:** `python3 -m unittest tests.test_sandboxing -v`
+- [x] **Step 3: Implement.** Bind set from the spec (read-only `/usr`, the
   `/bin`, `/lib`, `/lib64`, `/sbin` symlinks, `/etc/resolv.conf`,
   `/etc/ssl`, `--ro-bind-try /etc/alternatives`; `--proc /proc`, `--dev
   /dev`, `--tmpfs /tmp`; `--unshare-all --die-with-parent --new-session
@@ -118,8 +118,8 @@ nested-agent recipe.
   `subprocess` and returns its status when cleanup is needed, else
   `execvp`). Create the sandbox user with `useradd -M -s /usr/sbin/nologin`
   when missing; `chown -R` the work folder to it.
-- [ ] **Step 4: Run the unit tests, then the full suite.**
-- [ ] **Step 5: Commit** `sandboxing: sandbox.py (bwrap wrapper) with unit tests`.
+- [x] **Step 4: Run the unit tests, then the full suite.**
+- [x] **Step 5: Commit** `sandboxing: sandbox.py (bwrap wrapper) with unit tests`.
 
 ### Task 2: `scripts/leak_test.py` and integration tests
 
@@ -133,7 +133,7 @@ nested-agent recipe.
   `ok`/`LEAK`/`info` line per probe and `PASS`/`FAIL`; exit 0/1 (2 when
   bwrap is unusable).
 
-- [ ] **Step 1: Write the failing integration tests** (skip unless
+- [x] **Step 1: Write the failing integration tests** (skip unless
   `bwrap --unshare-all --uid 1000 -- true` works here):
   - `test_leak_test_passes`: `leak_test.py` exit 0, output ends `PASS`.
   - `test_env_not_visible`: a caller variable `SECRET_X=marker` is absent
@@ -147,8 +147,8 @@ nested-agent recipe.
     sh -c "while :; do :; done"` -> killed (non-zero).
   - `test_no_net_blocks_network`: `--no-net -- python3 -c` socket connect
     fails.
-- [ ] **Step 2: Run, verify they fail** (leak_test.py missing).
-- [ ] **Step 3: Implement `leak_test.py`.** Marker split in halves (the
+- [x] **Step 2: Run, verify they fail** (leak_test.py missing).
+- [x] **Step 3: Implement `leak_test.py`.** Marker split in halves (the
   probe reads it from a file, so its own argv never holds it); an outside
   `sleep` process started with the marker in its environment and killed
   afterwards; a root-only file (mode 600) under a temp folder; probes
@@ -156,8 +156,8 @@ nested-agent recipe.
   file, the caller's home, `grep -r` over `/`; `/work` writable; HTTPS via
   the proxy when one is set (`info`); the host user of the sandboxed process
   from the host side (`ps -o user`), `info`.
-- [ ] **Step 4: Run the integration tests here (bwrap installed), then the full suite.**
-- [ ] **Step 5: Commit** `sandboxing: leak_test.py and integration tests`.
+- [x] **Step 4: Run the integration tests here (bwrap installed), then the full suite.**
+- [x] **Step 5: Commit** `sandboxing: leak_test.py and integration tests`.
 
 ### Task 3: SKILL.md and references
 
@@ -170,12 +170,12 @@ nested-agent recipe.
 - Consumes: Tasks 1-2 CLIs (SKILL.md documents them; no syntax beyond
   them).
 
-- [ ] **Step 1: Write the failing test:** `test_skill_md_names_only_real_options`:
+- [x] **Step 1: Write the failing test:** `test_skill_md_names_only_real_options`:
   every `--option` named in SKILL.md and the references exists in
   `sandbox.py`'s or `leak_test.py`'s parser (the repo's `test_skills.py`
   then also checks frontmatter and that both references are linked).
-- [ ] **Step 2: Run, verify it fails.**
-- [ ] **Step 3: Write.** SKILL.md (short): when to use; "Not for hostile
+- [x] **Step 2: Run, verify it fails.**
+- [x] **Step 3: Write.** SKILL.md (short): when to use; "Not for hostile
   code" first; cheapest first (no shell for the tested model when narrow
   tools do; keep real keys outside, placeholders inside); quick start
   (`leak_test.py` once, then `sandbox.py --work DIR --ro RUNTIME --setenv
@@ -187,18 +187,18 @@ nested-agent recipe.
   opencode as the worked example (binding its Node.js folder, a per-run
   config in `/work/.config`, placeholder keys, `--format json` output read
   from outside), plus the same pattern for any CLI agent.
-- [ ] **Step 4: Full suite; `python3 scripts/build_skills_index.py --check`
+- [x] **Step 4: Full suite; `python3 scripts/build_skills_index.py --check`
   is not run on the branch (CI regenerates on main).**
-- [ ] **Step 5: Commit** `sandboxing: SKILL.md and references`.
+- [x] **Step 5: Commit** `sandboxing: SKILL.md and references`.
 
 ### Task 4 (controller): agent trials
 
-- [ ] Rerun the sandboxed opencode docshelf trial (one documentation set,
+- [x] Rerun the sandboxed opencode docshelf trial (one documentation set,
   the eight models) with its harness switched to `sandbox.py`; same results
   shape as `docs/trials/2026-11-18-opencode-docshelf-sandboxed/`.
-- [ ] With/without-skill check (AGENTS.md rule 4): two Haiku agents, the
+- [x] With/without-skill check (AGENTS.md rule 4): two Haiku agents, the
   prompt "Run this test harness so it can't see my environment variables or
   files outside its folder: <harness>", one with the skill installed, one
   without; record whether each used `sandbox.py` and the leak test.
-- [ ] Write the results to `docs/trials/2026-11-18-sandboxing-skill/README.md`;
+- [x] Write the results to `docs/trials/2026-11-18-sandboxing-skill/README.md`;
   open the PR (`skill/sandboxing`, squash-merge when approved).

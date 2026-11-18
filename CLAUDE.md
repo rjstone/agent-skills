@@ -30,6 +30,15 @@ with a cloud container: archive it to `docs/plans/` before the session ends.
   `anthropics/claude-plugins-official`) and run
   `npx skills add <owner/repo> --list`, which works.
 
+## Claude Code on the web: bubblewrap
+
+- bubblewrap isn't in the web container's image: `apt-get install -y
+  bubblewrap` before using the `sandboxing` skill. Unprivileged user
+  namespaces work there, and `setpriv` and `prlimit` are installed. Without
+  bwrap, `tests/test_sandboxing.py`'s integration tests skip rather than
+  fail (CI's runner has none either), so install it before trusting a green
+  run of that file (2026-11-18).
+
 ## Claude Code on the web: git
 
 - Each cloud session's harness creates a `claude/<random-name>` branch and
