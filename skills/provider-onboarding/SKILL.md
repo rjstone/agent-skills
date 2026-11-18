@@ -1,12 +1,12 @@
 ---
 name: provider-onboarding
 description: Use when the user wants to add support for, wire up, onboard or integrate an LLM provider or model ("add support for X's Y model"), asks how to call a model, what a provider's endpoint, API-key env var, model id, context limit or price is, or where to get an API key, or wants a new OpenAI- or Anthropic-compatible provider configured (opencode, fast-agent, curl) - even if they never say "provider card" or name a data source.
-compatibility: scripts/lookup.py needs network access to models.dev and models.opencode.ai, or a local api.json passed with --file.
+compatibility: scripts/lookup.py needs network access to models.dev and models.opencode.ai (or a local api.json via --file); --portkey also needs configs.portkey.ai or raw.githubusercontent.com.
 license: MIT
 metadata:
   author: Robert Stone
   source: https://github.com/rjstone/agent-skills
-  version: "0.1.0"
+  version: "0.2.0"
 ---
 
 # Provider onboarding
@@ -22,8 +22,11 @@ Turn "add support for `<provider>`'s `<model>`" into a verified-where-possible p
    python3 scripts/lookup.py --model "<model>"            # who serves this model?
    python3 scripts/lookup.py --list-providers             # browse
    python3 scripts/lookup.py -p X -m Y --format json      # machine-readable
+   python3 scripts/lookup.py -p X -m Y --portkey          # + detailed pricing
    ```
    Paths are relative to this skill's directory. It reads `https://models.dev/api.json` and `https://models.opencode.ai/api.json` (override with `--url`, env `MODELS_DEV_URLS`, or `--file api.json`), merges `references/providers-overrides.json`, and caches for an hour. `--all-types` includes specialized model types hidden by default.
+
+   `--portkey` adds a Portkey section from `Portkey-AI/models`: batch, cache, audio and per-call prices (web search, file search) in USD, plus the gateway's parameter ranges. It tries `configs.portkey.ai` first and falls back to the GitHub repo's raw files; `--portkey-dir <clone>` reads a local clone. Use it when the user asks about cost or models.dev has no price. When it and models.dev disagree, show both with their sources.
 3. **Handle failure** by reading the lookup's message, then `references/data-sources.md`. In order: GitHub read of `anomalyco/models.dev` (`providers/<id>/provider.toml`), ask the user to upload `api.json` (`--file`), ask them to allow `models.dev` and `models.opencode.ai` in their agent's network settings (on claude.ai: Settings > Capabilities), or web-search the provider's docs. If the network refuses a host, say so plainly; do not hunt for a workaround.
 4. **Provider not in any database?** Use manual mode after finding the docs: `--name X --base-url https://api.x.com/v1 --env-var X_API_KEY --model-id y`. It generates the same card and snippets.
 5. **Deliver the card** (below), then the snippets the user's tooling needs, then the operator checklist.
@@ -35,7 +38,7 @@ Turn "add support for `<provider>`'s `<model>`" into a verified-where-possible p
 - Other providers serving the same model, with base URL and price, when the user hasn't pinned a provider
 - Sign-up / key page candidates with confidence
 - Hosts that must be allowlisted in any sandboxed agent
-- A source tag per field: models.dev, override table (with verified date), inferred, manual, or MISSING
+- A source tag per field: models.dev, override table (with verified date), Portkey, inferred, manual, or MISSING
 
 ## Sign-up page inference
 

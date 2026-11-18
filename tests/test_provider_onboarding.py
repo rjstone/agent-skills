@@ -121,3 +121,87 @@ class TestLookup(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+PK_PRICING = {
+    "default": {"pricing_config": {"pay_as_you_go": {"request_token": {"price": 0}}}},
+    "acme-large": {"pricing_config": {
+        "pay_as_you_go": {"request_token": {"price": 0.00015}, "response_token": {"price": 0.0006},
+                          "cache_read_input_token": {"price": 0.000075},
+                          "additional_units": {"web_search": {"price": 1}}},
+        "batch_config": {"request_token": {"price": 0.000075}}}},
+}
+PK_GENERAL = {"name": "acme", "default": {"params": [
+    {"key": "max_tokens", "defaultValue": 128, "minValue": 1, "maxValue": 8192},
+    {"key": "stream", "defaultValue": True, "type": "boolean"}]}}
+
+
+class PortkeyTests(unittest.TestCase):
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self.api = os.path.join(self.tmp.name, "api.json")
+        json.dump(API, open(self.api, "w"))
+        self.pk = os.path.join(self.tmp.name, "portkey")
+        for kind, data in (("pricing", PK_PRICING), ("general", PK_GENERAL)):
+            os.makedirs(os.path.join(self.pk, kind))
+            json.dump(data, open(os.path.join(self.pk, kind, "acme.json"), "w"))
+
+    def test_cents_per_token_become_usd_per_million(self):
+        self.assertEqual(lookup.per_million(0.00025), 2.5)
+        p = lookup.portkey_pricing(PK_PRICING["acme-large"])
+        self.assertEqual(p["input"], 1.5)
+        self.assertEqual(p["output"], 6.0)
+        self.assertEqual(p["cache_read"], 0.75)
+        self.assertEqual(p["batch_input"], 0.75)
+        self.assertEqual(p["per_unit_usd"], {"web_search": 0.01})
+
+    def test_provider_names_map_then_fall_back_to_id(self):
+        self.assertEqual(lookup.portkey_names("mistral"), ["mistral-ai", "mistral"])
+        self.assertEqual(lookup.portkey_names("openai"), ["openai"])
+
+    def test_model_key_matching(self):
+        self.assertEqual(lookup.portkey_model_key("acme/acme-large", PK_PRICING), "acme-large")
+        self.assertIsNone(lookup.portkey_model_key("zzz", PK_PRICING))
+
+    def test_api_tried_first_then_github_fallback(self):
+        calls = []
+
+        def fake_fetch(url, cache_dir, refresh):
+            calls.append(url)
+            if url.startswith(lookup.PORTKEY_BASES[0]):
+                raise RuntimeError("blocked")
+            return PK_PRICING, "network"
+
+        args = type("A", (), {"portkey_dir": None, "cache_dir": self.tmp.name, "refresh": False})()
+        orig = lookup.fetch
+        lookup.fetch = fake_fetch
+        try:
+            data, src, errors = lookup.portkey_load("pricing", "acme", args)
+        finally:
+            lookup.fetch = orig
+        self.assertEqual(calls, ["https://configs.portkey.ai/pricing/acme.json",
+                                 "https://raw.githubusercontent.com/Portkey-AI/models/main/pricing/acme.json"])
+        self.assertIs(data, PK_PRICING)
+        self.assertIn("raw.githubusercontent.com", src)
+        self.assertEqual(len(errors), 1)
+
+    def test_cli_card_shows_portkey_section(self):
+        r = subprocess.run([sys.executable, SCRIPT, "--file", self.api, "-p", "acme", "-m", "acme-large",
+                            "--portkey-dir", self.pk, "--format", "json"], capture_output=True, text=True)
+        self.assertEqual(r.returncode, 0, r.stderr)
+        pk = json.loads(r.stdout)["entries"][0]["portkey"]
+        self.assertEqual(pk["model_key"], "acme-large")
+        self.assertEqual(pk["pricing_usd"]["output"], 6.0)
+        self.assertEqual(pk["params"], {"max_tokens": {"min": 1, "max": 8192, "default": 128}})
+
+    def test_missing_portkey_file_is_reported_not_fatal(self):
+        r = subprocess.run([sys.executable, SCRIPT, "--file", self.api, "-p", "relay",
+                            "--portkey-dir", self.pk], capture_output=True, text=True)
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertIn("no Portkey pricing file for relay", r.stdout)
+
+    def test_default_output_has_no_portkey(self):
+        r = subprocess.run([sys.executable, SCRIPT, "--file", self.api, "-p", "acme", "--format", "json"],
+                           capture_output=True, text=True)
+        self.assertNotIn("portkey", json.loads(r.stdout)["entries"][0])

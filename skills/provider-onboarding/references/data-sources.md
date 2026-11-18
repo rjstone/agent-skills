@@ -46,6 +46,25 @@ A model-level `provider.api` / `provider.npm` overrides the provider's, and `loo
 4. The provider's own docs and `/models` endpoint (OpenAI-compatible providers usually expose `GET <base>/models`).
 5. A local stdio MCP server such as `arifpambudi242/models.dev-mcp` if the user already runs it.
 
+## Pricing source: Portkey-AI/models (`--portkey`)
+
+MIT-licensed data behind Portkey's AI Gateway, about 54 providers. Read 2026-11-18.
+
+| Path | Shape |
+|---|---|
+| `pricing/<provider>.json` | `{ "default": {...}, "<model>": {"pricing_config": {"pay_as_you_go": {...}, "batch_config": {...}, "calculate": {...}}}}` |
+| `general/<provider>.json` | `{ "name", "default": {"params": [{key, defaultValue, minValue, maxValue, ...}], "messages", "type"}, "<model>": {...} }` |
+
+- **Prices are in cents per token** (their README says so). `lookup.py` converts to USD per 1M
+  tokens (x 10,000). `additional_units` (web_search, file_search, ...) are cents per unit; shown as USD.
+- A model entry lists only the fields it overrides; a field it omits falls back to `default`.
+- Sources, in order: `https://configs.portkey.ai/<path>`, then
+  `https://raw.githubusercontent.com/Portkey-AI/models/main/<path>`. The GitHub contents API (folder
+  listing) may be refused where raw files work, so the lookup fetches files by name, never by listing.
+- Provider names differ from models.dev (`mistral` vs `mistral-ai`); `PORTKEY_IDS` in `lookup.py` maps
+  them. Portkey-only providers (fal-ai, voyage, elevenlabs, ...) work in manual mode via `--name`.
+- Per-model API: `https://api.portkey.ai/model-configs/pricing/<provider>/<model>` (not used by the script).
+
 ## Network notes
 
 - Sandboxed agents often block models.dev until the user allows the host in the agent's network settings
