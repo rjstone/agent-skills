@@ -12,11 +12,12 @@
 # /work (also HOME). The work folder holds a copy of the skill
 # (~/.claude/skills/docshelf), a docshelf cache with zig, node and pony
 # (~/.cache/docshelf), the opencode config and one project folder per run.
-# bwrap starts under `env -i`, as an unprivileged host user (setpriv), with
-# --clearenv: the run sees no caller environment, no other processes and no
-# files outside that view (answer keys and earlier answers stay unreachable).
-# Network is shared through the egress proxy; provider keys are placeholders
-# that the proxy replaces, so no real key enters the sandbox.
+# Each run goes through the sandboxing skill's scripts/sandbox.py: an empty
+# environment (env -i, bwrap --clearenv), an unprivileged host user, no
+# other processes and no files outside that view (answer keys and earlier
+# answers stay unreachable). Network is shared through the egress proxy
+# (sandbox.py passes the proxy variables and a CA copy); provider keys are
+# placeholders that the proxy replaces, so no real key enters the sandbox.
 #
 # Environment:
 #   SRC_CACHE     a docshelf cache holding devdocs/{zig,node,pony} (required)
@@ -42,6 +43,8 @@ ARM="${ARM:-skill}"
 case $ARM in skill|mcp|mcp-direct) ;; *) echo "ARM must be skill, mcp or mcp-direct" >&2; exit 2 ;; esac
 [ $# -gt 0 ] || { echo "usage: run_trials.sh PROVIDER/MODEL..." >&2; exit 2; }
 command -v bwrap >/dev/null || { echo "bwrap not found (apt-get install -y bubblewrap)" >&2; exit 2; }
+SANDBOX="$REPO/skills/sandboxing/scripts/sandbox.py"
+[ -f "$SANDBOX" ] || { echo "no $SANDBOX (the sandboxing skill)" >&2; exit 2; }
 SRC_CACHE="$(cd "${SRC_CACHE:?set SRC_CACHE}" && pwd)" || exit 2
 DOCSET_DIR="$(cd "${DOCSET_DIR:?set DOCSET_DIR to a folder with HTTP.docset}" && pwd)" || exit 2
 [ -d "$DOCSET_DIR/HTTP.docset" ] || { echo "no HTTP.docset in $DOCSET_DIR" >&2; exit 2; }
@@ -62,22 +65,7 @@ rm -rf "$OUT/docsets" && mkdir -p "$OUT/docsets"
 cp -r "$DOCSET_DIR/HTTP.docset" "$OUT/docsets/" && chmod -R a+rX "$OUT/docsets"
 DOCSET_DIR="$OUT/docsets"
 
-# the proxy's CA bundle usually sits under the caller's home, which isn't
-# mounted: hand the sandbox a readable copy
-CA_COPY="$OUT/ca.crt"
-CA_SRC=${SSL_CERT_FILE:-}
-[ -r "$CA_SRC" ] || CA_SRC=$HOME/.ccr/ca-bundle.crt
-[ -r "$CA_SRC" ] || CA_SRC=/etc/ssl/certs/ca-certificates.crt
-cp "$CA_SRC" "$CA_COPY" && chmod 644 "$CA_COPY"
-
-PROXY_ARGS=()
-for v in HTTPS_PROXY HTTP_PROXY NO_PROXY https_proxy http_proxy no_proxy; do
-  [ -n "${!v:-}" ] || continue
-  case ${!v} in *@*) echo "$v holds credentials; not passing it in" >&2; exit 2 ;; esac
-  PROXY_ARGS+=(--setenv "$v" "${!v}")
-done
-
-# sandbox WORK MODEL PROMPT RUNDIR: run opencode in bwrap; stdout = events
+# sandbox WORK MODEL PROMPT RUNDIR: run opencode via sandbox.py; stdout = events
 sandbox() {
   local work="$1" model="$2" prompt="$3" rundir="$4"
   local CMD=(opencode run --standalone --archived --auto --format json
@@ -88,27 +76,12 @@ sandbox() {
     echo "--- repo visible: $(ls '"$REPO"' 2>&1 | head -1)";
     echo "--- docshelf list:"; python3 /work/.claude/skills/docshelf/scripts/docshelf.py list;
     echo "--- opencode: $(opencode --version)"')
-  env -i setpriv --reuid "$SANDBOX_USER" --regid "$SANDBOX_USER" --init-groups \
-      --inh-caps=-all --bounding-set=-all --no-new-privs \
-    /usr/bin/bwrap --unshare-all --share-net --die-with-parent --new-session \
-      --uid 1000 --gid 1000 \
-      --ro-bind /usr /usr --symlink usr/bin /bin --symlink usr/lib /lib \
-      --symlink usr/lib64 /lib64 --symlink usr/sbin /sbin \
-      --ro-bind /etc/resolv.conf /etc/resolv.conf --ro-bind /etc/ssl /etc/ssl \
-      --ro-bind-try /etc/alternatives /etc/alternatives \
-      --ro-bind "$NODE_DIR" "$NODE_DIR" \
-      --ro-bind "$DOCSET_DIR" /docsets \
-      --ro-bind "$CA_COPY" /ca.crt \
-      --proc /proc --dev /dev --tmpfs /tmp --bind "$work" /work --chdir "/work/proj/$rundir" \
-      --clearenv --setenv HOME /work --setenv LANG C.UTF-8 \
-      --setenv PATH "$NODE_DIR/bin:/usr/local/bin:/usr/bin:/bin" \
-      --setenv SSL_CERT_FILE /ca.crt --setenv CURL_CA_BUNDLE /ca.crt \
-      --setenv REQUESTS_CA_BUNDLE /ca.crt --setenv NODE_EXTRA_CA_CERTS /ca.crt \
-      "${PROXY_ARGS[@]}" \
-      --setenv DOCSHELF_DOCSET_DIRS /docsets \
-      --setenv OPENCODE_API_KEY proxy-injected --setenv OPENROUTER_API_KEY proxy-injected \
-      --setenv NOUS_API_KEY proxy-injected --setenv REFLECTION_API_KEY proxy-injected \
-      -- "${CMD[@]}"
+  python3 "$SANDBOX" --user "$SANDBOX_USER" --work "$work" \
+      --ro "$NODE_DIR" --ro "$DOCSET_DIR:/docsets" \
+      --setenv DOCSHELF_DOCSET_DIRS=/docsets \
+      --setenv OPENCODE_API_KEY=proxy-injected --setenv OPENROUTER_API_KEY=proxy-injected \
+      --setenv NOUS_API_KEY=proxy-injected --setenv REFLECTION_API_KEY=proxy-injected \
+      -- sh -c 'cd "/work/proj/$1" && shift && exec "$@"' _ "$rundir" "${CMD[@]}"
 }
 
 TAIL="Quote the documentation and give the reference you found each answer in."
@@ -163,7 +136,7 @@ PY
     case $set in zig) prompt=$P_ZIG ;; node) prompt=$P_NODE ;;
                  pony) prompt=$P_PONY ;; http) prompt=$P_HTTP ;; esac
     s=$(date +%s)
-    timeout "$TIMEOUT" bash -c "$(declare -f sandbox); $(declare -p NODE_DIR DOCSET_DIR CA_COPY SANDBOX_USER PROXY_ARGS REPO); SMOKE=${SMOKE:-}; sandbox \"\$@\"" _ \
+    timeout "$TIMEOUT" bash -c "$(declare -f sandbox); $(declare -p NODE_DIR DOCSET_DIR SANDBOX_USER SANDBOX REPO); SMOKE=${SMOKE:-}; sandbox \"\$@\"" _ \
       "$W" "$model" "$prompt" "$set" > "$B/out/$set.jsonl" 2> "$B/out/$set.err"
     e=$?
     echo "$set exit=$e secs=$(( $(date +%s)-s ))" >> "$B/out/summary.txt"
