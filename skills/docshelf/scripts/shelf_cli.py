@@ -1,5 +1,6 @@
 """docshelf command line: the command table, parser and main()."""
 import argparse
+import re
 import os
 import sqlite3
 import sys
@@ -351,11 +352,59 @@ def _closed_stdout() -> int:
     return 0
 
 
+QUERY_COMMANDS = ("search", "fts", "sources")  # positional query of free words
+
+
+def _usage_hint(argv: List[str]) -> Optional[str]:
+    """A clearer message than argparse's for two slips agents make: a query
+    word starting with '-' (read as an unknown option), and arguments to a
+    command that takes none (list, where). None when neither applies."""
+    rest = list(argv)
+    while rest and rest[0].startswith("-"):  # top-level options
+        rest.pop(0)
+    if not rest:
+        return None
+    by_name = {c.name: c for c in COMMANDS}
+    c = by_name.get(rest[0])
+    if c is None:
+        return None
+    args = rest[1:]
+    if "--" in args:
+        args = args[:args.index("--")]
+    if not c.params:
+        words = [a for a in args if not a.startswith("-")]  # -h etc.: argparse's
+        if words:
+            msg = "%s takes no arguments" % c.name
+            if c.name == "list":
+                msg += ("; it lists every docvol. To look inside one: "
+                        "docshelf.py search -d %s QUERY" % words[0])
+            return msg
+        return None
+    if c.name in QUERY_COMMANDS:
+        known = {"-h", "--help"} | {f for p in c.params for f in p.flags
+                                    if f.startswith("-")}
+        for tok in args:
+            if not tok.startswith("-") or tok == "-" or " " in tok:
+                continue  # argparse reads a token with a space as a word
+            if tok.split("=", 1)[0] in known:
+                continue
+            if re.fullmatch(r"-\d+(\.\d+)?", tok):
+                continue  # a negative number is a query word
+            return ("%s is not a %s option; to search for words starting "
+                    "with '-', put the options first, then --, then the query: "
+                    "docshelf.py %s -d NAME -- %s" % (tok, c.name, c.name, tok))
+    return None
+
+
 def main(argv: Optional[List[str]] = None) -> int:
     parser = build_parser()
     argv = list(sys.argv[1:] if argv is None else argv)
     if "--mcp" not in argv:
         argv = _join_grep_values(argv)
+        hint = _usage_hint(argv)
+        if hint:
+            print("docshelf: " + hint, file=sys.stderr)
+            return 2
     args = parser.parse_args(argv)
     if args.mcp:
         import shelf_mcp

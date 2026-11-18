@@ -177,6 +177,9 @@ Done in 0.7.4 (lookup card: 7.1, 7.5 via the card) and 0.8.0 (defaults:
       with no query.
       Done in 0.8.1: `show` and `toc` accept a `-d` naming the REF's docvol
       or family; any other `-d` is an error naming the REF's docvol.
+      Also in 0.8.1 (round 2 of that trial): a query word starting with `-`
+      (`search "--permission"`) and arguments to `list` or `where` get a
+      hint instead of argparse's message.
 
 #### Reference: other docset and DevDocs readers (skimmed 2026-11-17)
 

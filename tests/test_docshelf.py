@@ -2981,6 +2981,31 @@ class HelpTests(unittest.TestCase):
         text = " ".join(run_cli("remove", "--help").stdout.split()).lower()
         self.assertEqual(text.count("notes are kept"), 1, text)
 
+    def test_query_starting_with_dashes_gets_a_hint(self):
+        # an opencode model ran `search "--permission" -d node` (2026-11-18)
+        for cmd in ("search", "fts"):
+            r = run_cli(cmd, "--permission", "-d", "node")
+            self.assertEqual(r.returncode, 2, cmd)
+            self.assertIn("-- --permission", r.stderr, cmd)
+            self.assertIn("options first", r.stderr, cmd)
+
+    def test_known_options_and_negative_numbers_get_no_hint(self):
+        r = run_cli("search", "--max-lines", "3", "-d", "zzz", "foo")
+        self.assertNotIn("options first", r.stderr)
+        r = run_cli("search", "-d", "zzz", "--", "--permission")
+        self.assertNotIn("options first", r.stderr)
+        r = run_cli("search", "-d", "zzz", "-5")
+        self.assertNotIn("options first", r.stderr)
+        r = run_cli("search", "-d", "zzz", "- ()")  # a word with a space
+        self.assertNotIn("options first", r.stderr)
+
+    def test_list_with_an_argument_gets_a_hint(self):
+        # an opencode model ran `list HTTP` (2026-11-18)
+        r = run_cli("list", "HTTP")
+        self.assertEqual(r.returncode, 2)
+        self.assertIn("list takes no arguments", r.stderr)
+        self.assertIn("search -d HTTP", r.stderr)
+
     def test_every_command_in_help(self):
         text = shelf_cli.top_help()
         for c in shelf_cli.COMMANDS:
