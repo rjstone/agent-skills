@@ -135,18 +135,10 @@ Follow-ups from PR #20 (0.6.0, five rounds of Haiku trials):
 
 ### sandboxing
 
-- [ ] Bind `/etc/hosts` read-only by default: without it `localhost`
-      doesn't resolve inside (SKILL.md says to pass `--ro /etc/hosts`).
-- [ ] A working-directory option below `/work` (today: `sh -c 'cd ... &&
-      exec CMD'`, as in `references/nested-agents.md`).
-- [ ] sandbox.py's own errors exit 2, the same as a command that exits 2;
-      consider a distinct status or a marker line on stderr.
-- [ ] Started as root, `--rw` binds are checked only for read access by the
-      sandbox user: a root-owned `--rw` folder passes preflight but is
-      read-only inside. Check write access too, or chown it like `--work`.
-- [ ] `--mem` is an address-space limit (`prlimit --as`); Node.js/V8
-      reserves large virtual ranges, so it likely breaks Node agents such as
-      opencode. Test, then document it or offer a cgroup-based limit.
+- [ ] A real memory limit (resident memory, whole process tree): `--mem` is
+      `prlimit --as` (address space), which Node.js needs 768 MB+ of just to
+      start (0.2.0 warns and documents it). Options: a cgroup v2
+      `memory.max` when delegated, or `systemd-run --scope -p MemoryMax=`.
 
 ## Automation
 

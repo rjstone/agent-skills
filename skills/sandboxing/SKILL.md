@@ -6,7 +6,7 @@ license: MIT
 metadata:
   author: Robert Stone
   source: https://github.com/rjstone/agent-skills
-  version: "0.1.0"
+  version: "0.2.0"
 ---
 
 # Sandboxing
@@ -33,8 +33,11 @@ python3 scripts/sandbox.py --work /tmp/run1 --ro /opt/node \
     --setenv OPENROUTER_API_KEY=placeholder -- CMD [ARGS...]
 ```
 `scripts/` is relative to this skill's folder. Exit status is the command's
-(a signal gives 128+N); sandbox.py's own errors exit 2 with a message saying
-what to fix. `--show` prints the full `bwrap` command without running it.
+(a signal gives 128+N; under `timeout`, 124). sandbox.py's own errors (bad
+option, preflight, missing tool) exit 125, as `env` and `timeout` do, with a
+`sandbox.py: error:` line on stderr saying what to fix; check that line when
+the command itself might exit 125. `--show` prints the full `bwrap` command
+without running it.
 
 Inside, the command sees: an empty environment plus `HOME=/work`, `PATH`,
 `LANG`, `TMPDIR=/tmp`, the caller's proxy variables and the CA variables;
@@ -43,11 +46,12 @@ uid 1000; read-only `/usr`, `/etc/ssl`; private `/proc`, `/dev` and `/tmp`;
 
 | Option | Effect |
 |-|-|
-| `--work DIR` | writable folder at `/work` (also `HOME` and the cwd); default: a new folder in `/tmp`, removed afterwards unless `--keep` |
+| `--work DIR` | writable folder at `/work` (also `HOME` and the cwd); default: a new private (mode 700) folder in `/tmp`, removed afterwards unless `--keep` |
+| `--cwd DIR` | working directory inside, relative to `/work` (e.g. `--cwd proj`); must exist |
 | `--ro SRC[:DEST]`, `--rw SRC[:DEST]` | read-only / writable bind (repeatable); `SRC/bin` of a `--ro` bind goes on `PATH` |
 | `--setenv NAME=VALUE`, `--pass-env NAME` | set a variable inside; copy one of yours in (readable inside: never a real key) |
 | `--no-net` | no network; default is shared network with your proxy variables and a CA copy at `/ca.crt` |
-| `--mem MB`, `--nproc N`, `--cpu SEC` | limits (prlimit) |
+| `--mem MB`, `--nproc N`, `--cpu SEC` | limits (prlimit); `--mem` caps address space, not memory use |
 | `--user NAME` | host user when started as root (default `sandboxer`, created if missing) |
 
 ## Gotchas
@@ -55,6 +59,12 @@ uid 1000; read-only `/usr`, `/etc/ssl`; private `/proc`, `/dev` and `/tmp`;
   `--work` is chowned to it. Every bind source must be readable by that user:
   a root-only parent (an agent's scratch folder) fails preflight with the
   folder's name. Copy the data under `/tmp` (`chmod -R a+rX`) instead.
+  A `--rw` source must also be writable by it (preflight says so otherwise);
+  files made there belong to `sandboxer` on the host.
+- **`--mem` and Node.js**: `--mem` limits virtual address space, and V8
+  reserves a lot of it at startup, so Node (and opencode's runtime) dies below
+  about 768 MB ("Failed to reserve virtual memory", exit 133/134) while using
+  far less. Use `--mem 1024` or more for Node-based commands; sandbox.py warns.
 - **Runtimes outside `/usr`** (Node.js under `/opt`, a venv): bind the
   runtime's folder with `--ro`; its `bin/` is then on `PATH`.
 - **`HOME=/work`**: config goes in `/work/.config/...`; put it in the work
@@ -65,9 +75,9 @@ uid 1000; read-only `/usr`, `/etc/ssl`; private `/proc`, `/dev` and `/tmp`;
   them. Bind a narrower folder (`--allow-sensitive` overrides; don't).
 - **Proxy URL with `user:password@`** is refused, since it would be readable
   inside (`--allow-proxy-credentials` overrides).
-- **No `/etc/passwd` or `/etc/hosts`**: `whoami` fails, git needs
-  `user.name`/`user.email` set, and `localhost` doesn't resolve (use
-  `127.0.0.1`, or `--ro /etc/hosts`).
+- **No `/etc/passwd`**: `whoami` fails and git needs `user.name`/`user.email`
+  set. `/etc/hosts` is a minimal one (`localhost` only, not the host's file,
+  which may name internal hosts); `--ro /etc/hosts` binds yours instead.
 - Everything you bind or pass in is readable by the command: that is the
   boundary.
 

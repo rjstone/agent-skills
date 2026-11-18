@@ -15,13 +15,14 @@ import os
 import pwd
 import shlex
 import shutil
+import signal
 import stat
 import subprocess
 import sys
 import tempfile
 from urllib.parse import urlsplit
 
-VERSION = "0.1.0"
+VERSION = "0.2.0"
 
 DEFAULT_USER = "sandboxer"
 SANDBOX_UID = 1000
@@ -37,7 +38,14 @@ CREDENTIAL_DIRS = [".ssh", ".aws", ".config/gh", ".claude", ".codex",
                    ".local/share/opencode"]
 # top-level paths that are symlinks into /usr on merged-/usr systems
 USR_LINKS = ["/bin", "/lib", "/lib64", "/sbin"]
-SHOW_TMP = "/tmp/sandbox.XXXXXX"
+SHOW_TMP = "/tmp/sandbox.XXXXXX"  # nosec B108 - placeholder shown by --show, never created
+# sandbox.py's own failures (usage, preflight, missing tools): 125, as env,
+# timeout and chroot use, so they don't look like the command's own status
+EXIT_SANDBOX_ERROR = 125
+# --mem is an address-space limit; Node.js (V8) reserves this much virtual
+# memory at startup (Node 22 fails to start below about 768 MB)
+NODE_MIN_MEM_MB = 1024
+NODE_COMMANDS = {"node", "npm", "npx", "nodejs"}
 
 CHECK_PROBE = r'''
 echo "uid: $(id -u) gid: $(id -g)"
@@ -49,8 +57,14 @@ if touch /work/.sandbox-check 2>/dev/null; then rm -f /work/.sandbox-check; echo
 '''
 
 
+class _Parser(argparse.ArgumentParser):
+    def error(self, message):
+        self.print_usage(sys.stderr)
+        self.exit(EXIT_SANDBOX_ERROR, "%s: error: %s\n" % (self.prog, message))
+
+
 def parse_args(argv):
-    p = argparse.ArgumentParser(
+    p = _Parser(
         prog="sandbox.py",
         description="Run COMMAND in a bubblewrap sandbox that hides the caller's "
                     "environment, processes and files (Linux).",
@@ -58,6 +72,8 @@ def parse_args(argv):
     p.add_argument("--work", metavar="DIR",
                    help="writable folder mounted at /work, also HOME and the working "
                         "directory (default: a new temp folder, removed afterwards)")
+    p.add_argument("--cwd", metavar="DIR",
+                   help="working directory inside; relative to /work (default /work)")
     p.add_argument("--ro", action="append", default=[], metavar="SRC[:DEST]",
                    help="read-only bind (repeatable); DEST defaults to SRC")
     p.add_argument("--rw", action="append", default=[], metavar="SRC[:DEST]",
@@ -107,6 +123,18 @@ def binds(opts):
     out = [("--ro", *split_bind(s)) for s in opts.ro]
     out += [("--rw", *split_bind(s)) for s in opts.rw]
     return out
+
+
+def cwd_path(opts):
+    """The working directory inside the sandbox."""
+    if not opts.cwd:
+        return "/work"
+    return os.path.normpath(os.path.join("/work", opts.cwd))
+
+
+def hosts_text():
+    """A minimal /etc/hosts: localhost only (the host's own may name internal hosts)."""
+    return "127.0.0.1\tlocalhost\n::1\tlocalhost ip6-localhost ip6-loopback\n"
 
 
 def _real(path):
@@ -163,10 +191,11 @@ def _others_can(st, want, uid, gid):
     return bits & want == want
 
 
-def _unreadable(path, euid, user):
+def _unreadable(path, euid, user, write=False):
     """The first folder or file on the way to `path` the sandbox user can't
-    pass or read, or None. As root, judges by mode bits for the sandbox user;
-    otherwise by os.access for the caller (who runs bwrap itself)."""
+    pass or read (or, with `write`, write at the end), or None. As root,
+    judges by mode bits for the sandbox user; otherwise by os.access for the
+    caller (who runs bwrap itself)."""
     real = _real(path)
     parts = [p for p in real.split("/") if p]
     chain = ["/"] + ["/" + "/".join(parts[:i + 1]) for i in range(len(parts))]
@@ -182,12 +211,16 @@ def _unreadable(path, euid, user):
                 want = 1
             else:
                 want = 5 if stat.S_ISDIR(st.st_mode) else 4
+                if write:
+                    want |= 2
             if not _others_can(st, want, uid, gid):
                 return p
         return None
     for i, p in enumerate(chain):
         last = i == len(chain) - 1
         mode = (os.R_OK | (os.X_OK if os.path.isdir(p) else 0)) if last else os.X_OK
+        if last and write:
+            mode |= os.W_OK
         if not os.access(p, mode):
             return p
     return None
@@ -211,10 +244,12 @@ def preflight(opts, env, euid):
         if value is not None and value <= 0:
             errors.append("%s must be a positive number" % flag)
 
-    checks = [(flag + " " + src, src, dest, True) for flag, src, dest in binds(opts)]
+    checks = [(flag + " " + src, src, dest, True, flag == "--rw")
+              for flag, src, dest in binds(opts)]
     if opts.work:
-        checks.append(("--work " + opts.work, os.path.abspath(opts.work), "/work", False))
-    for label, src, dest, must_exist in checks:
+        # the work folder is chowned to the sandbox user, so only reachability counts
+        checks.append(("--work " + opts.work, os.path.abspath(opts.work), "/work", False, False))
+    for label, src, dest, must_exist, writable in checks:
         if not src:
             errors.append("%s: empty source path" % label)
             continue
@@ -241,6 +276,19 @@ def preflight(opts, env, euid):
             errors.append("%s: '%s' is not readable or searchable by %s; move or copy "
                           "the data to a readable place (e.g. under /tmp), or make "
                           "that folder readable (chmod o+rx)" % (label, bad, who))
+        elif writable and _unreadable(src, euid, opts.user, write=True):
+            who = ("the sandbox user %r" % opts.user) if euid == 0 else "this user"
+            errors.append("%s: '%s' is not writable by %s, so the bind would be "
+                          "read-only inside; make it writable for that user (chmod "
+                          "o+w, or chown it), copy the data into the --work folder, "
+                          "or use --ro" % (label, src, who))
+
+    cwd = cwd_path(opts)
+    if opts.cwd and opts.work and cwd.startswith("/work/"):
+        host_cwd = os.path.join(os.path.abspath(opts.work), os.path.relpath(cwd, "/work"))
+        if not os.path.isdir(host_cwd):
+            errors.append("--cwd %s: %s does not exist in the --work folder (%s); "
+                          "create it before the run" % (opts.cwd, cwd, host_cwd))
 
     if not opts.no_net and not opts.allow_proxy_credentials:
         for name in PROXY_VARS:
@@ -250,6 +298,23 @@ def preflight(opts, env, euid):
                               "inside. Use a proxy that injects credentials itself, "
                               "--no-net, or --allow-proxy-credentials" % name)
     return errors
+
+
+def warnings(opts):
+    """Advice that doesn't stop the run (printed to stderr by main)."""
+    out = []
+    if opts.mem and opts.mem < NODE_MIN_MEM_MB:
+        cmd = os.path.basename(opts.command[0]) if opts.command else ""
+        node = cmd in NODE_COMMANDS or any(
+            flag == "--ro" and os.path.exists(os.path.join(src, "bin", "node"))
+            for flag, src, _ in binds(opts))
+        if node:
+            out.append("--mem %d limits address space, not memory use: Node.js "
+                       "reserves large virtual ranges and may die at startup "
+                       "(\"Failed to reserve virtual memory\", exit 133 or 134); "
+                       "use --mem %d or more for Node-based commands"
+                       % (opts.mem, NODE_MIN_MEM_MB))
+    return out
 
 
 def _usr_binds():
@@ -263,7 +328,7 @@ def _usr_binds():
     return out
 
 
-def build_command(opts, env, euid, work, ca_copy):
+def build_command(opts, env, euid, work, ca_copy, hosts=None):
     """The full command line: env -i [setpriv ...] bwrap ... -- [prlimit ...] COMMAND."""
     cmd = ["env", "-i"]
     if euid == 0:
@@ -280,7 +345,10 @@ def build_command(opts, env, euid, work, ca_copy):
           "--ro-bind-try", "/etc/ssl", "/etc/ssl"]
     if net:
         b += ["--ro-bind-try", "/etc/resolv.conf", "/etc/resolv.conf"]
-    b += ["--proc", "/proc", "--dev", "/dev", "--tmpfs", "/tmp",
+    if hosts:
+        # before the caller's binds, so a --ro of their own /etc/hosts wins
+        b += ["--ro-bind", hosts, "/etc/hosts"]
+    b += ["--proc", "/proc", "--dev", "/dev", "--tmpfs", "/tmp",  # nosec B108 - /tmp inside the sandbox: a private tmpfs
           "--bind", work, "/work"]
     path = []
     for flag, src, dest in binds(opts):
@@ -293,7 +361,7 @@ def build_command(opts, env, euid, work, ca_copy):
         b += ["--ro-bind", ca_copy, "/ca.crt"]
 
     setenv = [("HOME", "/work"), ("PATH", ":".join(path + BASE_PATH)),
-              ("LANG", "C.UTF-8"), ("TMPDIR", "/tmp")]
+              ("LANG", "C.UTF-8"), ("TMPDIR", "/tmp")]  # nosec B108 - TMPDIR inside the sandbox: a private tmpfs
     if net:
         setenv += [(n, env[n]) for n in PROXY_VARS if env.get(n)]
         if ca_copy:
@@ -303,7 +371,7 @@ def build_command(opts, env, euid, work, ca_copy):
     b.append("--clearenv")
     for name, value in setenv:
         b += ["--setenv", name, value]
-    b += ["--chdir", "/work", "--"]
+    b += ["--chdir", cwd_path(opts), "--"]
     cmd += b
 
     limits = []
@@ -377,10 +445,20 @@ def _userns_error(prefix):
     return None
 
 
+class _Signalled(Exception):
+    def __init__(self, signum):
+        super().__init__(signum)
+        self.signum = signum
+
+
+def _raise_signal(signum, frame):
+    raise _Signalled(signum)
+
+
 def _fail(errors):
     for e in errors:
         print("sandbox.py: error: " + e, file=sys.stderr)
-    return 2
+    return EXIT_SANDBOX_ERROR
 
 
 def main(argv=None):
@@ -390,12 +468,14 @@ def main(argv=None):
     errors = preflight(opts, env, euid)
     if errors:
         return _fail(errors)
+    for w in warnings(opts):
+        print("sandbox.py: warning: " + w, file=sys.stderr)
     net = not opts.no_net
 
     if opts.show:
         work = os.path.abspath(opts.work) if opts.work else SHOW_TMP + "/work"
         ca = SHOW_TMP + "/ca.crt" if net and _ca_source(env) else None
-        print(shlex.join(build_command(opts, env, euid, work, ca)))
+        print(shlex.join(build_command(opts, env, euid, work, ca, SHOW_TMP + "/hosts")))
         return 0
 
     errors = _tool_errors(opts, euid)
@@ -411,12 +491,18 @@ def main(argv=None):
     if err:
         return _fail([err])
 
-    tmp = None
-    if not opts.work or net:
-        tmp = tempfile.mkdtemp(prefix="sandbox.", dir="/tmp")
-        os.chmod(tmp, 0o755)
+    # per-run files the sandbox user must read: CA copy, hosts, default work
+    tmp = tempfile.mkdtemp(prefix="sandbox.", dir="/tmp")  # nosec B108 - mkdtemp makes a unique folder; under /tmp so the sandbox user can reach it
+    os.chmod(tmp, 0o755)  # nosec B103 - the sandbox user must read the CA copy and hosts file
+    hosts = os.path.join(tmp, "hosts")
+    with open(hosts, "w") as f:
+        f.write(hosts_text())
+    os.chmod(hosts, 0o644)
     work = os.path.abspath(opts.work) if opts.work else os.path.join(tmp, "work")
     os.makedirs(work, exist_ok=True)
+    if not opts.work:
+        # the run's own output: owner only (the owner becomes the sandbox user)
+        os.chmod(work, 0o700)
     ca_copy = None
     if net:
         src = _ca_source(env)
@@ -431,20 +517,23 @@ def main(argv=None):
         uid, gid = _sandbox_ids(opts.user)
         _chown_tree(work, uid, gid)
 
-    cmd = build_command(opts, env, euid, work, ca_copy)
+    cmd = build_command(opts, env, euid, work, ca_copy, hosts)
     keep_tmp = opts.keep and not opts.work
-    if tmp is None:
-        sys.stdout.flush()
-        sys.stderr.flush()
-        os.execvp(cmd[0], cmd)
+    # SIGTERM (timeout, kill) or SIGHUP: stop the sandbox and still clean up;
+    # subprocess.call kills its child when the wait is interrupted
+    for sig in (signal.SIGTERM, signal.SIGHUP):
+        signal.signal(sig, _raise_signal)
     try:
         status = subprocess.call(cmd)
     except KeyboardInterrupt:
         status = 130
+    except _Signalled as e:
+        status = 128 + e.signum
     finally:
         if keep_tmp:
-            if ca_copy:
-                os.unlink(ca_copy)
+            for f in (ca_copy, hosts):
+                if f:
+                    os.unlink(f)
             print("sandbox.py: kept work folder " + work, file=sys.stderr)
         else:
             shutil.rmtree(tmp, ignore_errors=True)

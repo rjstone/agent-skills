@@ -4,14 +4,18 @@ so they need no bwrap, no network and no real user changes. Run from the
 repo root: python3 -m unittest discover -s tests -v
 """
 import contextlib
+import glob
 import importlib.util
 import io
 import os
 import re
 import shutil
+import signal
+import stat
 import subprocess
 import sys
 import tempfile
+import time
 import unittest
 from unittest import mock
 
@@ -40,9 +44,10 @@ CA = "/fixture/ca.crt"
 BASE_ENV = {"HOME": "/fixture/home", "PATH": "/usr/bin:/bin"}
 
 
-def build(argv, env=None, euid=1000, work=WORK, ca_copy=CA):
+def build(argv, env=None, euid=1000, work=WORK, ca_copy=CA, hosts=None):
     opts = sandbox.parse_args(argv)
-    return sandbox.build_command(opts, dict(BASE_ENV, **(env or {})), euid, work, ca_copy)
+    return sandbox.build_command(opts, dict(BASE_ENV, **(env or {})), euid, work, ca_copy,
+                                 hosts=hosts)
 
 
 def pairs(cmd, flag):
@@ -162,6 +167,34 @@ class CommandTests(TempDirs):
         self.assertNotIn("prlimit", build(["--", "true"]))
 
 
+class HostsAndCwdTests(unittest.TestCase):
+    def test_hosts_text_has_localhost(self):
+        text = sandbox.hosts_text()
+        self.assertRegex(text, r"(?m)^127\.0\.0\.1\s+localhost\b")
+        self.assertRegex(text, r"(?m)^::1\s+localhost\b")
+
+    def test_hosts_bound_before_user_binds(self):
+        cmd = build(["--ro", "/fixture/etc-hosts:/etc/hosts", "--", "true"],
+                    hosts="/fixture/run/hosts")
+        part = bwrap_part(cmd)
+        ro = triples(part, "--ro-bind")
+        self.assertIn(("/fixture/run/hosts", "/etc/hosts"), ro)
+        # the user's own bind comes later, so it wins
+        self.assertLess(ro.index(("/fixture/run/hosts", "/etc/hosts")),
+                        ro.index(("/fixture/etc-hosts", "/etc/hosts")))
+
+    def test_no_hosts_bind_without_file(self):
+        part = bwrap_part(build(["--", "true"]))
+        self.assertNotIn("/etc/hosts", [d for _, d in triples(part, "--ro-bind")])
+
+    def test_cwd_relative_and_absolute(self):
+        self.assertEqual(pairs(bwrap_part(build(["--cwd", "proj/a", "--", "true"])), "--chdir"),
+                         ["/work/proj/a"])
+        self.assertEqual(pairs(bwrap_part(build(["--cwd", "/data", "--", "true"])), "--chdir"),
+                         ["/data"])
+        self.assertEqual(pairs(bwrap_part(build(["--", "true"])), "--chdir"), ["/work"])
+
+
 class PreflightTests(TempDirs):
     def make_home(self):
         home = self.mkdir()
@@ -209,8 +242,49 @@ class PreflightTests(TempDirs):
         os.mkdir(src, 0o755)
         errs = self.errors(["--ro", src, "--", "true"], euid=0)
         self.assertTrue(any("'%s'" % private in e for e in errs), errs)
-        os.chmod(private, 0o755)
+        os.chmod(private, 0o755)  # nosec B103 - test fixture: readable by the sandbox user
         self.assertEqual(self.errors(["--ro", src, "--", "true"], euid=0), [])
+
+    def test_cwd_missing_under_work(self):
+        work = self.mkdir()
+        errs = self.errors(["--work", work, "--cwd", "proj", "--", "true"])
+        self.assertTrue(any("--cwd" in e and "proj" in e for e in errs), errs)
+        os.mkdir(os.path.join(work, "proj"))
+        self.assertEqual(self.errors(["--work", work, "--cwd", "proj", "--", "true"]), [])
+        # a --work folder that sandbox.py will create, and no --cwd: fine
+        new = os.path.join(work, "not-yet")
+        self.assertEqual(self.errors(["--work", new, "--", "true"]), [])
+
+    def test_preflight_rw_not_writable(self):
+        src = self.mkdir(0o755)  # owned by the test's user: not the sandbox user
+        errs = self.errors(["--rw", src, "--", "true"], euid=0)
+        self.assertTrue(any("'%s'" % src in e and "writable" in e for e in errs), errs)
+        self.assertEqual(self.errors(["--ro", src, "--", "true"], euid=0), [])
+        os.chmod(src, 0o777)  # nosec B103 - test fixture: writable by the sandbox user (the check under test)
+        self.assertEqual(self.errors(["--rw", src, "--", "true"], euid=0), [])
+
+    def test_preflight_rw_file_not_writable(self):
+        f = os.path.join(self.mkdir(), "data.txt")
+        with open(f, "w") as fh:
+            fh.write("x")
+        os.chmod(f, 0o644)
+        errs = self.errors(["--rw", f, "--", "true"], euid=0)
+        self.assertTrue(any("writable" in e for e in errs), errs)
+        os.chmod(f, 0o666)  # nosec B103 - test fixture: writable by the sandbox user (the check under test)
+        self.assertEqual(self.errors(["--rw", f, "--", "true"], euid=0), [])
+
+    def test_mem_warning_for_node(self):
+        rt = self.mkdir()
+        os.mkdir(os.path.join(rt, "bin"))
+        open(os.path.join(rt, "bin", "node"), "w").close()
+        def warns(argv):
+            return sandbox.warnings(sandbox.parse_args(argv))
+        low = warns(["--mem", "512", "--ro", rt, "--", "x"])
+        self.assertTrue(any("--mem" in w and "Node" in w for w in low), low)
+        self.assertTrue(warns(["--mem", "512", "--", "node", "-e", "1"]))
+        self.assertEqual(warns(["--mem", str(sandbox.NODE_MIN_MEM_MB), "--ro", rt, "--", "x"]), [])
+        self.assertEqual(warns(["--mem", "512", "--", "python3", "-c", "1"]), [])
+        self.assertEqual(warns(["--ro", rt, "--", "x"]), [])
 
     def test_preflight_missing_source(self):
         errs = self.errors(["--ro", "/fixture/does-not-exist", "--", "true"])
@@ -237,13 +311,20 @@ class MainTests(unittest.TestCase):
         self.assertIn("bwrap", text)
         self.assertTrue(text.rstrip().endswith("true"), text)
 
-    def test_preflight_error_exits_2(self):
+    def test_preflight_error_exits_125(self):
         err = io.StringIO()
         with mock.patch.dict(os.environ, {"HOME": "/fixture/home"}, clear=True), \
                 contextlib.redirect_stderr(err):
             status = sandbox.main(["--show", "--user", "root", "--", "true"])
-        self.assertEqual(status, 2)
+        self.assertEqual(status, sandbox.EXIT_SANDBOX_ERROR)
+        self.assertEqual(sandbox.EXIT_SANDBOX_ERROR, 125)
         self.assertIn("root", err.getvalue())
+
+    def test_usage_error_exits_125(self):
+        with contextlib.redirect_stderr(io.StringIO()), \
+                self.assertRaises(SystemExit) as cm:
+            sandbox.main(["--no-such-option", "--", "true"])
+        self.assertEqual(cm.exception.code, sandbox.EXIT_SANDBOX_ERROR)
 
     def test_version(self):
         self.assertRegex(sandbox.VERSION, r"^\d+\.\d+\.\d+$")
@@ -310,8 +391,8 @@ class IntegrationTests(unittest.TestCase):
                               text=True, timeout=timeout)
 
     def mkdir(self):
-        d = tempfile.mkdtemp(prefix="sandboxing-test.", dir="/tmp")
-        os.chmod(d, 0o755)
+        d = tempfile.mkdtemp(prefix="sandboxing-test.", dir="/tmp")  # nosec B108 - test fixture: mkdtemp under /tmp, reachable by the sandbox user
+        os.chmod(d, 0o755)  # nosec B103 - test fixture: readable by the sandbox user
         self.addCleanup(shutil.rmtree, d, True)
         return d
 
@@ -345,7 +426,7 @@ class IntegrationTests(unittest.TestCase):
         hello = os.path.join(rt, "bin", "hello")
         with open(hello, "w") as f:
             f.write("#!/bin/sh\necho hello-from-runtime\n")
-        os.chmod(hello, 0o755)
+        os.chmod(hello, 0o755)  # nosec B103 - test fixture: an executable script
         r = self.run_sandbox(["--no-net", "--ro", rt + ":/opt/rt", "--", "hello"])
         self.assertEqual(r.returncode, 0, r.stderr)
         self.assertEqual(r.stdout.strip(), "hello-from-runtime")
@@ -361,6 +442,52 @@ class IntegrationTests(unittest.TestCase):
         os.remove(f)
         self.assertFalse(os.path.exists(f))
         shutil.rmtree(work)
+
+    def test_sigterm_cleans_up(self):
+        before = set(glob.glob("/tmp/sandbox.*"))  # nosec B108 - test: lists sandbox.py's own temp folders
+        p = subprocess.Popen([sys.executable, SANDBOX_PY, "--no-net", "--", "sleep", "30"],
+                             stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        deadline = time.time() + 15
+        while time.time() < deadline and set(glob.glob("/tmp/sandbox.*")) == before:  # nosec B108 - test: lists sandbox.py's own temp folders
+            time.sleep(0.1)
+        time.sleep(0.5)  # let bwrap start
+        p.terminate()
+        self.assertEqual(p.wait(timeout=15), 128 + signal.SIGTERM)
+        self.assertEqual(set(glob.glob("/tmp/sandbox.*")) - before, set())  # nosec B108 - test: lists sandbox.py's own temp folders
+
+    def test_default_work_folder_private(self):
+        r = self.run_sandbox(["--no-net", "--keep", "--", "true"])
+        self.assertEqual(r.returncode, 0, r.stderr)
+        m = re.search(r"kept work folder (\S+)", r.stderr)
+        self.assertTrue(m, r.stderr)
+        work = m.group(1)
+        self.addCleanup(shutil.rmtree, os.path.dirname(work), True)
+        self.assertEqual(stat.S_IMODE(os.stat(work).st_mode), 0o700)
+
+    def test_localhost_resolves(self):
+        r = self.run_sandbox(["--no-net", "--", "python3", "-c",
+                              "import socket; print(socket.gethostbyname('localhost'))"])
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertEqual(r.stdout.strip(), "127.0.0.1")
+
+    def test_cwd_inside_work(self):
+        work = os.path.join(self.mkdir(), "work")
+        os.makedirs(os.path.join(work, "proj"))
+        r = self.run_sandbox(["--no-net", "--work", work, "--cwd", "proj", "--", "pwd"])
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertEqual(r.stdout.strip(), "/work/proj")
+
+    def test_rw_bind_writable_inside(self):
+        data = os.path.join(self.mkdir(), "data")
+        os.mkdir(data)
+        os.chmod(data, 0o777)  # nosec B103 - test fixture: writable by the sandbox user (the check under test)
+        r = self.run_sandbox(["--no-net", "--rw", data + ":/data", "--",
+                              "sh", "-c", "echo from-inside > /data/f"])
+        self.assertEqual(r.returncode, 0, r.stderr)
+        f = os.path.join(data, "f")
+        with open(f) as fh:
+            self.assertEqual(fh.read().strip(), "from-inside")
+        os.remove(f)
 
     def test_exit_status_passed_through(self):
         r = self.run_sandbox(["--no-net", "--", "sh", "-c", "exit 7"])
