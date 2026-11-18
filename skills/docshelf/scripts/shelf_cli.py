@@ -177,9 +177,8 @@ list) or a family (all its versions).
 Look up:
   search NAME... -d DOCVOL     entry names (and page headings) with all the
                                words; the exact name works best
-  show REF --max-lines 40      read a section (default 150 lines); the
-                               "... more lines" line gives the --offset N
-                               to go on
+  show REF                     read a section, 40 lines; the "... more
+                               lines" line gives the --offset N to go on
   show REF --grep=TEXT         only the lines with TEXT (repeatable); try
                                it before toc
   fts WORDS... -d DOCVOL       words inside pages; include the function name

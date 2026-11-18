@@ -2824,9 +2824,8 @@ list) or a family (all its versions).
 Look up:
   search NAME... -d DOCVOL     entry names (and page headings) with all the
                                words; the exact name works best
-  show REF --max-lines 40      read a section (default 150 lines); the
-                               "... more lines" line gives the --offset N
-                               to go on
+  show REF                     read a section, 40 lines; the "... more
+                               lines" line gives the --offset N to go on
   show REF --grep=TEXT         only the lines with TEXT (repeatable); try
                                it before toc
   fts WORDS... -d DOCVOL       words inside pages; include the function name
@@ -2921,6 +2920,12 @@ class HelpTests(unittest.TestCase):
 
     def test_skill_md_no_rare_table_wording(self):
         self.assertNotIn("names at its end", self._skill_md())
+
+    def test_card_states_current_show_default(self):
+        text = shelf_cli.top_help()
+        self.assertIn("40 lines", text)
+        self.assertNotIn("150", text)
+        self.assertNotIn("--max-lines 40", text)
 
     def test_every_command_in_help(self):
         text = shelf_cli.top_help()
