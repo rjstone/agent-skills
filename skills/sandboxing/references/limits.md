@@ -35,7 +35,9 @@ container image; exit 0 and `PASS` means none of those leaked.
 - **Resources by default.** Without `--mem`, `--nproc` and `--cpu`, a fork
   bomb or a runaway allocation hits the host. The limits are per process
   (prlimit), not a cgroup: no total memory or disk quota, and `/work` and
-  `/tmp` can fill the disk.
+  `/tmp` can fill the disk. `--mem` caps virtual address space, not resident
+  memory: runtimes that reserve large ranges up front (Node.js/V8, the JVM,
+  Go) need a generous value just to start, and it bounds real use loosely.
 - **Shared files under `/usr`.** `/usr` is read-only but readable: anything
   secret stored there is visible.
 - **Timing.** No wall-clock limit; wrap the call in `timeout`.

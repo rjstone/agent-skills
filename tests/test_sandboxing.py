@@ -212,6 +212,37 @@ class PreflightTests(TempDirs):
         os.chmod(private, 0o755)
         self.assertEqual(self.errors(["--ro", src, "--", "true"], euid=0), [])
 
+    def test_preflight_rw_not_writable(self):
+        src = self.mkdir(0o755)  # owned by the test's user: not the sandbox user
+        errs = self.errors(["--rw", src, "--", "true"], euid=0)
+        self.assertTrue(any("'%s'" % src in e and "writable" in e for e in errs), errs)
+        self.assertEqual(self.errors(["--ro", src, "--", "true"], euid=0), [])
+        os.chmod(src, 0o777)
+        self.assertEqual(self.errors(["--rw", src, "--", "true"], euid=0), [])
+
+    def test_preflight_rw_file_not_writable(self):
+        f = os.path.join(self.mkdir(), "data.txt")
+        with open(f, "w") as fh:
+            fh.write("x")
+        os.chmod(f, 0o644)
+        errs = self.errors(["--rw", f, "--", "true"], euid=0)
+        self.assertTrue(any("writable" in e for e in errs), errs)
+        os.chmod(f, 0o666)
+        self.assertEqual(self.errors(["--rw", f, "--", "true"], euid=0), [])
+
+    def test_mem_warning_for_node(self):
+        rt = self.mkdir()
+        os.mkdir(os.path.join(rt, "bin"))
+        open(os.path.join(rt, "bin", "node"), "w").close()
+        def warns(argv):
+            return sandbox.warnings(sandbox.parse_args(argv))
+        low = warns(["--mem", "512", "--ro", rt, "--", "x"])
+        self.assertTrue(any("--mem" in w and "Node" in w for w in low), low)
+        self.assertTrue(warns(["--mem", "512", "--", "node", "-e", "1"]))
+        self.assertEqual(warns(["--mem", str(sandbox.NODE_MIN_MEM_MB), "--ro", rt, "--", "x"]), [])
+        self.assertEqual(warns(["--mem", "512", "--", "python3", "-c", "1"]), [])
+        self.assertEqual(warns(["--ro", rt, "--", "x"]), [])
+
     def test_preflight_missing_source(self):
         errs = self.errors(["--ro", "/fixture/does-not-exist", "--", "true"])
         self.assertTrue(any("does-not-exist" in e for e in errs), errs)
@@ -361,6 +392,18 @@ class IntegrationTests(unittest.TestCase):
         os.remove(f)
         self.assertFalse(os.path.exists(f))
         shutil.rmtree(work)
+
+    def test_rw_bind_writable_inside(self):
+        data = os.path.join(self.mkdir(), "data")
+        os.mkdir(data)
+        os.chmod(data, 0o777)
+        r = self.run_sandbox(["--no-net", "--rw", data + ":/data", "--",
+                              "sh", "-c", "echo from-inside > /data/f"])
+        self.assertEqual(r.returncode, 0, r.stderr)
+        f = os.path.join(data, "f")
+        with open(f) as fh:
+            self.assertEqual(fh.read().strip(), "from-inside")
+        os.remove(f)
 
     def test_exit_status_passed_through(self):
         r = self.run_sandbox(["--no-net", "--", "sh", "-c", "exit 7"])

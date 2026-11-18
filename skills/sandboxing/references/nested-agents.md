@@ -17,7 +17,8 @@ The pattern for any agent CLI (opencode, codex, a custom harness):
 5. **Results** go to `/work` (or stdout). `/tmp` inside is gone after the
    run.
 6. **Time and size.** Wrap the call in `timeout`; add `--mem`, `--nproc` or
-   `--cpu` if a runaway would hurt.
+   `--cpu` if a runaway would hurt. A Node-based agent needs `--mem 1024` or
+   more just to start (`--mem` caps address space; see limits.md).
 
 ## Worked example: opencode
 

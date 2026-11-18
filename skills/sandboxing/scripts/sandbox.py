@@ -21,7 +21,7 @@ import sys
 import tempfile
 from urllib.parse import urlsplit
 
-VERSION = "0.1.0"
+VERSION = "0.2.0"
 
 DEFAULT_USER = "sandboxer"
 SANDBOX_UID = 1000
@@ -38,6 +38,10 @@ CREDENTIAL_DIRS = [".ssh", ".aws", ".config/gh", ".claude", ".codex",
 # top-level paths that are symlinks into /usr on merged-/usr systems
 USR_LINKS = ["/bin", "/lib", "/lib64", "/sbin"]
 SHOW_TMP = "/tmp/sandbox.XXXXXX"
+# --mem is an address-space limit; Node.js (V8) reserves this much virtual
+# memory at startup (Node 22 fails to start below about 768 MB)
+NODE_MIN_MEM_MB = 1024
+NODE_COMMANDS = {"node", "npm", "npx", "nodejs"}
 
 CHECK_PROBE = r'''
 echo "uid: $(id -u) gid: $(id -g)"
@@ -163,10 +167,11 @@ def _others_can(st, want, uid, gid):
     return bits & want == want
 
 
-def _unreadable(path, euid, user):
+def _unreadable(path, euid, user, write=False):
     """The first folder or file on the way to `path` the sandbox user can't
-    pass or read, or None. As root, judges by mode bits for the sandbox user;
-    otherwise by os.access for the caller (who runs bwrap itself)."""
+    pass or read (or, with `write`, write at the end), or None. As root,
+    judges by mode bits for the sandbox user; otherwise by os.access for the
+    caller (who runs bwrap itself)."""
     real = _real(path)
     parts = [p for p in real.split("/") if p]
     chain = ["/"] + ["/" + "/".join(parts[:i + 1]) for i in range(len(parts))]
@@ -182,12 +187,16 @@ def _unreadable(path, euid, user):
                 want = 1
             else:
                 want = 5 if stat.S_ISDIR(st.st_mode) else 4
+                if write:
+                    want |= 2
             if not _others_can(st, want, uid, gid):
                 return p
         return None
     for i, p in enumerate(chain):
         last = i == len(chain) - 1
         mode = (os.R_OK | (os.X_OK if os.path.isdir(p) else 0)) if last else os.X_OK
+        if last and write:
+            mode |= os.W_OK
         if not os.access(p, mode):
             return p
     return None
@@ -211,10 +220,12 @@ def preflight(opts, env, euid):
         if value is not None and value <= 0:
             errors.append("%s must be a positive number" % flag)
 
-    checks = [(flag + " " + src, src, dest, True) for flag, src, dest in binds(opts)]
+    checks = [(flag + " " + src, src, dest, True, flag == "--rw")
+              for flag, src, dest in binds(opts)]
     if opts.work:
-        checks.append(("--work " + opts.work, os.path.abspath(opts.work), "/work", False))
-    for label, src, dest, must_exist in checks:
+        # the work folder is chowned to the sandbox user, so only reachability counts
+        checks.append(("--work " + opts.work, os.path.abspath(opts.work), "/work", False, False))
+    for label, src, dest, must_exist, writable in checks:
         if not src:
             errors.append("%s: empty source path" % label)
             continue
@@ -241,6 +252,12 @@ def preflight(opts, env, euid):
             errors.append("%s: '%s' is not readable or searchable by %s; move or copy "
                           "the data to a readable place (e.g. under /tmp), or make "
                           "that folder readable (chmod o+rx)" % (label, bad, who))
+        elif writable and _unreadable(src, euid, opts.user, write=True):
+            who = ("the sandbox user %r" % opts.user) if euid == 0 else "this user"
+            errors.append("%s: '%s' is not writable by %s, so the bind would be "
+                          "read-only inside; make it writable for that user (chmod "
+                          "o+w, or chown it), copy the data into the --work folder, "
+                          "or use --ro" % (label, src, who))
 
     if not opts.no_net and not opts.allow_proxy_credentials:
         for name in PROXY_VARS:
@@ -250,6 +267,23 @@ def preflight(opts, env, euid):
                               "inside. Use a proxy that injects credentials itself, "
                               "--no-net, or --allow-proxy-credentials" % name)
     return errors
+
+
+def warnings(opts):
+    """Advice that doesn't stop the run (printed to stderr by main)."""
+    out = []
+    if opts.mem and opts.mem < NODE_MIN_MEM_MB:
+        cmd = os.path.basename(opts.command[0]) if opts.command else ""
+        node = cmd in NODE_COMMANDS or any(
+            flag == "--ro" and os.path.exists(os.path.join(src, "bin", "node"))
+            for flag, src, _ in binds(opts))
+        if node:
+            out.append("--mem %d limits address space, not memory use: Node.js "
+                       "reserves large virtual ranges and may die at startup "
+                       "(\"Failed to reserve virtual memory\", exit 133 or 134); "
+                       "use --mem %d or more for Node-based commands"
+                       % (opts.mem, NODE_MIN_MEM_MB))
+    return out
 
 
 def _usr_binds():
@@ -390,6 +424,8 @@ def main(argv=None):
     errors = preflight(opts, env, euid)
     if errors:
         return _fail(errors)
+    for w in warnings(opts):
+        print("sandbox.py: warning: " + w, file=sys.stderr)
     net = not opts.no_net
 
     if opts.show:
