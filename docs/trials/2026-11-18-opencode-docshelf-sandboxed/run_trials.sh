@@ -29,7 +29,8 @@
 #   ARM           skill (default): docshelf installed as a skill in
 #                 ~/.claude/skills; mcp: no skill, docshelf's scripts (without
 #                 SKILL.md) in ~/.mcp-docshelf served as the opencode MCP
-#                 server "docshelf"
+#                 server "docshelf"; mcp-direct: the same with the server's
+#                 "codemode": false (plain tool calls, not opencode's code mode)
 #   SKILL_DIR     the docshelf skill folder to use (default: this repo's)
 #   SMOKE         if set, each run prints what it can see instead of running
 #                 a model (env names, /, /root, the repo, docshelf list)
@@ -38,7 +39,7 @@ HERE=$(cd "$(dirname "$0")" && pwd)
 REPO=$(cd "$HERE/../../.." && pwd)
 SKILL="${SKILL_DIR:-$REPO/skills/docshelf}"
 ARM="${ARM:-skill}"
-case $ARM in skill|mcp) ;; *) echo "ARM must be skill or mcp" >&2; exit 2 ;; esac
+case $ARM in skill|mcp|mcp-direct) ;; *) echo "ARM must be skill, mcp or mcp-direct" >&2; exit 2 ;; esac
 [ $# -gt 0 ] || { echo "usage: run_trials.sh PROVIDER/MODEL..." >&2; exit 2; }
 command -v bwrap >/dev/null || { echo "bwrap not found (apt-get install -y bubblewrap)" >&2; exit 2; }
 SRC_CACHE="$(cd "${SRC_CACHE:?set SRC_CACHE}" && pwd)" || exit 2
@@ -146,11 +147,13 @@ one_model() {
   if [ "$ARM" = skill ]; then
     cp "$HERE/opencode.json" "$W/.config/opencode/opencode.json"
   else
-    python3 - "$HERE/opencode.json" "$W/.config/opencode/opencode.json" <<'PY'
+    python3 - "$HERE/opencode.json" "$W/.config/opencode/opencode.json" "$ARM" <<'PY'
 import json, sys
 cfg = json.load(open(sys.argv[1]))
 cfg["mcp"] = {"docshelf": {"type": "local", "command": [
     "python3", "/work/.mcp-docshelf/scripts/docshelf.py", "--mcp"]}}
+if sys.argv[3] == "mcp-direct":
+    cfg["mcp"]["docshelf"]["codemode"] = False
 json.dump(cfg, open(sys.argv[2], "w"), indent=2)
 PY
   fi

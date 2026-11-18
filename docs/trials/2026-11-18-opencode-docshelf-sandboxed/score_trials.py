@@ -112,9 +112,13 @@ for d in dirs:
                     skill = True
                 cmd = inp.get("command", "")
                 code = inp.get("code", "") if isinstance(inp.get("code"), str) else ""
-                if part.get("tool") == "execute" and "tools.docshelf." in code:
-                    # opencode's code mode: JS calling tools.docshelf.<tool>(...)
-                    mcp_calls += len(re.findall(r"tools\.docshelf\.\w+\s*\(", code))
+                if part.get("tool") == "execute" and "docshelf" in code:
+                    # opencode's code mode: JS calling the server's tools as
+                    # tools.docshelf.search(...), tools["docshelf"].search(...)
+                    # or through an alias (d = tools.docshelf; d.search(...))
+                    mcp_calls += len(re.findall(
+                        r"\.(?:list|search|show|toc|fts|types|sources|suggest|"
+                        r"install|remove|notes)\s*\(", code))
                     io_chars += len(code) + len(out)
                     if st.get("status") == "error" or ERROR.search(out):
                         bad.append(("execute " + short(code, 120), out))
