@@ -2829,6 +2829,23 @@ class HelpTests(unittest.TestCase):
         self.assertEqual(hashlib.sha256(s.encode()).hexdigest(),
                          TOOL_SCHEMAS_SHA256)
 
+    def _skill_md(self):
+        with open(os.path.join(SKILL, "SKILL.md"), encoding="utf-8") as f:
+            return f.read()
+
+    def test_skill_md_not_larger(self):
+        self.assertLessEqual(os.path.getsize(os.path.join(SKILL, "SKILL.md")),
+                             6398)
+
+    def test_skill_md_keeps_reference_links(self):
+        text = self._skill_md()
+        for ref in ("notes.md", "getting-docvols.md", "dash-zeal.md",
+                    "mcp.md", "lookup-defaults.md"):
+            self.assertIn("references/" + ref, text)
+
+    def test_skill_md_no_rare_table_wording(self):
+        self.assertNotIn("names at its end", self._skill_md())
+
     def test_every_command_in_help(self):
         text = shelf_cli.top_help()
         for c in shelf_cli.COMMANDS:
