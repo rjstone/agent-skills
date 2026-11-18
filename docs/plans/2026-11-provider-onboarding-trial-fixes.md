@@ -51,3 +51,21 @@ realtime), `--input-modality` / `--output-modality`, a browse table grouped
 across providers, `--list-types`. A `typesafe` override from Typesafe's public
 docs (base URL, key variable, website, its own decisions API protocol), and
 override `protocols` lists without OpenAI/Anthropic now set the card's protocol.
+
+## Round 4 (vague category requests: "a decent decision model", "the cheapest decision model", "some inexpensive text-to-speech models")
+
+All three agents found `--type` on their own (Jev / Gemini Decision 1; Decider
+Flash V1.3 at $0.01; Gemini 3.8 Flash-Lite TTS). Version bumped to 0.6.0 (the
+user, 2026-11-18). Fixed:
+
+1. Browse rows name where the cheapest price is listed (provider: id);
+   `--sort price`.
+2. Snippets follow the model type (speech, transcription, embedding, image;
+   decision and others point at the docs; no chat smoke test for non-chat).
+3. LiteLLM only matches modes that fit the model type (a TTS model never takes
+   a chat model's price); LiteLLM and Portkey near-misses are marked "closest
+   match" with no disagreement report; Portkey needs a strong match.
+4. Override-only providers (TypeSafe) say "no model list in the data".
+5. Zero output wording: "not published, or not billed".
+6. SKILL.md: check ids against a provider's own API (jev vs jev-latest), TTS
+   price units, and never quote a closest-match price.

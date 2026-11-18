@@ -62,6 +62,10 @@ LITELLM_PRICE_FIELDS = (
 )
 LITELLM_TIERED = re.compile(r"^(input|output)_cost_per_token_above_(\w+?)_tokens$")
 LITELLM_CHAT_MODES = ("chat", "responses", None)
+# models.dev type -> LiteLLM modes that may price it (a TTS model must not take a chat model's price)
+LITELLM_MODES_BY_TYPE = {"speech": ("audio_speech",), "transcription": ("audio_transcription",),
+                         "embedding": ("embedding",), "image": ("image_generation",),
+                         "video": ("video_generation",), "reranking": ("rerank",)}
 
 # Community provider list (no license, no sources): last resort, read at run time,
 # never copied. Session-cookie, app-login and anonymous web endpoints are skipped.
@@ -260,6 +264,7 @@ def browse(data, a):
         for mid, m in (p.get("models") or {}).items():
             g = groups.setdefault(model_key(mid, m), {"name": m.get("name") or mid, "type": model_type(m),
                                                         "providers": set(), "ids": set(), "min_in": None, "min_out": None,
+                                                        "cheapest": None,
                                                         "input": set(), "output": set()})
             g["providers"].add(pid)
             g["ids"].add(mid)
@@ -267,12 +272,18 @@ def browse(data, a):
             g["input"].update(mod.get("input") or [])
             g["output"].update(mod.get("output") or [])
             c = m.get("cost") or {}
-            for f, k in (("input", "min_in"), ("output", "min_out")):
-                if isinstance(c.get(f), (int, float)) and (g[k] is None or c[f] < g[k]):
-                    g[k] = c[f]
-    rows = sorted(groups.values(), key=lambda g: (-len(g["providers"]), g["name"]))
+            if isinstance(c.get("input"), (int, float)) and (g["min_in"] is None or c["input"] < g["min_in"]):
+                g["min_in"], g["cheapest"] = c["input"], {"provider": pid, "id": mid}
+            if isinstance(c.get("output"), (int, float)) and (g["min_out"] is None or c["output"] < g["min_out"]):
+                g["min_out"] = c["output"]
+    if getattr(a, "sort", "providers") == "price":
+        key = lambda g: (g["min_in"] is None, g["min_in"] or 0, g["min_out"] or 0, -len(g["providers"]), g["name"])
+    else:
+        key = lambda g: (-len(g["providers"]), g["name"])
+    rows = sorted(groups.values(), key=key)
     return [{"name": g["name"], "type": g["type"], "providers": len(g["providers"]),
              "cheapest_usd_per_1m": {"input": g["min_in"], "output": g["min_out"]},
+             "cheapest_at": g["cheapest"],
              "input": sorted(g["input"]), "output": sorted(g["output"]),
              "example_ids": sorted(g["ids"])[:3]} for g in rows]
 
@@ -284,11 +295,15 @@ def render_browse(rows, a, notes):
     L = ["# Models matching %s" % flt, "", "_%s_" % DATA_NOTICE, "",
          "_Data: %s_" % "; ".join(clean(n) for n in notes), "",
          "%d models. Cheapest price is the lowest any provider lists (USD per 1M tokens); 0 can mean not billed or not published." % len(rows), "",
-         "| Model | Type | Providers | Cheapest in / out | Input | Output | Example ids |", "|---|---|---|---|---|---|---|"]
+         "Sorted by %s. \"Cheapest in\" is the lowest input price and where it is listed; the output figure is the lowest any provider lists." % ("price (input, then output)" if getattr(a, "sort", "") == "price" else "number of providers"), "",
+         "| Model | Type | Providers | Cheapest in / out | Cheapest at (provider: id) | Input | Output | Example ids |",
+         "|---|---|---|---|---|---|---|---|"]
     for r in rows[: a.limit if a.limit > 8 else 50]:
         c = r["cheapest_usd_per_1m"]
-        L.append("| %s | %s | %d | %s / %s | %s | %s | %s |" % (
+        at = r.get("cheapest_at")
+        L.append("| %s | %s | %d | %s / %s | %s | %s | %s | %s |" % (
             clean(r["name"], 80), r["type"], r["providers"], money(c["input"]), money(c["output"]),
+            "%s: `%s`" % (clean(at["provider"], 40), clean(at["id"], 60)) if at else "-",
             ",".join(r["input"]), ",".join(r["output"]), ", ".join("`%s`" % clean(i, 60) for i in r["example_ids"])))
     if len(rows) > max(a.limit, 50):
         L.append("")
@@ -385,7 +400,7 @@ def fmt_cost(c):
         return None
     s = "%s in / %s out per 1M tokens" % (money(c.get("input")), money(c.get("output")))
     if c.get("output") == 0 and c.get("input"):
-        s += " (output 0: not billed, e.g. a decision or embedding model, or not published)"
+        s += " (output 0: not published, or not billed as for some decision and embedding models)"
     if c.get("cache_read") is not None:
         s += " (cache read %s)" % money(c["cache_read"])
     return s
@@ -431,7 +446,7 @@ def portkey_model_key(q, data):
         if k == q:
             return k
     hits = sorted(((score(q, k), k) for k in keys), key=lambda x: (-x[0], x[1]))
-    return hits[0][1] if hits and hits[0][0] else None
+    return hits[0][1] if hits and hits[0][0] >= 80 else None
 
 
 def per_million(cents):
@@ -487,6 +502,9 @@ def portkey_info(pid, model_id, args, md_cost=None):
         info["model_key"] = key
         info["pricing_usd"] = portkey_pricing(pricing[key])
         p = info["pricing_usd"]
+        if not is_exact(model_id, key):
+            info["closest_match"] = True
+            md_cost = None  # a different model's price: no disagreement report
         diffs = ["%s: Portkey $%g vs models.dev $%g" % (f, p[f], md_cost[f]) for f in ("input", "output")
                  if md_cost and isinstance(md_cost.get(f), (int, float)) and f in p and abs(p[f] - md_cost[f]) > 1e-6]
         if diffs:
@@ -521,12 +539,12 @@ def litellm_providers(pid, table):
     return names
 
 
-def litellm_match(pid, model_id, table):
+def litellm_match(pid, model_id, table, mtype=None):
     """Best LiteLLM key for a models.dev provider/model, or None."""
     names = litellm_providers(pid, table)
     cands = {}
     for k, v in table.items():
-        if not isinstance(v, dict) or v.get("litellm_provider") not in names or v.get("mode") not in LITELLM_CHAT_MODES:
+        if not isinstance(v, dict) or v.get("litellm_provider") not in names or v.get("mode") not in LITELLM_MODES_BY_TYPE.get(mtype, LITELLM_CHAT_MODES):
             continue
         short = k.split("/", 1)[1] if k.startswith(v["litellm_provider"] + "/") else k
         cands[k] = short
@@ -559,10 +577,10 @@ def litellm_pricing(entry):
     return out
 
 
-def litellm_info(pid, model_id, table, src, md_cost=None):
+def litellm_info(pid, model_id, table, src, md_cost=None, mtype=None):
     if not model_id:
         return {"error": "give a model id for LiteLLM prices"}
-    key, names = litellm_match(pid, model_id, table)
+    key, names = litellm_match(pid, model_id, table, mtype)
     if not names:
         return {"error": "LiteLLM's table has no entries for provider %s" % pid}
     if not key:
@@ -576,7 +594,10 @@ def litellm_info(pid, model_id, table, src, md_cost=None):
         if e.get(k):
             info[k] = e[k]
     p = info["pricing_usd"]
-    if md_cost:
+    short = key.split("/", 1)[1] if key.startswith((e.get("litellm_provider") or "") + "/") else key
+    if not is_exact(model_id, short):
+        info["closest_match"] = True  # a different model's price: never report it as a disagreement
+    elif md_cost:
         diffs = ["%s: LiteLLM $%g vs models.dev $%g" % (f, p[f], md_cost[f]) for f in ("input", "output")
                  if isinstance(md_cost.get(f), (int, float)) and f in p and abs(p[f] - md_cost[f]) > 1e-6]
         if diffs:
@@ -694,12 +715,30 @@ def snippets(e):
           "model": "%s/%s" % (pid, mid)}
     out["opencode"] = json.dumps(oc, indent=2) + guess
     usable = bool(base) and e["protocol"] == "openai"
+    mtype = (e["model"] or {}).get("type") or "chat"
+    docs = e["docs"] or "the provider docs"
     out["fast_agent"] = ("# no fast-agent generic snippet: %s; see %s" % (
-        "base URL unknown" if not base else "protocol is %s, not OpenAI-compatible" % e["protocol"],
-        e["docs"] or "the provider docs")) if not usable else ('generic:\n  base_url: "%s"\n  api_key: "${%s}"\n\n'
+        "base URL unknown" if not base else "protocol is %s, not OpenAI-compatible" % e["protocol"] if not usable
+        else "%s model, not a chat model" % mtype, docs)) if not usable or mtype != "chat" else ('generic:\n  base_url: "%s"\n  api_key: "${%s}"\n\n'
                          'fast-agent go --model generic.%s --message "ping"' % (base or "<base-url>", env, mid))
     out["env"] = "export %s=...   # set in your shell or secret store; never paste the key into chat" % env
-    if base and e["protocol"] == "openai":
+    b = (base or "").rstrip("/")
+    auth = '-H "Authorization: Bearer $%s"' % env
+    typed = {
+        "speech": "curl -sS %s/audio/speech %s -H \"Content-Type: application/json\" \\\n"
+                  "  -d '{\"model\":\"%s\",\"input\":\"ping\",\"voice\":\"<voice>\"}' -o ping.mp3"
+                  "   # voice names and audio formats vary by provider" % (b, auth, mid),
+        "transcription": "curl -sS %s/audio/transcriptions %s -F model=%s -F file=@sample.wav" % (b, auth, mid),
+        "embedding": "curl -sS %s/embeddings %s -H \"Content-Type: application/json\" \\\n"
+                     "  -d '{\"model\":\"%s\",\"input\":\"ping\"}'" % (b, auth, mid),
+        "image": "curl -sS %s/images/generations %s -H \"Content-Type: application/json\" \\\n"
+                 "  -d '{\"model\":\"%s\",\"prompt\":\"a red square\"}'" % (b, auth, mid),
+    }
+    if base and e["protocol"] == "openai" and mtype in typed:
+        out["curl"] = typed[mtype]
+    elif base and mtype != "chat":
+        out["curl"] = "# %s model: not a chat endpoint; follow the provider docs (%s)" % (mtype, docs)
+    elif base and e["protocol"] == "openai":
         out["curl"] = ('curl -sS %s/chat/completions \\\n  -H "Authorization: Bearer $%s" -H "Content-Type: application/json" \\\n'
                        '  -d \'{"model":"%s","messages":[{"role":"user","content":"ping"}],"max_tokens":16}\'' % (base.rstrip("/"), env, mid))
     elif base and e["protocol"] == "anthropic":
@@ -774,7 +813,9 @@ def render_md(res):
             L.append("  - %s [%s] %s" % (c["url"] or "(none)", c["confidence"], c["basis"]))
         ll = e.get("litellm")
         if ll:
-            L.append("- LiteLLM: %s  _[%s]_" % (ll.get("error") or "model `%s`" % ll["key"], ll.get("table") or "BerriAI/litellm"))
+            L.append("- LiteLLM: %s%s  _[%s]_" % (ll.get("error") or "model `%s`" % ll["key"],
+                                                 "  **(closest match, NOT this model: its price may not apply)**" if ll.get("closest_match") else "",
+                                                 ll.get("table") or "BerriAI/litellm"))
             if ll.get("pricing_usd"):
                 L.append("  - pricing (USD per 1M tokens): %s" % json.dumps(ll["pricing_usd"]))
             for k in ("pricing_source", "max_input_tokens", "max_output_tokens", "deprecation_date", "successor_model"):
@@ -788,7 +829,9 @@ def render_md(res):
                 L.append("  - DISAGREES with models.dev: %s" % d)
         pk = e.get("portkey")
         if pk:
-            L.append("- Portkey: %s  _[%s]_" % (pk.get("error") or ("model `%s`" % pk["model_key"] if pk.get("model_key") else "provider file found; give a model id for prices"), pk.get("source") or "Portkey-AI/models"))
+            L.append("- Portkey: %s%s  _[%s]_" % (pk.get("error") or ("model `%s`" % pk["model_key"] if pk.get("model_key") else "provider file found; give a model id for prices"),
+                                                 "  **(closest match, NOT this model: its price may not apply)**" if pk.get("closest_match") else "",
+                                                 pk.get("source") or "Portkey-AI/models"))
             if pk.get("pricing_usd"):
                 L.append("  - pricing (USD per 1M tokens; per_unit_usd per call): %s" % json.dumps(pk["pricing_usd"]))
             for d in pk.get("disagrees_with_models_dev", []):
@@ -829,6 +872,8 @@ def main():
                     "transcription, speech, reranking, realtime (implies --all-types)")
     ap.add_argument("--input-modality", help="required input modalities, comma-separated: text, image, pdf, video, audio")
     ap.add_argument("--output-modality", help="required output modalities, comma-separated: text, image, audio, video")
+    ap.add_argument("--sort", choices=["providers", "price"], default="providers",
+                    help="browse order: most providers first (default) or cheapest input price first")
     ap.add_argument("--list-types", action="store_true", help="count models by type and modality, then exit")
     ap.add_argument("--all-matches", action="store_true", help="model-only query: also list near matches when exact ones exist")
     ap.add_argument("--litellm", action="store_true", help="add LiteLLM pricing, limits, deprecation and source links")
@@ -941,7 +986,9 @@ def main():
                         e["model"]["exact_match"] = is_exact(a.model, mid, m)
                         entries.append(e)
                 else:
-                    warnings.append("provider %s has no model matching %r; listing provider only" % (pid, a.model))
+                    warnings.append(("%s has no model list in the data (override entry only); showing the id you gave, "
+                                     "check it against the provider's own model list" % pid) if not prov.get("models") else
+                                    "provider %s has no model matching %r; listing provider only" % (pid, a.model))
                     entries.append(build_entry(pid, prov, a.model, {}, o))
             else:
                 entries.append(build_entry(pid, prov, None, None, o))
@@ -992,7 +1039,8 @@ def main():
             notes.append(src)
         for e in entries:
             m = e["model"] or {}
-            e["litellm"] = litellm_info(e["provider_id"], m.get("id"), table, src, m.get("cost_usd_per_1m")) if table else {"error": src}
+            e["litellm"] = (litellm_info(e["provider_id"], m.get("id"), table, src, m.get("cost_usd_per_1m"), m.get("type"))
+                            if table else {"error": src})
             dd = e["litellm"].get("deprecation_date")
             if dd and dd <= time.strftime("%Y-%m-%d", time.gmtime(time.time() + 183 * 86400)):
                 past = dd < time.strftime("%Y-%m-%d", time.gmtime())
