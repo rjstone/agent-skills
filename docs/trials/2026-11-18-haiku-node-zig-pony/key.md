@@ -1,0 +1,10 @@
+# Answer key (verified with docshelf against the installed docvols, 2026-11-18)
+N1: 'quux'  [node:path#pathbasenamepath-suffix]
+N2: enableForeignKeyConstraints: true; defensive: true; defensive on by default since v25.5.0 and v24.14.0 (option added v25.1.0/v24.12.0)  [node:sqlite#new-databasesyncpath-options]
+N3: No: a wildcard grant (--allow-fs-read=*) can't have individual paths dropped; only the whole scope: process.permission.drop('fs.read') (no reference). Added in v26.3.0 (Stability 1.1 Active Development)  [node:process#processpermissiondropscope-reference]
+Z1: @divFloor(-5, 3) == -2; @divTrunc(-5, 3) == -1  [zig:index#divFloor, #divTrunc]
+Z2: Label the switch (e.g. `sw: switch (x) {...}`) and use `continue :sw <operand>`; a continue targeting a switch must have an operand; it jumps to the prong matching that operand as if the switch ran again with it  [zig:index#Labeled-switch]
+Z3: `@Int(.unsigned, 18)`; signature `@Int(comptime signedness: std.lang.Signedness, comptime bits: u16) type`. (@Type no longer exists in 0.17.1's builtins; @Int/@Struct/@Enum/... replace it)  [zig:index#Int]
+P1: `env.out.print("...")`; `let out: OutStream tag`  [pony:builtin-env#let-out-outstream-tag]
+P2: `let root: (AmbientAuth val | None val)`; None for artificially constructed Env instances  [pony:builtin-env#let-root-ambientauth-val-none-val]
+P3: In fulfillment order (second, third, first: p2, p3, p1), not the order given. `fun tag next[B: Any #share](fulfill: Fulfill[A, B] iso, rejected: Reject[B] iso = qualify): Promise[B] tag`  [pony:promises-promises#join, pony:promises-promise#nextb-any-share]

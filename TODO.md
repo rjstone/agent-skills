@@ -63,8 +63,13 @@ items are done.
     `suggest` and asked the lookup-defaults question; Sonnet also offered
     the `"docvols"` list, Haiku sometimes skips that offer. Accepted: weaker
     models may skip it (the user, 2026-11-17).
-  - Still open: no-skill baseline, the opencode model set, `--mcp`,
-    docsets.
+  - Done 2026-11-18 (0.7.3, DevDocs node/zig/pony, CLI, Haiku, default
+    effort): no-skill 5.5/9, web 7/9, web via MCP 7.5/9, skill 9/9; see
+    `docs/trials/2026-11-18-haiku-node-zig-pony/`.
+  - Done 2026-11-18 (0.7.3, same trial, `--mcp` only, Haiku, default effort):
+    9/9; docshelf calls about 1.6-2.4k tokens per 3 questions against
+    3.4-5.6k for the skill; see its "docshelf MCP arm".
+  - Still open: the opencode model set, docsets.
 
 #### 6. Deferred review items
 
@@ -108,6 +113,52 @@ items are done.
       meta.json missing a key gives a cryptic "'slug'; repair with: ..."
       (prefix "unreadable meta.json"). `list` shows an unusable WAL docset
       as "0 entries" (with a warning); say "unusable" in the row instead.
+
+#### 7. Output size (from the 2026-11-18 Haiku trial)
+
+Per-command counts are in `docs/trials/2026-11-18-haiku-node-zig-pony/`
+(`tools/replay_docshelf.py` re-measures a run).
+
+- [ ] 7.1 Look at whether a shorter top-level `--help` is possible (about
+      3.9k characters; every trial run read it right after SKILL.md). Low
+      priority: it is paid once per session, before several queries
+      (the user, 2026-11-18).
+- [ ] 7.2 `search` with a short or generic query prints about 3k
+      characters (`search Int -d zig`; `search node` over all docvols to
+      find a docvol's name). Consider a lower default `--max-lines`, or a
+      tighter cap for queries of 3 characters or less.
+- [ ] 7.3 `toc` of a big page is large (`toc node:sqlite`, 60 lines, 4.4k
+      characters) where `show --grep` found the answer in 1.2k. Consider
+      pointing to `--grep` in the toc's cut line.
+- [ ] 7.4 A `show` dominated by one long code example (zig
+      `Labeled-switch`, 3.8k characters, the answer in its first 5 lines)
+      has no smaller default. Consider a lower default line cap for
+      `show`, with the existing "N more lines; --offset" hint.
+- [ ] 7.5 Teach CLI agents the MCP agents' query habits in SKILL.md
+      (the user, 2026-11-18). In the trial the same queries cost the same
+      over the CLI and `--mcp` (within 1-3%), but the MCP agents spent
+      1.6-2.4k tokens of docshelf I/O per three questions against
+      3.4-5.6k for the CLI agents, because of how they queried:
+      - they searched the exact entry name (`path.basename`,
+        `DatabaseSync`, `permission drop`); the CLI agents also ran broad
+        words (`search node` over all docvols, 3.0k characters;
+        `search Int -d zig`, 2.8k);
+      - they set a line cap on `show` (`max_lines`); the CLI agents read
+        whole sections and pages (`show pony:builtin-env`, 1.6k, after
+        reading its two fields);
+      - they went from `search` straight to `show REF`, without `toc` of a
+        big page (`toc node:sqlite`, 4.4k) or `--help`;
+      - they used `list`, not a search, to find a docvol's name.
+      The likely cause: the tool schemas show `max_lines` and `docvols` as
+      named parameters; SKILL.md mentions them less prominently. Try: a
+      short "Query habits" list near the top of SKILL.md (search the
+      exact name with `-d`; `show REF --max-lines 40` first, then
+      `--offset`; `show --grep` before `toc`; `list` for names; skip
+      `--help`, SKILL.md covers the commands). Measure with the same
+      nine questions and `tools/replay_docshelf.py` / `count_calls.py`
+      (docs/trials/2026-11-18-haiku-node-zig-pony/); keep 9/9 and aim
+      for MCP-level cost. Check the SKILL.md size cost of the addition
+      against the saving (each run reads SKILL.md once).
 
 #### Reference: other docset and DevDocs readers (skimmed 2026-11-17)
 
