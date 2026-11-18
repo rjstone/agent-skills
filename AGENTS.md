@@ -189,7 +189,9 @@ metadata:
   snippets for an LLM provider or model; `scripts/lookup.py` reads
   models.dev data merged with `references/providers-overrides.json` (entries
   carry a `verified` date and `source`; re-verify before trusting old ones).
-  `--portkey` adds detailed pricing from `Portkey-AI/models` (cents per token
+  `--litellm` is the main detailed-pricing source (LiteLLM's price table:
+  sources, deprecation dates; the user, 2026-11-18); `--portkey` adds a
+  second pricing opinion from `Portkey-AI/models` (cents per token
   upstream): `configs.portkey.ai` first, GitHub raw files as the fallback
   (the user, 2026-11-18). `--extra-list` is a last-resort, unverified
   community list (`foisalislambd/all-llm-provider-list`, no license: read at

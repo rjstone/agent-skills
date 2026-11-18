@@ -46,7 +46,24 @@ A model-level `provider.api` / `provider.npm` overrides the provider's, and `loo
 4. The provider's own docs and `/models` endpoint (OpenAI-compatible providers usually expose `GET <base>/models`).
 5. A local stdio MCP server such as `arifpambudi242/models.dev-mcp` if the user already runs it.
 
-## Pricing source: Portkey-AI/models (`--portkey`)
+## Pricing source: LiteLLM (`--litellm`)
+
+`BerriAI/litellm`, `model_prices_and_context_window.json` (MIT, about 4 MB, read 2026-11-18): about
+6,200 entries from about 157 providers, keyed by LiteLLM model name (OpenAI models unprefixed,
+most others `<litellm_provider>/<model>`, e.g. `groq/openai/gpt-oss-120b`).
+
+- Prices are USD **per token**; `lookup.py` shows USD per 1M tokens. Fields used: `input/output_cost_per_token`,
+  `cache_read_input_token_cost`, `cache_creation_input_token_cost`, `*_batches`, `*_priority`, `*_flex`,
+  `*_above_<N>_tokens`. Also `max_input_tokens`, `max_output_tokens`, `supports_*`, `source`
+  (provider pricing page, on about 3/4 of chat entries), `deprecation_date`, `successor_model`.
+- Only `mode` chat / responses entries are matched; embeddings, images, audio and video are ignored.
+- Provider names differ from models.dev (`gemini` vs `google`, `bedrock_converse` vs `amazon-bedrock`);
+  `LITELLM_IDS` in `lookup.py` maps them, otherwise names match after removing punctuation.
+- Spot check (2026-11-18): 247 of 266 shared models had the same in/out price as models.dev. DeepSeek
+  differs by exactly 2x (LiteLLM has the peak price); Mistral `-latest` aliases were newer in LiteLLM.
+- `--litellm-file` reads a local copy.
+
+## Second pricing opinion: Portkey-AI/models (`--portkey`)
 
 MIT-licensed data behind Portkey's AI Gateway, about 54 providers. Read 2026-11-18.
 

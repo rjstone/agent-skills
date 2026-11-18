@@ -267,3 +267,66 @@ class ExtraListTests(unittest.TestCase):
     def test_off_by_default(self):
         r = subprocess.run([sys.executable, SCRIPT, "--file", self.api, "-p", "zeta"], capture_output=True, text=True)
         self.assertEqual(r.returncode, 2)
+
+
+LITELLM = {
+    "sample_spec": {"input_cost_per_token": 0},
+    "acme/acme-large": {"litellm_provider": "acme", "mode": "chat",
+                        "input_cost_per_token": 1.5e-06, "output_cost_per_token": 7.0e-06,
+                        "cache_read_input_token_cost": 1.5e-07, "input_cost_per_token_batches": 7.5e-07,
+                        "input_cost_per_token_above_200k_tokens": 3e-06,
+                        "max_input_tokens": 128000, "max_output_tokens": 8192,
+                        "supports_function_calling": True, "supports_vision": False,
+                        "source": "https://acme-ai.example/pricing",
+                        "deprecation_date": "2027-01-01", "successor_model": "acme/acme-xl"},
+    "acme/acme-embed": {"litellm_provider": "acme", "mode": "embedding", "input_cost_per_token": 1e-08},
+    "acme-large-gemini": {"litellm_provider": "gemini", "mode": "chat", "input_cost_per_token": 1e-06},
+}
+
+
+class LiteLLMTests(unittest.TestCase):
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self.api = os.path.join(self.tmp.name, "api.json")
+        json.dump(API, open(self.api, "w"))
+        self.table = os.path.join(self.tmp.name, "litellm.json")
+        json.dump(LITELLM, open(self.table, "w"))
+
+    def card(self, *args):
+        r = subprocess.run([sys.executable, SCRIPT, "--file", self.api, "--format", "json",
+                            "--litellm-file", self.table, *args], capture_output=True, text=True)
+        self.assertEqual(r.returncode, 0, r.stderr)
+        return json.loads(r.stdout)["entries"][0]["litellm"]
+
+    def test_prices_per_million_and_tiers(self):
+        p = lookup.litellm_pricing(LITELLM["acme/acme-large"])
+        self.assertEqual(p, {"input": 1.5, "output": 7.0, "cache_read": 0.15,
+                             "batch_input": 0.75, "input_above_200k": 3.0})
+
+    def test_prefixed_key_matches_and_embedding_ignored(self):
+        key, names = lookup.litellm_match("acme", "acme-large", LITELLM)
+        self.assertEqual(key, "acme/acme-large")
+        self.assertEqual(lookup.litellm_match("acme", "acme-embed", LITELLM)[0], None)
+
+    def test_provider_map_is_used(self):
+        self.assertIn("gemini", lookup.litellm_providers("google", LITELLM))
+        self.assertNotIn("gemini", lookup.litellm_providers("acme", LITELLM))
+
+    def test_card_has_source_deprecation_and_disagreement(self):
+        ll = self.card("-p", "acme", "-m", "acme-large")
+        self.assertEqual(ll["key"], "acme/acme-large")
+        self.assertEqual(ll["pricing_source"], "https://acme-ai.example/pricing")
+        self.assertEqual(ll["deprecation_date"], "2027-01-01")
+        self.assertEqual(ll["successor_model"], "acme/acme-xl")
+        self.assertEqual(ll["capabilities"], ["function_calling"])
+        self.assertEqual(ll["disagrees_with_models_dev"], ["output: LiteLLM $7 vs models.dev $6"])
+
+    def test_unknown_provider_is_reported(self):
+        ll = self.card("-p", "relay")
+        self.assertIn("error", ll)
+
+    def test_off_by_default(self):
+        r = subprocess.run([sys.executable, SCRIPT, "--file", self.api, "-p", "acme", "-m", "acme-large",
+                            "--format", "json"], capture_output=True, text=True)
+        self.assertNotIn("litellm", json.loads(r.stdout)["entries"][0])
