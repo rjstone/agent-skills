@@ -744,3 +744,27 @@ class Round5Tests(unittest.TestCase):
     def test_speech_price_has_unit_note(self):
         self.assertIn("per character or per minute", lookup.fmt_cost({"input": 0.5, "output": 6}, "speech"))
         self.assertNotIn("per character", lookup.fmt_cost({"input": 0.5, "output": 6}))
+
+
+class ShellSafetyTests(unittest.TestCase):
+    """Shell snippets are withheld when catalog values are unsafe in a command (code-scanning finding on PR #20)."""
+
+    def entry(self, base, mid, env="X_KEY"):
+        return lookup.build_entry("x", {"api": base, "env": [env]}, mid, {"id": mid}, {})
+
+    def test_unsafe_base_url_withholds_curl(self):
+        sn = lookup.snippets(self.entry("https://api.x.example/v1;touch /tmp/pwned", "m1"))
+        self.assertTrue(sn["curl"].startswith("# snippet withheld: base URL"))
+        self.assertTrue(sn["fast_agent"].startswith("# snippet withheld"))
+
+    def test_unsafe_model_id_withholds_curl(self):
+        sn = lookup.snippets(self.entry("https://api.x.example/v1", "m1' ; echo hi #"))
+        self.assertTrue(sn["curl"].startswith("# snippet withheld: model id"))
+
+    def test_digit_leading_variable_explained(self):
+        sn = lookup.snippets(self.entry("https://api.x.example/v1", "m1", "302AI_API_KEY"))
+        self.assertIn("starts with a digit", sn["env"])
+
+    def test_normal_and_template_urls_still_produce_curl(self):
+        for base in ("https://openrouter.ai/api/v1", "https://bedrock-mantle.${AWS_REGION}.api.aws/v1"):
+            self.assertTrue(lookup.snippets(self.entry(base, "openai/gpt-oss-120b"))["curl"].startswith("curl -sS"))

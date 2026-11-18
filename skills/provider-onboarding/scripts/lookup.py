@@ -707,6 +707,27 @@ def build_entry(pid, prov, mid, model, ov, manual=None):
     }
 
 
+# Values that go into shell snippets come from third-party catalogs: only plain
+# URLs, ids and variable names are allowed; anything else withholds the snippet.
+SAFE_URL = re.compile(r"^https?://(?:[A-Za-z0-9._~%/:-]|\$\{[A-Za-z0-9_]+\})+$")
+SAFE_ID = re.compile(r"^[A-Za-z0-9._:/@~+-]+$")
+SAFE_VAR = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
+
+
+def shell_safe(base, mid, env):
+    """Return None when the values are safe in a shell command, else the reason."""
+    if base and not SAFE_URL.match(base):
+        return "base URL has characters that are unsafe in a shell command"
+    if mid and not SAFE_ID.match(mid):
+        return "model id has characters that are unsafe in a shell command"
+    if not SAFE_VAR.match(env):
+        if re.match(r"^[0-9][A-Za-z0-9_]*$", env):
+            return ("key variable %s starts with a digit, which shells cannot expand; set it where your tool reads "
+                    "it (e.g. a .env file) or use another variable name" % env)
+        return "key variable name is not a plain variable name"
+    return None
+
+
 def snippets(e):
     pid, base = e["provider_id"], e["base_url"]
     envs = e["env"] or ["<PROVIDER>_API_KEY"]
@@ -756,7 +777,12 @@ def snippets(e):
         "image": "curl -sS %s/images/generations %s -H \"Content-Type: application/json\" \\\n"
                  "  -d '{\"model\":\"%s\",\"prompt\":\"a red square\"}'" % (b, auth, mid),
     }
-    if base and e["protocol"] == "openai" and mtype in typed:
+    unsafe = shell_safe(base, (e["model"] or {}).get("id"), env)
+    if unsafe:
+        withheld = "# snippet withheld: %s; check the provider docs" % unsafe
+        out["curl"] = out["fast_agent"] = withheld
+        out["env"] = withheld if "variable" in unsafe else out["env"]
+    elif base and e["protocol"] == "openai" and mtype in typed:
         out["curl"] = typed[mtype]
     elif base and mtype != "chat":
         out["curl"] = "# %s model: not a chat endpoint; follow the provider docs (%s)" % (mtype, docs)
