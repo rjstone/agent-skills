@@ -93,11 +93,13 @@ vendors' plugin formats):
 - `.github/workflows/bandit.yml` - Bandit security scan, uploaded as SARIF to
   the Security tab: the code with all checks, `tests/` without B105/B603
   (false positives there; the user, 2026-11-18). The header has the same
-  commands for a local run. Until the stale analysis configuration
-  `.github/workflows/bandit.yml:bandit` (from the first, single-upload
-  version) is deleted under Security, Code scanning, Tool status, every PR's
-  "Bandit" check is neutral ("1 configuration not found"); new alerts still
-  show in its summary. `codeql.yml` - CodeQL advanced setup (actions,
+  commands for a local run. Changing a code-scanning upload `category`
+  (renaming or splitting it) leaves the old configuration on GitHub, and
+  every PR's check then goes neutral ("1 configuration not found"): after
+  the first run under the new names, delete the old one under Security and
+  quality, Code scanning, Tool status, the configuration's menu, Delete
+  configuration (done for Bandit's first single upload, the user,
+  2026-11-18). `codeql.yml` - CodeQL advanced setup (actions,
   python); it only uploads when CodeQL *default* setup is off in the repo's
   Code security settings.
 - `.github/pull_request_template.md` - every PR fills it in: Kind and
