@@ -78,3 +78,34 @@ export DOCSET_DIR=<folder holding HTTP.docset>
 docs/trials/2026-11-18-opencode-docshelf-sandboxed/run_trials.sh <provider/model>...
 python3 docs/trials/2026-11-18-opencode-docshelf-sandboxed/score_trials.py -v "$OUT"/*/
 ```
+
+## Round 2: docshelf 0.8.1 (branch `update/docshelf`, PR #21)
+
+Same eight models, sets and sandbox, one run each, on 0.8.1 (`show` and
+`toc` accept a `-d` naming the REF's docvol). The scorer now reads Unicode
+hyphens (U+2010-U+2015, U+2212) as `-`: nemotron-120b wrote
+`Retry‑After` with a non-breaking hyphen.
+
+| Model | Sets answered (of 4) | Used docshelf | docshelf I/O, sum (~tok) | Time, sum |
+|---|---|---|---|---|
+| `gpt-6-luna` | 4 | 4 | 10,502 | 129 s |
+| `nvidia/nemotron-3-super-120b-a12b` | 4 | 4 | 9,889 | 206 s |
+| `stepfun/step-3.7-flash` | 4 | 4 | 15,854 | 403 s |
+| `deepseek-v4.1-flash` | 4 | 4 | 16,577 | 330 s |
+| `muse-spark-1.3-contributor` | 4 | 4 | 16,718 | 189 s |
+| `mimo-v2.6-flash` | 4 | 4 | 17,779 | 604 s |
+| `Beam-1.0-501B-A23B` | 4 | 3 (not http) | 10,191 (3 sets) | 103 s |
+| `nvidia/nemotron-3.5-super-vl:free` | 4 | 0 | - | 334 s |
+
+- All eight answered all four sets (round 1: seven).
+- nemotron-120b, which failed three sets in round 1 (no reply twice, a
+  degenerate reply once), used docshelf in all four and answered all of
+  them: round 1's failures were run-to-run variance, not a pattern.
+- nemotron-vl again never loaded the skill (read the cache files).
+- No run passed `-d` to `show` or `toc` this time, so 0.8.1's change was
+  not exercised; no run failed on it either.
+- New usage slips (mimo): `search "--permission"` (a query starting with
+  `--` is read as an option; `search -- --permission` works) and
+  `list HTTP` (`list` takes no arguments).
+- Luna stayed the cheapest and fastest of the models that always used the
+  skill; totals moved by up to ~30% per model between rounds.

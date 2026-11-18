@@ -123,7 +123,8 @@ for d in dirs:
                 errs.append(short(json.dumps(e.get("error")), 200))
             elif t == "step_finish":
                 tok_in += (part.get("tokens") or {}).get("input", 0)
-        reply = "\n".join(texts)
+        # models write hyphens as U+2010-U+2015 or U+2212 (e.g. "Retry\u2011After")
+        reply = re.sub("[\u2010-\u2015\u2212]", "-", "\n".join(texts))
         miss = [n for n, rx in CHECKS[run] if not re.search(rx, reply)]
         print("  %-5s %s | skill=%s docshelf-calls=%d errors=%d other-tools=%d "
               "docshelf-io~tok=%d input-tokens=%d"
