@@ -18,7 +18,7 @@ from datetime import datetime
 from typing import List, NamedTuple, Optional, Tuple
 from urllib.parse import unquote, urlsplit
 
-from shelf_core import CLIError, Docvol, Entry, make_temp, resolve_doc_path, warn
+from shelf_core import CLIError, DamagedDocvol, Docvol, Entry, make_temp, resolve_doc_path, warn
 
 INDEX_REL = ("Contents", "Resources", "docSet.dsidx")
 DOCS_REL = ("Contents", "Resources", "Documents")
@@ -261,8 +261,9 @@ class DashDocvol(Docvol):
         return _Conn(self._open_db(self.index_file, "index"))
 
     def _index_error(self, e: Exception) -> CLIError:
-        return CLIError("cannot read the index of docset %s (%s): %s"
-                        % (self.name, self.path, e), 7)
+        return DamagedDocvol("cannot read the index of docset %s (%s): %s; "
+                             "reinstall it in Dash or Zeal"
+                             % (self.name, self.path, e))
 
     @property
     def entry_count(self) -> int:

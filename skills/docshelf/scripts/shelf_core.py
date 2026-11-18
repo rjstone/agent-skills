@@ -77,6 +77,34 @@ class CLIError(Exception):
         self.code = code
 
 
+class DamagedDocvol(CLIError):
+    """A docvol whose files cannot be read (exit code 5); multi-docvol
+    commands skip it with a warning unless it was named with -d."""
+
+    def __init__(self, message: str):
+        super().__init__(message, 5)
+
+
+def skip_damaged(docs: list, strict: bool, probe) -> list:
+    """The docvols for which probe(d) does not raise DamagedDocvol. A damaged
+    one is re-raised when strict (the user named docvols with -d), else
+    warned about and dropped; the first error is raised when none is left."""
+    kept, first = [], None
+    for d in docs:
+        try:
+            probe(d)
+        except DamagedDocvol as e:
+            if strict:
+                raise
+            warn("skipping docvol %s: %s" % (d.name, e))
+            first = first or e
+            continue
+        kept.append(d)
+    if docs and not kept and first is not None:
+        raise first
+    return kept
+
+
 class ScopeError(CLIError):
     """The request matches too much to print."""
 

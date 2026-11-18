@@ -18,7 +18,8 @@ import shelf_notes
 from shelf_render import (_print_lines, _page_title_line, page_title,
                           section_headings, section_lines, unquote_all)
 from shelf_core import (CLIError, Config, cap_lines, make_temp, pick_docvol, rank,
-                        same_family_note, select_docvols, short_name, warn)
+                        same_family_note, select_docvols, short_name,
+                        skip_damaged, warn)
 
 FUZZY_SHOWN = 0  # fuzzy hits shown when exact, prefix or substring hits exist
 
@@ -107,6 +108,20 @@ def _heading_hits(docs, query, words, page_of, max_rank) -> list:
     return hits
 
 
+def _is_strict(args) -> bool:
+    """True when the user named docvols with -d: a damaged one is an error."""
+    return bool(getattr(args, "docvol", None))
+
+
+def _probe_read(ds) -> None:
+    """Touch what search reads (entries; the page index of a docvol that has
+    one) so a damaged docvol fails here, before any output."""
+    ds.entries()
+    page_index = getattr(ds, "page_index", None)
+    if page_index is not None:
+        page_index()
+
+
 def _print_family_note(docs, args) -> None:
     note = same_family_note(docs)
     if note:
@@ -119,6 +134,8 @@ def cmd_search(cfg: Config, args: argparse.Namespace) -> int:
         raise CLIError("empty search query", 2)
     docs = select_docvols(cfg, shelf_backends.installed_docvols(cfg),
                           args.docvol or [], args.all)
+    strict = _is_strict(args)
+    docs = skip_damaged(docs, strict, _probe_read)
     _print_family_note(docs, args)
     words = args.query.lower().split()
     want_type = args.type.lower() if args.type else None
@@ -553,6 +570,8 @@ def cmd_index_text(cfg: Config, args: argparse.Namespace) -> int:
 def cmd_types(cfg: Config, args: argparse.Namespace) -> int:
     docs = select_docvols(cfg, shelf_backends.installed_docvols(cfg),
                           args.docvol or [], args.all)
+    strict = _is_strict(args)
+    docs = skip_damaged(docs, strict, lambda d: d.entries())
     _print_family_note(docs, args)
     for ds in docs:
         counts = collections.Counter(e.type or "(no type)" for e in ds.entries())
@@ -569,6 +588,8 @@ def cmd_fts(cfg: Config, args: argparse.Namespace) -> int:
     _need_fts()
     docs = select_docvols(cfg, shelf_backends.installed_docvols(cfg),
                           args.docvol or [], args.all)
+    strict = _is_strict(args)
+    docs = skip_damaged(docs, strict, _probe_read)
     _print_family_note(docs, args)
     if not fts_match_expr(args.query):  # before any index is built
         msg = "no searchable words in '%s'" % args.query
@@ -578,8 +599,7 @@ def cmd_fts(cfg: Config, args: argparse.Namespace) -> int:
         else:
             print(msg)
         return 0
-    for ds in docs:
-        ensure_fts(cfg, ds)
+    docs = skip_damaged(docs, strict, lambda d: ensure_fts(cfg, d))
     # text output takes two lines per hit: fetch enough hits to reach the line cap
     limit = args.max_lines if args.json else args.max_lines // 2 + 1
     hits = fts_search(cfg, docs, args.query, limit)

@@ -3692,7 +3692,7 @@ class FinalReviewTests(unittest.TestCase):
         self.write_file(os.path.join(folder, "db.json"), '{"guide":')
         code, _, err = self.main("show", "py:guide")
         self.assertEqual(code, 5, err)
-        self.assertIn("reinstall", err)
+        self.assertIn("docshelf.py remove py, then docshelf.py install py", err)
         self.assertNotIn("Traceback", err)
 
     # I7
@@ -6858,7 +6858,7 @@ class FinalReviewFixTests(unittest.TestCase):
             self.assertEqual(r.returncode, 5, r.stderr)
             self.assertNotIn("Traceback", r.stderr)
             self.assertIn("vite", r.stderr)
-            self.assertIn("reinstall", r.stderr)
+            self.assertIn("docshelf.py remove vite, then docshelf.py install vite", r.stderr)
 
     # 3. the WAL copy can vanish between opens of one DashDocvol
     def test_deleted_wal_copy_is_recopied(self):
@@ -7251,6 +7251,132 @@ class RenderEdgeTests(unittest.TestCase):
     def test_a_name_is_still_an_anchor(self):
         blocks = self.blocks('<p><a name="old">x</a></p>')
         self.assertEqual(blocks[0].ids, ["old"])
+
+
+class DamagedDocvolTests(unittest.TestCase):
+    """6.13.25: a damaged docvol is skipped with a warning and repair advice
+    unless it was named with -d."""
+    REPAIR = "docshelf.py remove alpha, then docshelf.py install alpha"
+
+    def setUp(self):
+        self.tmp, self.cache, _notes, self.env = temp_env(self)
+        self.env["DOCSHELF_DOCSET_DIRS"] = os.path.join(self.tmp, "docs")
+
+    def cli(self, *args):
+        return run_cli(*args, env=self.env, cwd=self.tmp)
+
+    def make(self, slug, with_count=True, **kw):
+        folder = make_devdocs(self.cache, slug, name=kw.pop("name", slug.title()),
+                              release="1", entries=[("Guide", "Guide", "guide")],
+                              pages={"guide": "<h1>Guide</h1><p>hello</p>"}, **kw)
+        mp = os.path.join(folder, "meta.json")
+        with open(mp, encoding="utf-8") as f:
+            meta = json.load(f)
+        if with_count:
+            meta["entry_count"] = 1
+        else:
+            meta.pop("entry_count", None)
+        with open(mp, "w", encoding="utf-8") as f:
+            json.dump(meta, f)
+        return folder
+
+    def corrupt(self, folder, which="index.json"):
+        with open(os.path.join(folder, which), "w") as f:
+            f.write("{not json")
+
+    def pair(self, **kw):
+        alpha = self.make("alpha", **kw)
+        self.make("beta")
+        self.corrupt(alpha)
+        return alpha
+
+    def test_search_skips_damaged(self):
+        self.pair()
+        r = self.cli("search", "Guide")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertIn("beta:guide", r.stdout)
+        self.assertNotIn("alpha:", r.stdout)
+        self.assertIn("skipping docvol alpha", r.stderr)
+        self.assertIn(self.REPAIR, r.stderr)
+        self.assertNotIn("Traceback", r.stderr)
+        for cmd in (("list",), ("suggest",)):
+            r = self.cli(*cmd)
+            self.assertEqual(r.returncode, 0, cmd)
+            self.assertNotIn("Traceback", r.stderr)
+
+    def test_named_damaged_exits_5(self):
+        self.pair()
+        r = self.cli("search", "-d", "alpha", "Guide")
+        self.assertEqual(r.returncode, 5, r.stderr)
+        self.assertIn(self.REPAIR, r.stderr)
+
+    def test_family_d_is_strict(self):
+        a = self.make("alpha~1")
+        self.make("alpha~2")
+        self.corrupt(a)
+        r = self.cli("search", "-d", "alpha", "Guide")
+        self.assertEqual(r.returncode, 5, r.stderr)
+        self.assertIn("docshelf.py remove alpha~1", r.stderr)
+
+    def test_all_damaged_exits_5(self):
+        self.corrupt(self.make("alpha"))
+        self.corrupt(self.make("beta"))
+        r = self.cli("search", "Guide")
+        self.assertEqual(r.returncode, 5, r.stdout + r.stderr)
+        self.assertIn("docshelf.py remove", r.stderr)
+
+    def test_json_stays_valid(self):
+        self.pair()
+        r = self.cli("search", "--json", "Guide")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertEqual([i["docvol"] for i in json.loads(r.stdout)], ["beta"])
+        self.assertIn("skipping docvol alpha", r.stderr)
+
+    def test_types_and_fts_skip(self):
+        self.pair()
+        for cmd in (("types",), ("fts", "hello")):
+            r = self.cli(*cmd)
+            self.assertEqual(r.returncode, 0, (cmd, r.stderr))
+            self.assertIn("skipping docvol alpha", r.stderr)
+            self.assertIn("beta", r.stdout)
+
+    def test_damaged_db_json_skips(self):
+        alpha = self.make("alpha")
+        self.make("beta")
+        self.corrupt(alpha, "db.json")
+        for cmd in (("search", "hello"), ("fts", "hello")):
+            r = self.cli(*cmd)
+            self.assertEqual(r.returncode, 0, (cmd, r.stderr))
+            self.assertIn("skipping docvol alpha", r.stderr)
+            self.assertIn(self.REPAIR, r.stderr)
+            self.assertNotIn("Traceback", r.stderr)
+
+    def test_one_warning_old_and_new_cache(self):
+        for with_count in (True, False):
+            shutil.rmtree(self.cache, ignore_errors=True)
+            self.pair(with_count=with_count)
+            r = self.cli("search", "Guide")
+            self.assertEqual(r.returncode, 0, r.stderr)
+            lines = [l for l in r.stderr.splitlines()
+                     if l.startswith("warning:") and "alpha" in l]
+            self.assertEqual(len(lines), 1, r.stderr)
+            self.assertIn(self.REPAIR, lines[0])
+
+    def test_docset_damaged_index_exits_5_with_advice(self):
+        self.make("beta")
+        docs = os.path.join(self.tmp, "docs")
+        path = make_docset(docs, "Lib", [("os", "Module", "os.html")],
+                           {"os.html": "<h1>os</h1>"})
+        idx = os.path.join(path, "Contents", "Resources", "docSet.dsidx")
+        with open(idx, "r+b") as f:
+            f.truncate(20)
+        r = self.cli("search", "-d", "lib", "os")
+        self.assertEqual(r.returncode, 5, r.stderr)
+        self.assertIn("reinstall it in Dash or Zeal", r.stderr)
+        r = self.cli("search", "Guide")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertIn("beta:guide", r.stdout)
+        self.assertIn("skipping docvol Lib", r.stderr)
 
 
 class NoShadowedTestCaseNamesTests(unittest.TestCase):

@@ -14,7 +14,7 @@ from typing import Dict, List, Optional, Tuple
 from urllib.parse import urlsplit
 
 import shelf_backends  # imports this module back; used only inside functions
-from shelf_core import (VERSION, CLIError, warn, Config, Docvol, Entry, make_temp,
+from shelf_core import (VERSION, CLIError, DamagedDocvol, warn, Config, Docvol, Entry, make_temp,
                         pick_docvol, sweep_stale_tmp)
 
 DERIVED = ".docshelf"
@@ -129,14 +129,14 @@ class DevDocsDocvol(Docvol):
         if not os.path.isfile(os.path.join(folder, "index.json")):
             # a cheap check that reads nothing: installed_docvols() skips a
             # docvol without its index, entry_count or not
-            raise OSError("index.json is missing")
+            raise OSError("index.json is missing; " + _repair(self.name))
         count = meta.get("entry_count")
         if isinstance(count, int) and not isinstance(count, bool) and count >= 0:
             self.entry_count = count  # stored at install: index.json stays unread
         else:  # an install from before entry_count: count the index
             try:
                 self.entry_count = len(self.entries())
-            except CLIError as e:  # discovery skips a damaged docvol
+            except DamagedDocvol as e:  # discovery skips a damaged docvol
                 raise ValueError(str(e))
 
     def data_dir(self) -> str:
@@ -158,9 +158,8 @@ class DevDocsDocvol(Docvol):
                                      anchor or None))
             except (ValueError, KeyError, TypeError, AttributeError) as e:
                 # with entry_count the constructor no longer reads the index
-                raise CLIError("docvol %s: damaged index.json (%s); reinstall "
-                               "with: docshelf.py install %s"
-                               % (self.name, e, self.name), 5)
+                raise DamagedDocvol("docvol %s: damaged index.json (%s); %s"
+                                    % (self.name, e, _repair(self.name)))
             self._entries = out
         return self._entries
 
@@ -168,7 +167,8 @@ class DevDocsDocvol(Docvol):
         try:
             st = os.stat(self.db_path)
         except OSError:
-            raise CLIError("docvol %s: db.json is missing" % self.name, 5)
+            raise DamagedDocvol("docvol %s: db.json is missing; %s"
+                                % (self.name, _repair(self.name)))
         return st.st_size, st.st_mtime_ns
 
     def page_index(self) -> Dict[str, Tuple[int, int]]:
@@ -187,8 +187,8 @@ class DevDocsDocvol(Docvol):
             try:
                 index = build_page_index(self.db_path)
             except ValueError as e:
-                raise CLIError("docvol %s: damaged db.json (%s); reinstall with: "
-                               "docshelf.py install %s" % (self.name, e, self.name), 5)
+                raise DamagedDocvol("docvol %s: damaged db.json (%s); %s"
+                                    % (self.name, e, _repair(self.name)))
             self._write_page_index(index, size, mtime)
         self._index, self._idx_stat = index, (size, mtime)
         return index
@@ -235,6 +235,11 @@ class DevDocsDocvol(Docvol):
 
     def stamp(self) -> str:
         return "%d|%d" % (self.mtime, self._db_stat()[0])
+
+
+def _repair(name: str) -> str:
+    return ("repair with: docshelf.py remove %s, then docshelf.py install %s"
+            % (name, name))
 
 
 def installed_docvols(cfg: Config) -> List[DevDocsDocvol]:
