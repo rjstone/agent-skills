@@ -195,6 +195,15 @@ Docker transports, talking to the running Dash app, Readability/Turndown
 conversion, Apple's DocC format (needs brotli), downloading from Kapeli's
 servers.
 
+### sandboxing
+
+- [ ] Bind `/etc/hosts` read-only by default: without it `localhost`
+      doesn't resolve inside (SKILL.md says to pass `--ro /etc/hosts`).
+- [ ] A working-directory option below `/work` (today: `sh -c 'cd ... &&
+      exec CMD'`, as in `references/nested-agents.md`).
+- [ ] sandbox.py's own errors exit 2, the same as a command that exits 2;
+      consider a distinct status or a marker line on stderr.
+
 ## Automation
 
 - [ ] Scheduled workflow: run each skill's `refresh_references.py` weekly and

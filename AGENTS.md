@@ -214,6 +214,15 @@ metadata:
   native format: a third-party documentation bundle (a DevDocs
   documentation, or a Dash/Zeal docset read in place, read-only) plus
   docshelf's own metadata, indexes and notes (the user, 2026-11-16).
+- `sandboxing` - run a nested agent CLI or test harness in a bubblewrap
+  sandbox (Linux) that hides the caller's environment, processes and files:
+  `scripts/sandbox.py` (`env -i` + bwrap `--clearenv`, `/work` as `HOME`,
+  `--ro`/`--rw` binds, placeholder keys via `--setenv`, setpriv to the
+  `sandboxer` host user when started as root) and `scripts/leak_test.py`
+  (plants a marker, probes for it inside, PASS/FAIL). Stdlib only. Not a
+  boundary against hostile code; `references/limits.md` names stronger
+  tools (the user, 2026-11-18). Bind sources must be readable by the
+  sandbox user (a root-only scratch folder is not).
 
 ## Decisions (the user, 2026-11-08)
 

@@ -7,6 +7,7 @@ import contextlib
 import importlib.util
 import io
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -246,6 +247,41 @@ class MainTests(unittest.TestCase):
 
     def test_version(self):
         self.assertRegex(sandbox.VERSION, r"^\d+\.\d+\.\d+$")
+
+
+SKILL_DIR = os.path.dirname(SCRIPTS)
+OPTION = re.compile(r"(?<![\w-])--[a-z][a-z0-9-]*")
+# options of other commands the docs use (opencode run in the worked
+# example); every other --option must belong to sandbox.py or leak_test.py
+FOREIGN_OPTIONS = {"--standalone", "--archived", "--auto", "--format", "--model"}
+
+
+def _parser_options(module):
+    """Option strings of a script's parser, read from its --help output."""
+    out = io.StringIO()
+    with contextlib.redirect_stdout(out), contextlib.suppress(SystemExit):
+        module.parse_args(["--help"])
+    return set(OPTION.findall(out.getvalue()))
+
+
+class DocsTests(unittest.TestCase):
+    def test_skill_md_names_only_real_options(self):
+        """Every --option in SKILL.md and references/*.md is an option of
+        sandbox.py or leak_test.py, or listed in FOREIGN_OPTIONS."""
+        known = (_parser_options(sandbox) | _parser_options(_load("leak_test"))
+                 | FOREIGN_OPTIONS)
+        docs = [os.path.join(SKILL_DIR, "SKILL.md")]
+        refs = os.path.join(SKILL_DIR, "references")
+        if os.path.isdir(refs):
+            docs += [os.path.join(refs, n) for n in sorted(os.listdir(refs))
+                     if n.endswith(".md")]
+        for path in docs:
+            self.assertTrue(os.path.isfile(path), path)
+            with open(path, encoding="utf-8") as f:
+                for n, line in enumerate(f, 1):
+                    for opt in OPTION.findall(line):
+                        with self.subTest(file=os.path.basename(path), line=n):
+                            self.assertIn(opt, known)
 
 
 SANDBOX_PY = os.path.join(SCRIPTS, "sandbox.py")
