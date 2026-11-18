@@ -18,7 +18,7 @@ from datetime import datetime
 from typing import List, NamedTuple, Optional, Tuple
 from urllib.parse import unquote, urlsplit
 
-from shelf_core import CLIError, DamagedDocvol, Docvol, Entry, make_temp, resolve_doc_path, warn
+from shelf_core import CLIError, DamagedDocvol, UnusableDocvol, Docvol, Entry, make_temp, resolve_doc_path, warn
 
 INDEX_REL = ("Contents", "Resources", "docSet.dsidx")
 DOCS_REL = ("Contents", "Resources", "Documents")
@@ -251,9 +251,9 @@ class DashDocvol(Docvol):
         except OSError as e:
             if reading:
                 raise  # the docset cannot be read: damaged
-            raise CLIError("cannot write %s: %s (check free disk space and "
-                           "that DOCSHELF_CACHE_DIR is a writable folder)"
-                           % (dest_dir, e), 2)
+            raise UnusableDocvol("cannot write %s: %s (check free disk space "
+                                 "and that DOCSHELF_CACHE_DIR is a writable "
+                                 "folder)" % (dest_dir, e), 2)
         finally:
             for tmp, _ in moves:
                 if os.path.exists(tmp):
@@ -292,6 +292,10 @@ class DashDocvol(Docvol):
                 with self._connect() as con:
                     self._count = int(con.execute(
                         "SELECT COUNT(*) FROM %s" % _table(con)).fetchone()[0])
+            except UnusableDocvol as e:  # e.g. the cache copy cannot be written
+                self.damage_error = e
+                self._count = 0
+                return 0
             except (sqlite3.Error, ValueError, OSError) as e:
                 # silent: commands that read the index report it (once) via
                 # DamagedDocvol; `list` reads damage_error and warns

@@ -407,7 +407,10 @@ def damaged_message(cfg: Config, name: str) -> Optional[str]:
         DevDocsDocvol(os.path.join(devdocs_dir(cfg), folder))
         return None  # it loads now: not damaged
     except (OSError, ValueError, KeyError, TypeError) as e:
-        return str(e)  # the text already says how to repair it
+        text = str(e)
+        if "repair with" not in text:  # e.g. a missing meta.json
+            text += "; " + _repair(folder)
+        return text
 
 
 def _manifest_rows(data) -> List[dict]:

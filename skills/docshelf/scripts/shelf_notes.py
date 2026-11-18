@@ -525,14 +525,19 @@ def cmd_notes(cfg: Config, args) -> int:
     if not args.check:
         sys.stdout.write(text)
         return 0
+    probed = {}
+
+    def probe(d):  # everything read below, so a bad member is skipped once
+        probed[d.name] = (d.entries(), headings_index(d))
+
     members = skip_damaged([d for d in docvols if d.family == family], False,
-                           lambda d: d.entries())  # warns, drops damaged ones
-    entries = [e for d in members for e in d.entries()]
+                           probe)  # warns, drops unusable ones
+    entries = [e for d in members for e in probed[d.name][0]]
     names = {e.name.lower() for e in entries}
     page_headings = []
     skipped = 0
     for d in members:
-        heads, bad = headings_index(d)
+        heads, bad = probed[d.name][1]
         skipped += bad
         for page, rows in heads.items():
             page_headings += [(h, d.make_ref(page, a)) for h, a in rows]

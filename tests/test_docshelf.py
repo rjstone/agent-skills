@@ -3935,6 +3935,34 @@ class NotesDamagedFamilyTests(unittest.TestCase):
             fh.truncate(20)
         self.check("lib")
 
+    def _db_family(self, damage):
+        for slug in ("alpha~1", "alpha~2"):
+            f = make_devdocs(self.cache, slug, name="Alpha", release="1",
+                             entries=[("Guide", "Guide", "guide")],
+                             pages={"guide": "<h1>Guide</h1><p>x</p>"})
+        damage(os.path.join(f, "db.json"))
+
+    def check_once(self):
+        for args in (("notes", "alpha", "--set", "Guide", "--text", "hi"),
+                     ("notes", "alpha", "--check")):
+            r = self.cli(*args)
+            self.assertEqual(r.returncode, 0, (args, r.stdout, r.stderr))
+            self.assertEqual(r.stderr.count("skipping docvol alpha~2"), 1, r.stderr)
+            self.assertNotIn("Traceback", r.stderr)
+        self.assertIn("wrote", self.cli("notes", "alpha", "--set", "Guide",
+                                        "--text", "hi2").stdout)
+
+    def test_damaged_db_json_family_member(self):
+        def damage(path):
+            with open(path, "w") as fh:
+                fh.write("{not json")
+        self._db_family(damage)
+        self.check_once()
+
+    def test_missing_db_json_family_member(self):
+        self._db_family(os.remove)
+        self.check_once()
+
 
 class NotesRetryTests(unittest.TestCase):
     """Another writer changing the notes file mid-write (TODO 6.9.2)."""
@@ -7880,6 +7908,85 @@ class DamagedDocvolTests(unittest.TestCase):
         self.assertIn("Lib  ", r.stdout)
         self.assertIn("0 entries", r.stdout)
         self.assertIn("beta  Beta  1  1 entries", r.stdout)
+
+
+    def test_meta_less_folder_gets_repair_advice(self):
+        os.makedirs(os.path.join(self.cache, "devdocs", "gamma"))
+        r = self.cli("show", "gamma:x")
+        self.assertEqual(r.returncode, 5, r.stderr)
+        self.assertIn("repair with: docshelf.py remove gamma, then "
+                      "docshelf.py install gamma", r.stderr)
+        self.assertEqual(r.stderr.count("repair with"), 1, r.stderr)
+        r = self.cli("remove", "gamma")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertFalse(os.path.exists(os.path.join(self.cache, "devdocs", "gamma")))
+
+    def test_meta_not_an_object_gets_repair_advice(self):
+        folder = os.path.join(self.cache, "devdocs", "gamma")
+        os.makedirs(folder)
+        with open(os.path.join(folder, "meta.json"), "w") as f:
+            f.write("[1]")
+        r = self.cli("show", "gamma:x")
+        self.assertEqual(r.returncode, 5, r.stderr)
+        self.assertIn("docshelf.py remove gamma, then docshelf.py install gamma",
+                      r.stderr)
+
+    def inproc(self, *argv):
+        out, err = io.StringIO(), io.StringIO()
+        with mock.patch.dict(os.environ, self.env), \
+                mock.patch.object(shelf_dash.shutil, "copyfile",
+                                  side_effect=PermissionError("denied")), \
+                contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
+            code = shelf_cli.main(list(argv))
+        return code, out.getvalue(), err.getvalue()
+
+    def wal_pair(self):
+        self.make("beta")
+        make_docset(os.path.join(self.tmp, "docs"), "Lib",
+                    [("Guide", "Module", "os.html")],
+                    {"os.html": "<h1>Guide</h1>"}, wal=True)
+
+    def test_unwritable_wal_docset_skipped_in_multi_commands(self):
+        self.wal_pair()
+        for args in (("search", "Guide"), ("fts", "hello"), ("types",)):
+            code, out, err = self.inproc(*args)
+            self.assertEqual(code, 0, (args, out, err))
+            self.assertEqual(err.count("skipping docvol Lib"), 1, err)
+            self.assertIn("cannot write", err)
+            self.assertIn("DOCSHELF_CACHE_DIR", err)
+            self.assertNotIn("reinstall", err)
+
+    def test_unwritable_wal_docset_named_fails_with_2(self):
+        self.wal_pair()
+        code, out, err = self.inproc("search", "Guide", "-d", "Lib")
+        self.assertEqual(code, 2, (out, err))
+        self.assertIn("cannot write", err)
+
+    def test_unwritable_wal_docset_alone_exits_2(self):
+        make_docset(os.path.join(self.tmp, "docs"), "Lib",
+                    [("Guide", "Module", "os.html")],
+                    {"os.html": "<h1>Guide</h1>"}, wal=True)
+        code, out, err = self.inproc("search", "Guide")
+        self.assertEqual(code, 2, (out, err))
+
+    def test_list_unwritable_wal_docset_warns_once(self):
+        self.wal_pair()
+        code, out, err = self.inproc("list")
+        self.assertEqual(code, 0, (out, err))
+        self.assertEqual(err.count("cannot write"), 1, err)
+        self.assertIn("beta  Beta  1  1 entries", out)
+
+    def test_notes_write_unwritable_wal_family_member(self):
+        self.make("beta~1", name="Beta")
+        self.make("beta~2", name="Beta")
+        make_docset(os.path.join(self.tmp, "docs"), "Beta_3",
+                    [("Guide", "Module", "os.html")],
+                    {"os.html": "<h1>Guide</h1>"}, wal=True)
+        code, out, err = self.inproc("notes", "beta", "--set", "Guide",
+                                     "--text", "hi")
+        self.assertEqual(code, 0, (out, err))
+        self.assertIn("wrote", out)
+        self.assertEqual(err.count("skipping docvol Beta_3"), 1, err)
 
 
 class NoShadowedTestCaseNamesTests(unittest.TestCase):

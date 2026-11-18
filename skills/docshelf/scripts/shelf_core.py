@@ -81,23 +81,28 @@ class CLIError(Exception):
         self.code = code
 
 
-class DamagedDocvol(CLIError):
-    """A docvol whose files cannot be read (exit code 5); multi-docvol
-    commands skip it with a warning unless it was named with -d."""
+class UnusableDocvol(CLIError):
+    """A docvol that cannot be used right now (default exit code 2, e.g. its
+    cache copy cannot be written); multi-docvol commands skip it with a
+    warning unless it was named with -d."""
+
+
+class DamagedDocvol(UnusableDocvol):
+    """A docvol whose files cannot be read (exit code 5)."""
 
     def __init__(self, message: str):
         super().__init__(message, 5)
 
 
 def skip_damaged(docs: list, strict: bool, probe) -> list:
-    """The docvols for which probe(d) does not raise DamagedDocvol. A damaged
+    """The docvols for which probe(d) does not raise UnusableDocvol. A damaged
     one is re-raised when strict (the user named docvols with -d), else
     warned about and dropped; the first error is raised when none is left."""
     kept, first = [], None
     for d in docs:
         try:
             probe(d)
-        except DamagedDocvol as e:
+        except UnusableDocvol as e:
             if strict:
                 raise
             warn("skipping docvol %s: %s" % (d.name, e))

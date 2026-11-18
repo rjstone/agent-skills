@@ -81,6 +81,9 @@ selected docvol is damaged). Repair a DevDocs docvol with
 your notes; `install` alone says "up to date"). A Dash or Zeal docset is never
 changed by docshelf: reinstall it in Dash or Zeal.
 
+A docset that cannot be used because docshelf cannot write its cache copy
+(exit 2; fix `DOCSHELF_CACHE_DIR` or free disk space) is skipped the same way.
+
 ## Where files go
 
 Under the cache folder (`python scripts/docshelf.py where` prints it), in
