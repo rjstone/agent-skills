@@ -6,7 +6,7 @@ license: MIT
 metadata:
   author: Robert Stone
   source: https://github.com/rjstone/agent-skills
-  version: "0.4.0"
+  version: "0.5.0"
 ---
 
 # Provider onboarding
@@ -19,7 +19,8 @@ Turn "add support for `<provider>`'s `<model>`" into a verified-where-possible p
 2. **Run the lookup** (stdlib Python, no installs):
    ```bash
    python3 scripts/lookup.py --provider "<provider>" --model "<model>"
-   python3 scripts/lookup.py --model "<model>"            # who serves this model?
+   python3 scripts/lookup.py --model "<model>"            # who serves this model? (first 8)
+   python3 scripts/lookup.py --model "<model>" --limit 100  # ... all of them
    python3 scripts/lookup.py --list-providers             # browse
    python3 scripts/lookup.py -p X -m Y --format json      # machine-readable
    python3 scripts/lookup.py -p X -m Y --litellm          # + detailed pricing, sources, deprecation
@@ -33,6 +34,7 @@ Turn "add support for `<provider>`'s `<model>`" into a verified-where-possible p
    `--portkey` is a second opinion: a Portkey section from `Portkey-AI/models`: batch, cache, audio and per-call prices (web search, file search) in USD, plus the gateway's parameter ranges. It tries `configs.portkey.ai` first and falls back to the GitHub repo's raw files; `--portkey-dir <clone>` reads a local clone. Use it when the user asks about cost or models.dev has no price. When it and models.dev disagree, show both with their sources.
 
    `--extra-list` is a last resort for providers models.dev doesn't know (or only fuzzy-matches): a larger community list (`foisalislambd/all-llm-provider-list`) read at run time. It has no sources or dates, so every field from it is tagged UNVERIFIED and must be checked in the provider's docs before use. Session-cookie, app-login and anonymous web endpoints in that list are skipped on purpose; never suggest them.
+   **Read the warnings first.** "showing N of M" means more providers serve the model: rerun with `--limit M` before answering "who serves it". "no model exactly named X; closest: ..." and a card marked **(closest match, NOT the exact id asked for)** mean the requested id isn't there: tell the user which id you are showing instead, never present it as the one they asked for. A LiteLLM price marked as region-specific is not the provider's general price.
 3. **Handle failure** by reading the lookup's message, then `references/data-sources.md`. In order: GitHub read of `anomalyco/models.dev` (`providers/<id>/provider.toml`), ask the user to upload `api.json` (`--file`), ask them to allow `models.dev` and `models.opencode.ai` in their agent's network settings (on claude.ai: Settings > Capabilities), or web-search the provider's docs. If the network refuses a host, say so plainly; do not hunt for a workaround.
 4. **Provider not in any database?** Use manual mode after finding the docs: `--name X --base-url https://api.x.com/v1 --env-var X_API_KEY --model-id y`. It generates the same card and snippets.
 5. **Deliver the card** (below), then the snippets the user's tooling needs, then the operator checklist.
@@ -59,7 +61,7 @@ models.dev has no sign-up field, so the lookup infers. The rule: if the API live
 ## Snippets generated
 
 - **opencode v2** provider block with `{env:VAR}` substitution and top-level `model`. The `package` value comes from the data when present; otherwise it is `@opencode/ai/providers/openai-compatible` for OpenAI-compatible providers, or a flagged guess. Tell the user to confirm with `opencode debug config`.
-- **fast-agent** `generic:` config using `base_url` and `api_key: "${VAR}"`, plus a `fast-agent go --model generic.<id> --message ...` smoke test.
+- **fast-agent** `generic:` config (only when the base URL is known and the protocol is OpenAI-compatible; otherwise a comment pointing at the docs) using `base_url` and `api_key: "${VAR}"`, plus a `fast-agent go --model generic.<id> --message ...` smoke test.
 - **curl** smoke test (OpenAI-style `/chat/completions` with a Bearer env var, or Anthropic `/messages` with `x-api-key` and `anthropic-version`); for unknown protocols it points at the docs instead of guessing.
 - **env var** export line. Never ask the user to paste a key into chat, and never print one.
 

@@ -330,3 +330,70 @@ class LiteLLMTests(unittest.TestCase):
         r = subprocess.run([sys.executable, SCRIPT, "--file", self.api, "-p", "acme", "-m", "acme-large",
                             "--format", "json"], capture_output=True, text=True)
         self.assertNotIn("litellm", json.loads(r.stdout)["entries"][0])
+
+
+class FixesFromHaikuTrialsTests(unittest.TestCase):
+    """Fixes for the problems found by three Haiku trial runs (2026-11-18)."""
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        api = json.loads(json.dumps(API))
+        api["acme"]["models"]["acme-large-2"] = {"id": "acme-large-2", "name": "Acme Large 2",
+                                                 "cost": {"input": 2.0, "output": 8.0}}
+        api["relay"].setdefault("models", {})["acme/acme-large"] = {"id": "acme/acme-large", "name": "Acme Large"}
+        api["relay"]["models"]["acme/acme-large-2"] = {"id": "acme/acme-large-2", "name": "Acme Large 2"}
+        api["nativeco"] = {"id": "nativeco", "name": "Native Co", "env": ["NATIVE_KEY"],
+                           "doc": "https://docs.native.example", "api": "https://native.googleapis.com/v1",
+                           "models": {"n1": {"id": "n1", "name": "N1"}}}
+        self.api = os.path.join(self.tmp.name, "api.json")
+        json.dump(api, open(self.api, "w"))
+
+    def run_json(self, *args):
+        r = subprocess.run([sys.executable, SCRIPT, "--file", self.api, "--format", "json", *args],
+                           capture_output=True, text=True)
+        self.assertEqual(r.returncode, 0, r.stderr)
+        return json.loads(r.stdout)
+
+    def test_exact_match_preferred_and_flagged(self):
+        res = self.run_json("-p", "acme", "-m", "acme-large")
+        self.assertEqual([e["model"]["id"] for e in res["entries"]], ["acme-large"])
+        self.assertTrue(res["entries"][0]["model"]["exact_match"])
+
+    def test_no_exact_match_warns_with_closest(self):
+        res = self.run_json("-p", "acme", "-m", "acme-lar")
+        self.assertTrue(any("no model exactly named" in w for w in res["warnings"]))
+        self.assertFalse(res["entries"][0]["model"]["exact_match"])
+
+    def test_model_only_says_shown_of_total_and_how_to_see_all(self):
+        res = self.run_json("-m", "acme-large", "--limit", "1")
+        w = " ".join(res["warnings"])
+        self.assertIn("showing 1 of", w)
+        self.assertIn("--limit", w)
+        self.assertTrue(res["entries"][0]["model"]["exact_match"])
+
+    def test_no_fast_agent_snippet_for_unknown_protocol(self):
+        res = self.run_json("-p", "nativeco", "-m", "n1")
+        sn = res["entries"][0]["snippets"]
+        self.assertTrue(sn["fast_agent"].startswith("# no fast-agent generic snippet"))
+        self.assertTrue(sn["curl"].startswith("# protocol unknown"))
+
+    def test_litellm_prefers_non_regional_key(self):
+        table = {"bedrock/us-gov-east-1/m1": {"litellm_provider": "bedrock", "mode": "chat", "input_cost_per_token": 2e-07},
+                 "bedrock_mantle/m1": {"litellm_provider": "bedrock_mantle", "mode": "chat", "input_cost_per_token": 1e-07}}
+        self.assertEqual(lookup.litellm_match("amazon-bedrock", "m1", table)[0], "bedrock_mantle/m1")
+
+    def test_portkey_missing_file_error_is_one_short_line(self):
+        args = type("A", (), {"portkey_dir": self.tmp.name, "cache_dir": None, "refresh": False})()
+        err = lookup.portkey_info("nobody", "m", args)["error"]
+        self.assertLess(len(err), 120)
+
+    def test_portkey_disagreement_flagged(self):
+        pk = os.path.join(self.tmp.name, "pk")
+        os.makedirs(os.path.join(pk, "pricing"))
+        json.dump({"acme-large": {"pricing_config": {"pay_as_you_go": {
+            "request_token": {"price": 0.0002}, "response_token": {"price": 0.0006}}}}},
+            open(os.path.join(pk, "pricing", "acme.json"), "w"))
+        res = self.run_json("-p", "acme", "-m", "acme-large", "--portkey-dir", pk)
+        self.assertEqual(res["entries"][0]["portkey"]["disagrees_with_models_dev"],
+                         ["input: Portkey $2 vs models.dev $1.5"])

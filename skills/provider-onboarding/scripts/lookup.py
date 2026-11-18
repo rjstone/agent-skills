@@ -20,7 +20,7 @@ import urllib.error
 import urllib.request
 from urllib.parse import urlparse
 
-VERSION = "0.4.0"
+VERSION = "0.5.0"
 DEFAULT_URLS = "https://models.dev/api.json,https://models.opencode.ai/api.json"
 UA = "provider-onboarding/" + VERSION
 
@@ -46,7 +46,7 @@ LITELLM_URL = "https://raw.githubusercontent.com/BerriAI/litellm/main/model_pric
 LITELLM_IDS = {
     "google": ["gemini"], "google-vertex": ["vertex_ai-language-models", "vertex_ai"],
     "google-vertex-anthropic": ["vertex_ai-anthropic_models"],
-    "amazon-bedrock": ["bedrock_converse", "bedrock"], "azure": ["azure", "azure_ai"],
+    "amazon-bedrock": ["bedrock_mantle", "bedrock_converse", "bedrock"], "azure": ["azure", "azure_ai"],
     "cohere": ["cohere_chat"], "moonshotai": ["moonshot"], "moonshotai-cn": ["moonshot"],
     "alibaba": ["dashscope"], "alibaba-cn": ["dashscope"], "zhipuai": ["bigmodel"],
     "novita-ai": ["novita"], "nvidia": ["nvidia_nim"], "cloudflare-workers-ai": ["cloudflare"],
@@ -225,6 +225,12 @@ def match_models(q, prov):
     return sorted(out, key=lambda x: (-x[0], x[1]))
 
 
+def is_exact(q, mid, m=None):
+    """True when the query names this model exactly (ignoring case, punctuation and a provider prefix)."""
+    qn = norm((q or "").split("/")[-1])
+    return bool(qn) and qn in (norm(mid), norm(mid.split("/")[-1]), norm((m or {}).get("name")))
+
+
 def model_key(mid, m):
     return norm((m or {}).get("canonical_model_id") or mid.split("/")[-1])
 
@@ -368,10 +374,11 @@ def portkey_params(general, key):
     return out
 
 
-def portkey_info(pid, model_id, args):
+def portkey_info(pid, model_id, args, md_cost=None):
     pricing, psrc, errs = portkey_load("pricing", pid, args)
     if pricing is None:
-        return {"error": "no Portkey pricing file for %s (tried %s)" % (pid, "; ".join(errs) or "nothing")}
+        kinds = sorted({"404" if "404" in e else "unreachable" for e in errs})
+        return {"error": "no Portkey pricing file for %s (%d locations tried: %s)" % (pid, len(errs), ", ".join(kinds) or "none")}
     info = {"source": psrc}
     key = portkey_model_key(model_id, pricing) if model_id else None
     if model_id and not key:
@@ -380,6 +387,11 @@ def portkey_info(pid, model_id, args):
     if key:
         info["model_key"] = key
         info["pricing_usd"] = portkey_pricing(pricing[key])
+        p = info["pricing_usd"]
+        diffs = ["%s: Portkey $%g vs models.dev $%g" % (f, p[f], md_cost[f]) for f in ("input", "output")
+                 if md_cost and isinstance(md_cost.get(f), (int, float)) and f in p and abs(p[f] - md_cost[f]) > 1e-6]
+        if diffs:
+            info["disagrees_with_models_dev"] = diffs
     general, gsrc, _ = portkey_load("general", pid, args)
     if general is not None:
         info["params"] = portkey_params(general, key)
@@ -422,14 +434,17 @@ def litellm_match(pid, model_id, table):
     if not cands:
         return None, names
     want = (model_id or "").strip()
-    for k, short in sorted(cands.items()):
+    # fewest path segments first: "bedrock/<model>" beats "bedrock/us-gov-east-1/<model>"
+    order = sorted(cands.items(), key=lambda kv: (kv[1].count("/"), len(kv[0]), kv[0]))
+    for k, short in order:
         if short == want or k == want:
             return k, names
     tail = want.split("/")[-1]
-    for k, short in sorted(cands.items()):
+    for k, short in order:
         if short.split("/")[-1] == tail:
             return k, names
-    hits = sorted(((score(want, short, short.split("/")[-1]), k) for k, short in cands.items()), key=lambda x: (-x[0], x[1]))
+    hits = sorted(((score(want, short, short.split("/")[-1]), k) for k, short in cands.items()),
+                  key=lambda x: (-x[0], x[1].count("/"), "gov" in x[1], len(x[1]), x[1]))
     return (hits[0][1] if hits and hits[0][0] >= 80 else None), names
 
 
@@ -450,11 +465,11 @@ def litellm_info(pid, model_id, table, src, md_cost=None):
         return {"error": "give a model id for LiteLLM prices"}
     key, names = litellm_match(pid, model_id, table)
     if not names:
-        return {"error": "LiteLLM has no provider matching %s" % pid}
+        return {"error": "LiteLLM's table has no entries for provider %s" % pid}
     if not key:
-        return {"error": "LiteLLM (%s) has no model matching %r" % (", ".join(sorted(names)), model_id)}
+        return {"error": "LiteLLM has %s entries but none for model %r" % ("/".join(sorted(names)), model_id)}
     e = table[key]
-    info = {"key": key, "table": src, "pricing_usd": litellm_pricing(e),
+    info = {"key": key, "table": src, "region_specific": key.count("/") > 1 and any(t in key for t in ("us-", "eu-", "ap-", "gov", "global.")), "pricing_usd": litellm_pricing(e),
             "pricing_source": e.get("source"),
             "max_input_tokens": e.get("max_input_tokens"), "max_output_tokens": e.get("max_output_tokens"),
             "capabilities": sorted(k[len("supports_"):] for k, v in e.items() if k.startswith("supports_") and v is True)}
@@ -467,7 +482,7 @@ def litellm_info(pid, model_id, table, src, md_cost=None):
                  if isinstance(md_cost.get(f), (int, float)) and f in p and abs(p[f] - md_cost[f]) > 1e-6]
         if diffs:
             info["disagrees_with_models_dev"] = diffs
-    return {k: v for k, v in info.items() if v not in (None, [], {})}
+    return {k: v for k, v in info.items() if v not in (None, [], {}, False)}
 
 
 # ---------- community list ----------
@@ -578,7 +593,10 @@ def snippets(e):
                               "models": {mid: mcfg}}},
           "model": "%s/%s" % (pid, mid)}
     out["opencode"] = json.dumps(oc, indent=2) + guess
-    out["fast_agent"] = ('generic:\n  base_url: "%s"\n  api_key: "${%s}"\n\n'
+    usable = bool(base) and e["protocol"] == "openai"
+    out["fast_agent"] = ("# no fast-agent generic snippet: %s; see %s" % (
+        "base URL unknown" if not base else "protocol is %s, not OpenAI-compatible" % e["protocol"],
+        e["docs"] or "the provider docs")) if not usable else ('generic:\n  base_url: "%s"\n  api_key: "${%s}"\n\n'
                          'fast-agent go --model generic.%s --message "ping"' % (base or "<base-url>", env, mid))
     out["env"] = "export %s=...   # set in your shell or secret store; never paste the key into chat" % env
     if base and e["protocol"] == "openai":
@@ -607,7 +625,8 @@ def render_md(res):
               "- Docs: %s" % (e["docs"] or "MISSING"),
               "- Hosts to allowlist: %s" % (", ".join(e["hosts_to_allowlist"]) or "?")]
         if m:
-            L.append("- Model: `%s`%s" % (m["id"], " (%s)" % m["name"] if m["name"] else ""))
+            L.append("- Model: `%s`%s%s" % (m["id"], " (%s)" % m["name"] if m["name"] else "",
+                                             "  **(closest match, NOT the exact id asked for)**" if m.get("exact_match") is False else ""))
             for k in ("limit", "cost", "modalities", "reasoning", "tool_call", "status", "release_date", "open_weights"):
                 if m.get(k) is not None:
                     L.append("  - %s: %s" % (k, json.dumps(m[k]) if not isinstance(m[k], str) else m[k]))
@@ -624,6 +643,8 @@ def render_md(res):
                     L.append("  - %s: %s" % (k, ll[k]))
             if ll.get("capabilities"):
                 L.append("  - capabilities: %s" % ", ".join(ll["capabilities"]))
+            if ll.get("region_specific"):
+                L.append("  - note: this LiteLLM price is for a specific region or deployment (see key)")
             for d in ll.get("disagrees_with_models_dev", []):
                 L.append("  - DISAGREES with models.dev: %s" % d)
         pk = e.get("portkey")
@@ -631,6 +652,8 @@ def render_md(res):
             L.append("- Portkey: %s  _[%s]_" % (pk.get("error") or ("model `%s`" % pk["model_key"] if pk.get("model_key") else "provider file found; give a model id for prices"), pk.get("source") or "Portkey-AI/models"))
             if pk.get("pricing_usd"):
                 L.append("  - pricing (USD per 1M tokens; per_unit_usd per call): %s" % json.dumps(pk["pricing_usd"]))
+            for d in pk.get("disagrees_with_models_dev", []):
+                L.append("  - DISAGREES with models.dev: %s" % d)
             if pk.get("params"):
                 L.append("  - gateway param ranges: %s" % json.dumps(pk["params"]))
         for k, v in e["extras"].items():
@@ -731,8 +754,14 @@ def main():
             if a.model:
                 mm = match_models(a.model, prov)
                 if mm:
-                    for s, mid, m in mm[:2]:
-                        entries.append(build_entry(pid, prov, mid, m, o))
+                    exact = [x for x in mm if is_exact(a.model, x[1], x[2])]
+                    if not exact:
+                        warnings.append("%s has no model exactly named %r; closest: %s"
+                                        % (pid, a.model, ", ".join(x[1] for x in mm[:3])))
+                    for s, mid, m in (exact or mm)[:2]:
+                        e = build_entry(pid, prov, mid, m, o)
+                        e["model"]["exact_match"] = is_exact(a.model, mid, m)
+                        entries.append(e)
                 else:
                     warnings.append("provider %s has no model matching %r; listing provider only" % (pid, a.model))
                     entries.append(build_entry(pid, prov, a.model, {}, o))
@@ -762,9 +791,18 @@ def main():
         if not hits:
             sys.stderr.write("No model matches %r in %d providers.\n" % (a.model, len(data)))
             return 2
-        warnings.append("model-only query: %d providers serve something matching; showing %d" % (len(hits), min(len(hits), a.limit)))
+        shown = min(len(hits), a.limit)
+        warnings.append("model-only query: showing %d of %d providers that serve something matching%s"
+                        % (shown, len(hits), "; add --limit %d to see all" % len(hits) if shown < len(hits) else ""))
+        hits.sort(key=lambda x: (not is_exact(a.model, x[2], x[3]), -x[0], x[1]))
+        n_exact = sum(1 for h in hits if is_exact(a.model, h[2], h[3]))
+        if n_exact < len(hits):
+            warnings.append("%d of %d matches are not exactly %r (other versions or sizes); exact matches are listed first"
+                            % (len(hits) - n_exact, len(hits), a.model))
         for s, pid, mid, m in hits[: a.limit]:
-            entries.append(build_entry(pid, data[pid], mid, m, ov.get(pid, {})))
+            e = build_entry(pid, data[pid], mid, m, ov.get(pid, {}))
+            e["model"]["exact_match"] = is_exact(a.model, mid, m)
+            entries.append(e)
 
     if a.litellm and entries:
         table, src = litellm_load(a)
@@ -775,7 +813,8 @@ def main():
             e["litellm"] = litellm_info(e["provider_id"], m.get("id"), table, src, m.get("cost_usd_per_1m")) if table else {"error": src}
     if a.portkey or a.portkey_dir:
         for e in entries:
-            e["portkey"] = portkey_info(e["provider_id"], (e["model"] or {}).get("id"), a)
+            m = e["model"] or {}
+            e["portkey"] = portkey_info(e["provider_id"], m.get("id"), a, m.get("cost_usd_per_1m"))
     res = {"query": query, "notes": notes, "warnings": warnings, "entries": entries, "also_served_by": also[:10]}
     if a.format == "json":
         for e in res["entries"]:
