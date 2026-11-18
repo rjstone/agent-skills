@@ -107,7 +107,7 @@
     },
     {
       "name": "provider-onboarding",
-      "version": "0.5.0",
+      "version": "0.6.0",
       "files": [
         "SKILL.md",
         "references/data-sources.md",

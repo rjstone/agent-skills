@@ -20,7 +20,7 @@ import urllib.error
 import urllib.request
 from urllib.parse import urlparse
 
-VERSION = "0.5.0"
+VERSION = "0.6.0"
 DEFAULT_URLS = "https://models.dev/api.json,https://models.opencode.ai/api.json"
 UA = "provider-onboarding/" + VERSION
 
