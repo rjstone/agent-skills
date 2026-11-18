@@ -259,3 +259,31 @@ What changed:
 `tools/replay_docshelf.py` and `replay_mcp.py` now follow any shell
 variable holding the script path (`D=.../docshelf.py; $D show ...`, not only
 `S=`), and count output an agent sent to `/dev/null` as 0.
+
+## Phase 2: smaller output defaults (docshelf 0.8.0)
+
+Branch `optimize/docshelf`: `show` 40 lines (was 150), `search` 20 (was 40),
+`toc` 60 (was 150) with a `--grep` pointer in its cut line; same defaults
+over MCP. A cut or `--offset` page of `show --grep` no longer claims "all
+... are shown". Same nine questions, docs, model and phase-1 prompts.
+Answers: `answers/<docs>-skill-p2.md`.
+
+| Docs | Score | Tool calls | Time | Tokens | 0.7.3 | Phase 1 | **Phase 2** | vs 0.7.3 | MCP arm |
+|---|---|---|---|---|---|---|---|---|---|
+| node | 3 | 10 | 24 s | 119k | 5,645 | 3,576 | **2,997** | −47% | ~2.4k |
+| zig | 3 | 9 | 26 s | 117k | 3,435 | 2,649 | **1,928** | −44% | ~2.3k |
+| pony | 3 | 8 | 25 s | 119k | 3,410 | 2,893 | **~2,591** | −24% | ~1.6k |
+
+9/9, every answer with the key's REF. docshelf I/O (tokens) as before; pony
+leaves out one replayed row (~79 tokens) that only mentions `docshelf.py`
+in text. Node and zig are now at or below the MCP arm; pony is not, because
+it read `pony:builtin-env` three ways (`--grep`, `--offset 0`,
+`--offset 40`) and `pony:builtin-ambientauth --full | head -60`.
+
+- Tool calls 8-10, against 7-11 in phase 1: the 40-line cap did not add
+  round trips. Only the pony run used `--offset` (twice, on one page).
+- `search Int int -d zig` printed 1.3k characters (20 lines) where
+  `search Int -d zig` printed 2.8k (40 lines) before.
+- Several runs piped `show` through `| head -N` as well; with the 40-line
+  default that rarely cut anything.
+- One run again made a stray session tool call (refused, no effect).
