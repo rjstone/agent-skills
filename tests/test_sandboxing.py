@@ -8,6 +8,7 @@ import importlib.util
 import io
 import os
 import shutil
+import subprocess
 import sys
 import tempfile
 import unittest
@@ -245,6 +246,106 @@ class MainTests(unittest.TestCase):
 
     def test_version(self):
         self.assertRegex(sandbox.VERSION, r"^\d+\.\d+\.\d+$")
+
+
+SANDBOX_PY = os.path.join(SCRIPTS, "sandbox.py")
+LEAK_TEST_PY = os.path.join(SCRIPTS, "leak_test.py")
+
+
+def _bwrap_works():
+    """True when bwrap can create the namespaces the sandbox needs here
+    (bwrap --unshare-all --uid 1000 with a read-only /usr)."""
+    if not shutil.which("bwrap"):
+        return False
+    probe = (["bwrap", "--unshare-all", "--uid", "1000", "--gid", "1000"]
+             + sandbox._usr_binds() + ["--", "/usr/bin/true"])
+    try:
+        return subprocess.run(probe, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                              timeout=30).returncode == 0
+    except (OSError, subprocess.TimeoutExpired):
+        return False
+
+
+@unittest.skipUnless(_bwrap_works(), "bwrap with user namespaces is not usable here")
+class IntegrationTests(unittest.TestCase):
+    def run_sandbox(self, args, env=None, timeout=120):
+        return subprocess.run([sys.executable, SANDBOX_PY] + args, env=env,
+                              stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                              text=True, timeout=timeout)
+
+    def mkdir(self):
+        d = tempfile.mkdtemp(prefix="sandboxing-test.", dir="/tmp")
+        os.chmod(d, 0o755)
+        self.addCleanup(shutil.rmtree, d, True)
+        return d
+
+    def test_leak_test_passes(self):
+        r = subprocess.run([sys.executable, LEAK_TEST_PY], stdout=subprocess.PIPE,
+                           stderr=subprocess.PIPE, text=True, timeout=600)
+        self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+        lines = r.stdout.strip().splitlines()
+        self.assertEqual(lines[-1], "PASS", r.stdout)
+        self.assertFalse(any(l.startswith("LEAK") for l in lines), r.stdout)
+
+    def test_env_not_visible(self):
+        marker = "sandboxing-env-marker-7f3a"
+        env = dict(os.environ, SECRET_X=marker)
+        r = self.run_sandbox(["--no-net", "--", "env"], env=env)
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertIn("HOME=/work", r.stdout)
+        self.assertNotIn(marker, r.stdout)
+        self.assertNotIn("SECRET_X", r.stdout)
+
+    def test_caller_home_not_visible(self):
+        home = os.path.expanduser("~")
+        r = self.run_sandbox(["--no-net", "--", "sh", "-c", 'test -e "$1"', "sh", home])
+        self.assertEqual(r.returncode, 1, r.stderr)
+        r = self.run_sandbox(["--no-net", "--", "sh", "-c", 'test -e "$1"', "sh", "/work"])
+        self.assertEqual(r.returncode, 0, r.stderr)
+
+    def test_runtime_outside_usr(self):
+        rt = self.mkdir()
+        os.mkdir(os.path.join(rt, "bin"), 0o755)
+        hello = os.path.join(rt, "bin", "hello")
+        with open(hello, "w") as f:
+            f.write("#!/bin/sh\necho hello-from-runtime\n")
+        os.chmod(hello, 0o755)
+        r = self.run_sandbox(["--no-net", "--ro", rt + ":/opt/rt", "--", "hello"])
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertEqual(r.stdout.strip(), "hello-from-runtime")
+
+    def test_work_folder_usable_after_run(self):
+        work = os.path.join(self.mkdir(), "work")
+        r = self.run_sandbox(["--no-net", "--work", work, "--", "sh", "-c",
+                              "echo made-inside > /work/f"])
+        self.assertEqual(r.returncode, 0, r.stderr)
+        f = os.path.join(work, "f")
+        with open(f) as fh:
+            self.assertEqual(fh.read().strip(), "made-inside")
+        os.remove(f)
+        self.assertFalse(os.path.exists(f))
+        shutil.rmtree(work)
+
+    def test_exit_status_passed_through(self):
+        r = self.run_sandbox(["--no-net", "--", "sh", "-c", "exit 7"])
+        self.assertEqual(r.returncode, 7, r.stderr)
+        work = os.path.join(self.mkdir(), "work")
+        r = self.run_sandbox(["--no-net", "--work", work, "--", "sh", "-c", "exit 7"])
+        self.assertEqual(r.returncode, 7, r.stderr)
+        r = self.run_sandbox(["--no-net", "--cpu", "1", "--", "sh", "-c",
+                              "while :; do :; done"], timeout=60)
+        self.assertNotEqual(r.returncode, 0, r.stderr)
+
+    def test_no_net_blocks_network(self):
+        code = ("import socket\n"
+                "try:\n"
+                "    socket.create_connection(('192.0.2.1', 443), timeout=5)\n"
+                "except OSError as exc:\n"
+                "    print('blocked', exc)\n"
+                "    raise SystemExit(3)\n")
+        r = self.run_sandbox(["--no-net", "--", "python3", "-c", code])
+        self.assertEqual(r.returncode, 3, r.stdout + r.stderr)
+        self.assertIn("blocked", r.stdout)
 
 
 if __name__ == "__main__":
