@@ -181,6 +181,12 @@ Done in 0.7.4 (lookup card: 7.1, 7.5 via the card) and 0.8.0 (defaults:
       (`search "--permission"`) and arguments to `list` or `where` get a
       hint instead of argparse's message.
 
+- [ ] 7.7 MCP argument slips seen in the 2026-11-18 MCP arms (the user,
+      2026-11-18): accept a string where `docvols` expects a list (models
+      sent `"[node]"`), and suggest the closest docvol name when one is
+      unknown (models invented `nodejs`, `node~26`, `mdn/http`). See
+      `docs/trials/2026-11-18-opencode-docshelf-sandboxed/` ("MCP arms").
+
 #### Reference: other docset and DevDocs readers (skimmed 2026-11-17)
 
 Read Zeal's folder, no network:
@@ -199,6 +205,21 @@ DevDocs-based: https://github.com/maxwhipw/devdocs-mcp,
 Docker transports, talking to the running Dash app, Readability/Turndown
 conversion, Apple's DocC format (needs brotli), downloading from Kapeli's
 servers.
+
+### sandboxing
+
+- [ ] Bind `/etc/hosts` read-only by default: without it `localhost`
+      doesn't resolve inside (SKILL.md says to pass `--ro /etc/hosts`).
+- [ ] A working-directory option below `/work` (today: `sh -c 'cd ... &&
+      exec CMD'`, as in `references/nested-agents.md`).
+- [ ] sandbox.py's own errors exit 2, the same as a command that exits 2;
+      consider a distinct status or a marker line on stderr.
+- [ ] Started as root, `--rw` binds are checked only for read access by the
+      sandbox user: a root-owned `--rw` folder passes preflight but is
+      read-only inside. Check write access too, or chown it like `--work`.
+- [ ] `--mem` is an address-space limit (`prlimit --as`); Node.js/V8
+      reserves large virtual ranges, so it likely breaks Node agents such as
+      opencode. Test, then document it or offer a cgroup-based limit.
 
 ## Automation
 
