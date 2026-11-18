@@ -172,3 +172,51 @@ Largest single outputs (TODO.md docshelf group 7):
   `Labeled-switch` section (3.8k) is mostly one example, with the answer in
   its first 5 lines; pony's whole `builtin-env` page (1.6k) repeated two
   field sections already read.
+
+## CLI vs MCP: command I/O only
+
+Estimate: CLI = (command typed + output) / 4; MCP = (tool-call JSON +
+result text) / 4. Harness framing, ToolSearch and answer writing are left
+out on both sides.
+
+**Same queries on both interfaces.** `tools/replay_mcp.py` replays the CLI
+agents' own docshelf commands through `docshelf --mcp` (each `| head -N`
+applied to both outputs; `--help` has no MCP counterpart and is left out):
+
+| Docs | Queries | CLI | MCP | Difference |
+|---|---|---|---|---|
+| node | 11 | 4,714 | 4,669 | −1% |
+| zig | 12 | 2,436 | 2,405 | −1% |
+| pony | 15 | 2,379 | 2,299 | −3% |
+
+Results are the same size to within a few characters (MCP's tool wording
+added 7 characters to two results); the call JSON is 5-25 characters
+shorter than the typed command. Pony's bare `sources` (no query) is an
+error over MCP, where `query` is required.
+
+**Fixed context, once per session:**
+
+| | CLI | MCP |
+|---|---|---|
+| Up front | SKILL.md, 6,398 chars (~1.6k tok) | server `instructions`, 519 chars (~130 tok) |
+| Orientation | `--help`, ~3.9k chars (~1.0k tok) | tool schemas, 5,013 chars (~1.25k tok) |
+| Total | ~2.6k tok | ~1.4k tok |
+
+Claude Code defers MCP schemas until ToolSearch loads them; a client that
+loads all schemas at start keeps the 1.25k in context all session.
+
+**What each arm spent** (its own queries):
+
+| Docs | CLI arm | MCP arm |
+|---|---|---|
+| node | 5,645 | ~2.4k |
+| zig | 3,435 | ~2.3k (0.4k on four failed calls) |
+| pony | 3,410 | ~1.6k |
+
+Since the same queries cost the same on both interfaces, the gap is the
+agents' behaviour: the MCP agents set `max_lines`, searched exact entry
+names (`path.basename`, `DatabaseSync`) rather than broad words (`node`,
+`Int`), and skipped `--help`, whole-page `show` and `toc`. The tool
+schemas put `max_lines` and `docvols` in front of the model as named
+parameters; SKILL.md can teach the same habits to CLI agents (TODO.md
+docshelf 7.5).
