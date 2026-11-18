@@ -111,6 +111,27 @@ items are done.
       (prefix "unreadable meta.json"). `list` shows an unusable WAL docset
       as "0 entries" (with a warning); say "unusable" in the row instead.
 
+#### 7. Output size (from the 2026-11-18 Haiku trial)
+
+Per-command counts are in `docs/trials/2026-11-18-haiku-node-zig-pony/`
+(`tools/replay_docshelf.py` re-measures a run).
+
+- [ ] 7.1 Look at whether a shorter top-level `--help` is possible (about
+      3.9k characters; every trial run read it right after SKILL.md). Low
+      priority: it is paid once per session, before several queries
+      (the user, 2026-11-18).
+- [ ] 7.2 `search` with a short or generic query prints about 3k
+      characters (`search Int -d zig`; `search node` over all docvols to
+      find a docvol's name). Consider a lower default `--max-lines`, or a
+      tighter cap for queries of 3 characters or less.
+- [ ] 7.3 `toc` of a big page is large (`toc node:sqlite`, 60 lines, 4.4k
+      characters) where `show --grep` found the answer in 1.2k. Consider
+      pointing to `--grep` in the toc's cut line.
+- [ ] 7.4 A `show` dominated by one long code example (zig
+      `Labeled-switch`, 3.8k characters, the answer in its first 5 lines)
+      has no smaller default. Consider a lower default line cap for
+      `show`, with the existing "N more lines; --offset" hint.
+
 #### Reference: other docset and DevDocs readers (skimmed 2026-11-17)
 
 Read Zeal's folder, no network:

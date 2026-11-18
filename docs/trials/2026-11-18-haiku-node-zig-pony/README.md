@@ -78,3 +78,34 @@ Totals: skill 9/9 (every answer cites a REF), web via MCP 7.5/9, built-in web 7/
 - The Node run created a one-minute "noop" scheduled message in the
   session against its instructions; the controller deleted it before it
   fired. (A second rule slip by a Haiku subagent in this trial; see above.)
+
+## Skill runs: tokens per docshelf command
+
+Estimate as in earlier trials: (characters typed + characters printed) / 4.
+Typed = `python scripts/docshelf.py ARGS` (plus the agent's `| head -N`) as
+an agent types it with a default cache; the trial's `export
+DOCSHELF_CACHE_DIR=...` and absolute paths are left out. Printed = what the
+command prints, re-measured by replaying each command exactly as run
+(`tools/replay_docshelf.py`); docshelf output is deterministic.
+`tools/count_calls.py` gives the raw per-tool-call counts from a transcript.
+
+| Docs | Commands | Typed | Printed | ~Tokens | Orientation (`--help`, `list`, `sources`) | Lookups for 3 answers |
+|---|---|---|---|---|---|---|
+| node | 12 | 856 | 21,725 | 5,645 | 1,711 (incl. `search node`, 766) | 3,934 |
+| zig | 13 | 631 | 13,112 | 3,435 | 1,038 | 2,397 |
+| pony | 16 | 983 | 12,658 | 3,410 | 1,083 | 2,327 |
+
+Each run also read SKILL.md (about 6.5k characters, ~1.6k tokens). Lookups
+cost about 0.8k tokens per answer (zig, pony) to 1.3k (node).
+
+Largest single outputs (TODO.md docshelf group 7):
+- `--help`, about 3.9k characters, read by every run right after SKILL.md;
+  paid once per session, so only worth a look.
+- Short or generic `search` queries: `search node` (all docvols) 3.0k,
+  `search Int -d zig` 2.8k.
+- `toc node:sqlite | head -60`: 4.4k, where `show --grep` found the answer
+  in 1.2k.
+- Long sections: the `DatabaseSync` options (3.8k) are the answer; the zig
+  `Labeled-switch` section (3.8k) is mostly one example, with the answer in
+  its first 5 lines; pony's whole `builtin-env` page (1.6k) repeated two
+  field sections already read.
