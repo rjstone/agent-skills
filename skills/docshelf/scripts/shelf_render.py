@@ -399,8 +399,11 @@ def _print_lines(lines, args, def_ends=None, header=()) -> bool:
             return True
         footer = ("(all %d lines containing %s are shown; the section has %d lines)"
                   % (matched, wanted, total))
+        part = ("(%d lines contain %s; this is part of them, see the line above "
+                "or --offset; the section has %d lines)" % (matched, wanted, total))
         if with_def:
             footer = footer[:-1] + "; a matching term is shown with its definition)"
+            part = part[:-1] + "; a matching term is shown with its definition)"
     offset = getattr(args, "offset", 0) or 0
     if offset:
         if offset >= len(lines):
@@ -408,6 +411,8 @@ def _print_lines(lines, args, def_ends=None, header=()) -> bool:
                   % (shelf_core.hint("--offset %d" % offset), len(lines)))
             return False
         lines = lines[offset:]
+    if footer and (offset or (not args.full and len(lines) > args.max_lines)):
+        footer = part  # a page of the grep output: not "all ... are shown"
     if not args.full and len(lines) > args.max_lines:
         more = len(lines) - args.max_lines
         lines = lines[:args.max_lines] + [

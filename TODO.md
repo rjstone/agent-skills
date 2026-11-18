@@ -117,24 +117,26 @@ items are done.
 #### 7. Output size (from the 2026-11-18 Haiku trial)
 
 Per-command counts are in `docs/trials/2026-11-18-haiku-node-zig-pony/`
+Done in 0.7.4 (lookup card: 7.1, 7.5 via the card) and 0.8.0 (defaults:
+7.2-7.4); results in that README's "Phase 1" and "Phase 2" sections.
 (`tools/replay_docshelf.py` re-measures a run).
 
-- [ ] 7.1 Look at whether a shorter top-level `--help` is possible (about
+- [x] 7.1 Look at whether a shorter top-level `--help` is possible (about
       3.9k characters; every trial run read it right after SKILL.md). Low
       priority: it is paid once per session, before several queries
       (the user, 2026-11-18).
-- [ ] 7.2 `search` with a short or generic query prints about 3k
+- [x] 7.2 `search` with a short or generic query prints about 3k
       characters (`search Int -d zig`; `search node` over all docvols to
       find a docvol's name). Consider a lower default `--max-lines`, or a
       tighter cap for queries of 3 characters or less.
-- [ ] 7.3 `toc` of a big page is large (`toc node:sqlite`, 60 lines, 4.4k
+- [x] 7.3 `toc` of a big page is large (`toc node:sqlite`, 60 lines, 4.4k
       characters) where `show --grep` found the answer in 1.2k. Consider
       pointing to `--grep` in the toc's cut line.
-- [ ] 7.4 A `show` dominated by one long code example (zig
+- [x] 7.4 A `show` dominated by one long code example (zig
       `Labeled-switch`, 3.8k characters, the answer in its first 5 lines)
       has no smaller default. Consider a lower default line cap for
       `show`, with the existing "N more lines; --offset" hint.
-- [ ] 7.5 Teach CLI agents the MCP agents' query habits in SKILL.md
+- [x] 7.5 Teach CLI agents the MCP agents' query habits in SKILL.md
       (the user, 2026-11-18). In the trial the same queries cost the same
       over the CLI and `--mcp` (within 1-3%), but the MCP agents spent
       1.6-2.4k tokens of docshelf I/O per three questions against
