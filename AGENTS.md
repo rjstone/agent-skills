@@ -85,6 +85,13 @@ vendors' plugin formats):
   `tests/test_<name>.py` -> that skill; shared tests, `scripts/`, `.github/`
   -> all; notes -> none) and, with `--check-versions`, fails when an existing
   skill changed without a higher `metadata.version`.
+- `scripts/claude_skill.sh` - packages skills as Claude `.skill` files (zip
+  with the skill folder at the top level; leaves out `evals/`, caches).
+  `scripts/claude_skill.sh [-o OUTDIR] [-l] [SKILL...]`: no names = every skill
+  in `../skills` (found from the script's location, not the cwd), else only
+  the named ones; output defaults to the cwd; `-l` lists skills. Checks each
+  `SKILL.md` frontmatter (`name` = folder, `description` present) and needs
+  `zip`. `*.skill` is git-ignored: never commit packages (the user, 2026-11-18).
 - `.github/workflows/ci.yml` - runs on pushes to `main` and `skill/**`, and on
   PRs (opened, synchronize, reopened). Always runs the safety scan; runs the
   unit tests and the skills CLI check (`npx skills add . --list`) only for
