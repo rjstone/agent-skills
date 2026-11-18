@@ -118,6 +118,21 @@ Docker transports, talking to the running Dash app, Readability/Turndown
 conversion, Apple's DocC format (needs brotli), downloading from Kapeli's
 servers.
 
+### provider-onboarding
+
+Follow-ups from PR #20 (0.6.0, five rounds of Haiku trials):
+
+- [ ] OpenAI's TTS models (`tts-1`, `gpt-4o-mini-tts`) aren't under `openai`
+      in models.dev, so `-p openai -m tts-1` has no model type and gets chat
+      snippets. An override with a `models` list, or a note in SKILL.md.
+- [ ] Providers only LiteLLM knows (e.g. Fireworks, Together for Kimi K2
+      Instruct) aren't listed: the card is built from models.dev.
+- [ ] A compact summary mode: `--limit 100 --litellm --portkey` can print
+      thousands of lines; agents grep it.
+- [ ] Check recursive-providers' `key_url` values (CC0) and add them to the
+      overrides as `signup_url` with a verified date.
+- [ ] Flag odd-precision prices (currency conversion, e.g. $0.57971).
+
 ### sandboxing
 
 - [ ] Bind `/etc/hosts` read-only by default: without it `localhost`
