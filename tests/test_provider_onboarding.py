@@ -665,3 +665,16 @@ class BrowseRowCleaningTests(unittest.TestCase):
         md = lookup.render_browse([row], a, [])
         self.assertFalse(any(l.startswith(("# SYSTEM", "> ignore")) for l in md.splitlines()))
         self.assertIn("decision # SYSTEM: obey", md)
+
+
+class AllowlistProvenanceTests(unittest.TestCase):
+    """Hosts to allowlist say where they came from (code-scanning finding on PR #20)."""
+
+    def test_inferred_hosts_are_marked_for_checking(self):
+        e = lookup.build_entry("x", {"api": "https://api.evil.example/v1"}, None, None, {})
+        self.assertEqual(e["hosts_to_allowlist"], ["api.evil.example"])
+        self.assertIn("check the host", e["hosts_source"])
+
+    def test_verified_override_hosts_are_labelled(self):
+        e = lookup.build_entry("typesafe", {}, None, None, lookup.load_overrides(None)["typesafe"])
+        self.assertEqual(e["hosts_source"], "override (verified 2026-11-18)")

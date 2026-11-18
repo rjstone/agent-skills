@@ -683,6 +683,9 @@ def build_entry(pid, prov, mid, model, ov, manual=None):
         } if (mid or manual.get("model_id")) else None,
         "signup_candidates": signup_candidates(base, docs, ov),
         "hosts_to_allowlist": ov.get("hosts") or [h for h in [host_of(base)] if h],
+        "hosts_source": ("override (verified %s)" % ov.get("verified", "?") if ov.get("hosts") and not ov.get("unverified")
+                         else "manual" if manual.get("base_url")
+                         else "inferred from the catalog base URL: third-party data, check the host against the provider's docs before allowlisting"),
         "extras": {k: ov[k] for k in ("website", "models_endpoint", "protocols", "headers", "quirks", "verified", "source", "note") if ov.get(k)},
         "data_source": prov.get("_src"),
         "opencode_package": prov.get("opencodeai"),
@@ -799,8 +802,9 @@ def render_md(res):
               "- API key env var: %s" % (", ".join(e["env"]) or "MISSING"),
               "- Protocol guess: %s (npm: %s)" % (e["protocol"], e["npm"] or "n/a"),
               "- Docs: %s" % (e["docs"] or "MISSING"),
-              "- Hosts to allowlist: %s%s" % (", ".join(h for h in e["hosts_to_allowlist"] if h) or "?",
-                                              " (fill in the ${VARS} first)" if any("${" in (h or "") for h in e["hosts_to_allowlist"]) else "")]
+              "- Hosts to allowlist: %s%s  _[%s]_" % (", ".join(h for h in e["hosts_to_allowlist"] if h) or "?",
+                                              " (fill in the ${VARS} first)" if any("${" in (h or "") for h in e["hosts_to_allowlist"]) else "",
+                                              e.get("hosts_source") or "?")]
         if m:
             L.append("- Model: `%s`%s%s" % (m["id"], " (%s)" % m["name"] if m["name"] else "",
                                              "  **(closest match, NOT the exact id asked for)**" if m.get("exact_match") is False else ""))
