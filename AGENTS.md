@@ -90,6 +90,12 @@ vendors' plugin formats):
   unit tests and the skills CLI check (`npx skills add . --list`) only for
   the selected skills (`SKILLS=<list>`; unset locally = all). No network in
   the tests.
+- `.github/workflows/bandit.yml` - Bandit security scan, uploaded as SARIF to
+  the Security tab: the code with all checks, `tests/` without B105/B603
+  (false positives there; the user, 2026-11-18). The header has the same
+  commands for a local run. `codeql.yml` - CodeQL advanced setup (actions,
+  python); it only uploads when CodeQL *default* setup is off in the repo's
+  Code security settings.
 - `.github/pull_request_template.md` - every PR fills it in: Kind and
   What changed always; Skill and version, Public-repo checklist and
   Testing for skills; Docs touched if it applies; Follow-ups optional
