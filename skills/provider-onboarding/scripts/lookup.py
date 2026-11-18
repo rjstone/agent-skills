@@ -82,7 +82,7 @@ MULTI_TLDS = {"co.uk", "org.uk", "ac.uk", "com.au", "co.jp", "com.br", "co.in",
 SHARED_HOSTS = {"googleapis.com", "amazonaws.com", "azure.com", "azure-api.net",
                 "windows.net", "cloudflare.com", "workers.dev", "vercel.app",
                 "herokuapp.com", "run.app", "github.io", "ngrok.io", "fly.dev",
-                "onrender.com", "netlify.app"}
+                "onrender.com", "netlify.app", "github.com", "githubusercontent.com", "api.aws"}
 
 FALLBACK_HELP = """\
 No models.dev-style data source could be loaded. Options, in order:
@@ -250,6 +250,14 @@ def is_shared(host):
     return any(h == s or h.endswith("." + s) for s in SHARED_HOSTS)
 
 
+def host_of(url):
+    """Host part of a URL as written; keeps ${VAR} templates instead of returning None."""
+    m = re.match(r"^[a-zA-Z][a-zA-Z0-9+.-]*://([^/?#]+)", url or "")
+    if m and "${" in m.group(1):
+        return m.group(1)
+    return urlparse(url or "").hostname
+
+
 def signup_candidates(base_url, docs, ov):
     c = []
     if ov.get("signup_url"):
@@ -258,8 +266,12 @@ def signup_candidates(base_url, docs, ov):
     for label, u in (("API host", base_url), ("docs host", docs)):
         if not u:
             continue
-        host = urlparse(u).hostname
+        host = host_of(u)
         if not host:
+            continue
+        if "${" in host:
+            c.append({"url": None, "confidence": "none",
+                      "basis": "%s %s is a template; no apex guess" % (label, host)})
             continue
         if is_shared(host):
             c.append({"url": None, "confidence": "none",
@@ -560,7 +572,7 @@ def build_entry(pid, prov, mid, model, ov, manual=None):
             "release_date": m.get("release_date"), "open_weights": m.get("open_weights"),
         } if (mid or manual.get("model_id")) else None,
         "signup_candidates": signup_candidates(base, docs, ov),
-        "hosts_to_allowlist": ov.get("hosts") or ([urlparse(base).hostname] if base else []),
+        "hosts_to_allowlist": ov.get("hosts") or [h for h in [host_of(base)] if h],
         "extras": {k: ov[k] for k in ("models_endpoint", "protocols", "headers", "quirks", "verified", "source", "note") if ov.get(k)},
         "data_source": prov.get("_src"),
         "opencode_package": prov.get("opencodeai"),
@@ -623,7 +635,8 @@ def render_md(res):
               "- API key env var: %s" % (", ".join(e["env"]) or "MISSING"),
               "- Protocol guess: %s (npm: %s)" % (e["protocol"], e["npm"] or "n/a"),
               "- Docs: %s" % (e["docs"] or "MISSING"),
-              "- Hosts to allowlist: %s" % (", ".join(e["hosts_to_allowlist"]) or "?")]
+              "- Hosts to allowlist: %s%s" % (", ".join(h for h in e["hosts_to_allowlist"] if h) or "?",
+                                              " (fill in the ${VARS} first)" if any("${" in (h or "") for h in e["hosts_to_allowlist"]) else "")]
         if m:
             L.append("- Model: `%s`%s%s" % (m["id"], " (%s)" % m["name"] if m["name"] else "",
                                              "  **(closest match, NOT the exact id asked for)**" if m.get("exact_match") is False else ""))
@@ -686,6 +699,7 @@ def main():
     ap.add_argument("--limit", type=int, default=8, help="max providers listed for a model-only query")
     ap.add_argument("--portkey", action="store_true", help="add Portkey-AI/models pricing and param ranges")
     ap.add_argument("--portkey-dir", help="local clone of Portkey-AI/models (implies --portkey, no network)")
+    ap.add_argument("--all-matches", action="store_true", help="model-only query: also list near matches when exact ones exist")
     ap.add_argument("--litellm", action="store_true", help="add LiteLLM pricing, limits, deprecation and source links")
     ap.add_argument("--litellm-file", help="local copy of LiteLLM's model_prices_and_context_window.json (implies --litellm)")
     ap.add_argument("--extra-list", action="store_true", help="last resort: community provider list when models.dev has no match")
@@ -791,14 +805,18 @@ def main():
         if not hits:
             sys.stderr.write("No model matches %r in %d providers.\n" % (a.model, len(data)))
             return 2
-        shown = min(len(hits), a.limit)
-        warnings.append("model-only query: showing %d of %d providers that serve something matching%s"
-                        % (shown, len(hits), "; add --limit %d to see all" % len(hits) if shown < len(hits) else ""))
         hits.sort(key=lambda x: (not is_exact(a.model, x[2], x[3]), -x[0], x[1]))
         n_exact = sum(1 for h in hits if is_exact(a.model, h[2], h[3]))
-        if n_exact < len(hits):
+        if n_exact and n_exact < len(hits) and not a.all_matches:
+            warnings.append("%d providers serve exactly %r; %d near matches (other versions or sizes) hidden, add --all-matches to list them"
+                            % (n_exact, a.model, len(hits) - n_exact))
+            hits = hits[:n_exact]
+        elif n_exact < len(hits):
             warnings.append("%d of %d matches are not exactly %r (other versions or sizes); exact matches are listed first"
                             % (len(hits) - n_exact, len(hits), a.model))
+        shown = min(len(hits), a.limit)
+        if shown < len(hits):
+            warnings.append("model-only query: showing %d of %d providers; add --limit %d to see all" % (shown, len(hits), len(hits)))
         for s, pid, mid, m in hits[: a.limit]:
             e = build_entry(pid, data[pid], mid, m, ov.get(pid, {}))
             e["model"]["exact_match"] = is_exact(a.model, mid, m)
@@ -811,6 +829,12 @@ def main():
         for e in entries:
             m = e["model"] or {}
             e["litellm"] = litellm_info(e["provider_id"], m.get("id"), table, src, m.get("cost_usd_per_1m")) if table else {"error": src}
+            dd = e["litellm"].get("deprecation_date")
+            if dd and dd <= time.strftime("%Y-%m-%d", time.gmtime(time.time() + 183 * 86400)):
+                past = dd < time.strftime("%Y-%m-%d", time.gmtime())
+                warnings.append("%s %s: LiteLLM says %s %s%s; confirm on the provider's deprecations page"
+                                % (e["provider_id"], m.get("id"), "retired on" if past else "retires on", dd,
+                                   ", successor %s" % e["litellm"]["successor_model"] if e["litellm"].get("successor_model") else ""))
     if a.portkey or a.portkey_dir:
         for e in entries:
             m = e["model"] or {}

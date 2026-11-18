@@ -10,6 +10,7 @@ import os
 import subprocess
 import sys
 import tempfile
+import time
 import unittest
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
@@ -397,3 +398,51 @@ class FixesFromHaikuTrialsTests(unittest.TestCase):
         res = self.run_json("-p", "acme", "-m", "acme-large", "--portkey-dir", pk)
         self.assertEqual(res["entries"][0]["portkey"]["disagrees_with_models_dev"],
                          ["input: Portkey $2 vs models.dev $1.5"])
+
+
+class SecondTrialFixesTests(unittest.TestCase):
+    """Fixes for the second round of Haiku trials (2026-11-18)."""
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        api = json.loads(json.dumps(API))
+        api["tmpl"] = {"id": "tmpl", "name": "Templated", "env": ["TMPL_KEY"],
+                       "api": "${TMPL_GATEWAY_URL}/v1",
+                       "models": {"acme-large": {"id": "acme-large", "name": "Acme Large"}}}
+        api["regional"] = {"id": "regional", "name": "Regional", "env": ["R_KEY"],
+                           "api": "https://svc.${REGION}.example.com/v1", "doc": "https://github.com/org/repo",
+                           "models": {"acme-large-mini": {"id": "acme-large-mini", "name": "Acme Large Mini"}}}
+        self.api = os.path.join(self.tmp.name, "api.json")
+        with open(self.api, "w") as f:
+            json.dump(api, f)
+
+    def run_cli(self, *args):
+        return subprocess.run([sys.executable, SCRIPT, "--file", self.api, *args], capture_output=True, text=True)
+
+    def test_template_base_url_does_not_crash_markdown(self):
+        r = self.run_cli("-m", "acme-large", "--limit", "50", "--all-matches")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertIn("svc.${REGION}.example.com (fill in the ${VARS} first)", r.stdout)
+
+    def test_template_and_github_hosts_get_no_apex_guess(self):
+        c = lookup.signup_candidates("https://svc.${REGION}.example.com/v1", "https://github.com/org/repo", {})
+        self.assertFalse(any(x["url"] in ("https://example.com", "https://github.com") for x in c))
+
+    def test_model_only_hides_near_matches_by_default(self):
+        r = self.run_cli("-m", "acme-large", "--format", "json")
+        res = json.loads(r.stdout)
+        self.assertTrue(all(e["model"]["exact_match"] for e in res["entries"]))
+        self.assertTrue(any("--all-matches" in w for w in res["warnings"]))
+        r2 = self.run_cli("-m", "acme-large", "--format", "json", "--all-matches", "--limit", "50")
+        self.assertGreater(len(json.loads(r2.stdout)["entries"]), len(res["entries"]))
+
+    def test_upcoming_deprecation_is_a_top_level_warning(self):
+        soon = time.strftime("%Y-%m-%d", time.gmtime(time.time() + 30 * 86400))
+        table = os.path.join(self.tmp.name, "ll.json")
+        with open(table, "w") as f:
+            json.dump({"acme/acme-large": {"litellm_provider": "acme", "mode": "chat",
+                                           "input_cost_per_token": 1.5e-06, "deprecation_date": soon,
+                                           "successor_model": "acme/acme-xl"}}, f)
+        res = json.loads(self.run_cli("-p", "acme", "-m", "acme-large", "--litellm-file", table, "--format", "json").stdout)
+        self.assertTrue(any("retires on %s" % soon in w and "acme/acme-xl" in w for w in res["warnings"]))
