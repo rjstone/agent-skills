@@ -97,6 +97,17 @@ GitHub raw and never copied into this repo.
 - Its base URLs agreed with models.dev for 82 of 115 shared providers (2026-11-18): check them.
 - `--extra-list-file` reads a local copy of `providers.json`.
 
+## Reviewed and skipped (2026-11-18)
+
+Don't re-review these unless they change shape:
+
+- `tashfeenahmed/freellmapi` - free-tier router app. Its free-tier rate limits are only in TypeScript
+  database migrations; the current catalog is a signed feed from its own service (free tier 30 days late).
+- `cheaper-inference/OmniRoute` - free-tier gateway app built around reusing Claude Code, Codex,
+  Cursor and Copilot logins (client-fingerprint files); no data file, provider details live in app code.
+- `jeffkit/recursive-providers` (CC0) - 12 providers mirrored from LiteLLM; not a source, but its
+  `key_url` values are a good seed for `signup_url` in the overrides once checked.
+
 ## Network notes
 
 - Sandboxed agents often block models.dev until the user allows the host in the agent's network settings
