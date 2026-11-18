@@ -1074,8 +1074,8 @@ class SearchTests(unittest.TestCase):
         self.add("alpha", [("item%02d" % i, "Function", "p%d" % i)
                            for i in range(50)])
         lines = self.cli("search", "item").stdout.splitlines()
-        self.assertEqual(len(lines), 41)
-        self.assertTrue(lines[-1].startswith("... 10 more lines cut;"), lines[-1])
+        self.assertEqual(len(lines), 21)
+        self.assertTrue(lines[-1].startswith("... 30 more lines cut;"), lines[-1])
         self.assertIn("--max-lines", lines[-1])
         r = self.cli("search", "item", "--max-lines", "5")
         self.assertEqual(len(r.stdout.splitlines()), 6)
@@ -1144,7 +1144,7 @@ class ShowTests(unittest.TestCase):
         self.add("l", [("sec", "Section", "p#s")],
                  {"p": "<h2 id='s'>Sec</h2>" + body + "<h2 id='t'>Next</h2><p>other</p>"})
         r = self.cli("show", "l:p#s")
-        self.assertEqual(len(r.stdout.splitlines()), 151)
+        self.assertEqual(len(r.stdout.splitlines()), 41)
         self.assertIn("--full", r.stdout.splitlines()[-1])
         r = self.cli("show", "l:p#s", "--max-lines", "10")
         self.assertEqual(len(r.stdout.splitlines()), 11)
@@ -1222,6 +1222,45 @@ class ShowTests(unittest.TestCase):
         self.assertEqual(r.returncode, 0, r.stderr)
 
 
+class SmallDefaultsTests(unittest.TestCase):
+    """0.8.0 defaults: search 20 lines, toc 60 lines with a --grep pointer."""
+
+    def setUp(self):
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        self.tmp = os.path.realpath(tmp.name)
+        self.cache = os.path.join(self.tmp, "cache")
+        self.env = {"HOME": self.tmp, "USERPROFILE": self.tmp,
+                    "DOCSHELF_CACHE_DIR": self.cache,
+                    "DOCSHELF_NOTES_DIR": os.path.join(self.tmp, "notes")}
+        heads = "".join("<h2 id='h%d'>Head %d</h2><p>x</p>" % (i, i)
+                        for i in range(70))
+        make_devdocs(self.cache, "l", name="L", release="1",
+                     entries=[("item%02d" % i, "T", "p#h%d" % i)
+                              for i in range(30)],
+                     pages={"p": heads})
+
+    def cli(self, *args):
+        return run_cli(*args, env=self.env, cwd=self.tmp)
+
+    def test_search_default_20_lines(self):
+        lines = self.cli("search", "item", "-d", "l").stdout.splitlines()
+        hits = [l for l in lines if l.startswith("l:")]
+        self.assertEqual(len(hits), 20, lines)
+        self.assertTrue(any("more lines cut" in l for l in lines), lines)
+
+    def test_search_json_default_20_items(self):
+        r = self.cli("search", "item", "-d", "l", "--json")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertEqual(len(json.loads(r.stdout)), 20)
+
+    def test_toc_default_60_and_grep_hint(self):
+        lines = self.cli("toc", "l:p").stdout.splitlines()
+        refs = [l for l in lines if "l:p#h" in l]
+        self.assertEqual(len(refs), 60, lines[-3:])
+        self.assertIn("show REF --grep=TEXT", lines[-1])
+
+
 class ShowOffsetTests(unittest.TestCase):
     def setUp(self):
         tmp = tempfile.TemporaryDirectory()
@@ -1245,19 +1284,42 @@ class ShowOffsetTests(unittest.TestCase):
     def test_offset_skips_lines(self):
         full = self.full()
         self.assertEqual(len(full), 400)
-        r = self.cli("show", "l:p#s", "--offset", "150", "--no-notes")
+        r = self.cli("show", "l:p#s", "--offset", "40", "--no-notes")
         self.assertEqual(r.returncode, 0, r.stderr)
         out = r.stdout.splitlines()
-        self.assertEqual(out[0], full[150])
-        self.assertEqual(out[149], full[299])
+        self.assertEqual(out[0], full[40])
+        self.assertEqual(out[39], full[79])
 
     def test_cut_line_names_next_offset(self):
         r = self.cli("show", "l:p#s", "--no-notes")
         self.assertEqual(r.stdout.splitlines()[-1],
-                         "... 250 more lines; --offset 150 continues (or --full)")
-        r = self.cli("show", "l:p#s", "--offset", "150", "--no-notes")
+                         "... 360 more lines; --offset 40 continues (or --full)")
+        r = self.cli("show", "l:p#s", "--offset", "40", "--no-notes")
         self.assertEqual(r.stdout.splitlines()[-1],
-                         "... 100 more lines; --offset 300 continues (or --full)")
+                         "... 320 more lines; --offset 80 continues (or --full)")
+
+    def test_mcp_show_default_40_lines(self):
+        with mock.patch.dict(os.environ, self.env):
+            r = shelf_mcp.call_tool("show", {"ref": "l:p#s", "no_notes": True})
+        lines = r["content"][0]["text"].splitlines()
+        self.assertEqual(len(lines), 41)
+        # over MCP the hint names tool arguments (shelf_mcp.explain)
+        self.assertEqual(lines[-1],
+                         "... 360 more lines; `offset` 40 continues (or `full`)")
+
+    def test_grep_output_cut_at_default_shows_cut_line(self):
+        r = self.cli("show", "l:p#s", "--grep", "row", "--no-notes")
+        self.assertTrue(any(l.startswith("... ") and "--offset 40" in l
+                            for l in r.stdout.splitlines()), r.stdout[-300:])
+
+    def test_notes_after_cut_section(self):
+        w = self.cli("notes", "l", "--set", "sec", "--text", "remember this")
+        self.assertEqual(w.returncode, 0, w.stderr)
+        out = self.cli("show", "l:p#s").stdout
+        self.assertIn("--offset 40 continues", out)
+        self.assertIn("remember this", out)
+        self.assertLess(out.index("--offset 40 continues"),
+                        out.index("remember this"))
 
     def test_offset_with_full_prints_rest(self):
         full = self.full()
@@ -2779,10 +2841,11 @@ wide or unknown -d; 5 not found or damaged; 7 network or unreadable
 docset archive.
 """
 
-# sha256 of json.dumps(shelf_mcp.tool_schemas(), sort_keys=True) before the
-# 0.7.4 help change: the MCP tools must not change with the help text.
+# sha256 of json.dumps(shelf_mcp.tool_schemas(), sort_keys=True): help text
+# changes must not touch the MCP tools. Re-pinned for 0.8.0, whose only
+# schema change is the max_lines defaults (search 20, show 40, toc 60).
 TOOL_SCHEMAS_SHA256 = (
-    "9109b519cae051d54e7727899ef97bf9fd55fcfb35795e16a9c1b5344f1fe578")
+    "897cd6ddd7efbb07b4f1791a6fb319c0ab7d1171cdc7a388a23661917fde3dad")
 
 
 class HelpTests(unittest.TestCase):
@@ -3188,13 +3251,13 @@ class McpTests(unittest.TestCase):
         "list": ([], {}),
         "search": (["query"], {
             "query": "string[]", "docvols": "string[]", "type": "string",
-            "all": "boolean", "max_lines": "integer=40>=1",
+            "all": "boolean", "max_lines": "integer=20>=1",
             "json": "boolean"}),
         "show": (["ref"], {
             "ref": "string", "grep": "string[]", "full": "boolean",
-            "max_lines": "integer=150>=1", "offset": "integer=0>=0",
+            "max_lines": "integer=40>=1", "offset": "integer=0>=0",
             "no_notes": "boolean"}),
-        "toc": (["ref"], {"ref": "string", "max_lines": "integer=150>=1"}),
+        "toc": (["ref"], {"ref": "string", "max_lines": "integer=60>=1"}),
         "fts": (["query"], {
             "query": "string[]", "docvols": "string[]", "all": "boolean",
             "max_lines": "integer=11>=1", "json": "boolean"}),

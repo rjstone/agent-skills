@@ -87,7 +87,7 @@ COMMANDS: List[Command] = [
         Param(("--type",), "Only entries of this type (no headings)."),
         Param(("--all",), "Search every installed docvol.", kind="flag"),
         Param(("--max-lines",), "Output line cap.", kind="posint",
-              default=40),
+              default=20),
         Param(("--json",), "Print JSON.", kind="flag"),
     ]),
     Command("show", "Show a page or section as text.", shelf_lookup.cmd_show, [
@@ -96,7 +96,7 @@ COMMANDS: List[Command] = [
               repeat=True),
         Param(("--full",), "No line cap.", kind="flag"),
         Param(("--max-lines",), "Output line cap.", kind="posint",
-              default=150),
+              default=40),
         Param(("--offset",), "Skip this many lines first (continue after the cap).",
               kind="nonneg", default=0),
         Param(("--no-notes",), "Do not print notes.", kind="flag"),
@@ -105,7 +105,7 @@ COMMANDS: List[Command] = [
             shelf_lookup.cmd_toc, [
         Param(("ref",), "REF from search: <docvol>:<path>[#anchor]."),
         Param(("--max-lines",), "Output line cap.", kind="posint",
-              default=150),
+              default=60),
     ]),
     Command("fts", "Full-text search inside pages (SQLite FTS5).",
             shelf_lookup.cmd_fts, [
