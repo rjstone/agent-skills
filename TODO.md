@@ -134,7 +134,6 @@ Per-command counts are in `docs/trials/2026-11-18-haiku-node-zig-pony/`
       `Labeled-switch`, 3.8k characters, the answer in its first 5 lines)
       has no smaller default. Consider a lower default line cap for
       `show`, with the existing "N more lines; --offset" hint.
-
 - [ ] 7.5 Teach CLI agents the MCP agents' query habits in SKILL.md
       (the user, 2026-11-18). In the trial the same queries cost the same
       over the CLI and `--mcp` (within 1-3%), but the MCP agents spent
