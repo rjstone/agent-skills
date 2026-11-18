@@ -1311,6 +1311,13 @@ class ShowOffsetTests(unittest.TestCase):
         r = self.cli("show", "l:p#s", "--grep", "row", "--no-notes")
         self.assertTrue(any(l.startswith("... ") and "--offset 40" in l
                             for l in r.stdout.splitlines()), r.stdout[-300:])
+        # the footer must not claim every match is shown when the cap cut it
+        self.assertNotIn("are shown", r.stdout)
+        self.assertIn("399 lines contain 'row'", r.stdout)
+        # the whole grep output (--full) keeps the "all ... are shown" footer
+        r = self.cli("show", "l:p#s", "--grep", "row", "--full", "--no-notes")
+        self.assertIn("(all 399 lines containing 'row' are shown",
+                      r.stdout.splitlines()[-1])
 
     def test_notes_after_cut_section(self):
         w = self.cli("notes", "l", "--set", "sec", "--text", "remember this")
@@ -1343,7 +1350,9 @@ class ShowOffsetTests(unittest.TestCase):
         self.assertEqual(out[:3], hits[5:8])
         self.assertEqual(out[3], "... %d more lines; --offset 8 continues (or --full)"
                          % (len(hits) - 8))
-        self.assertTrue(out[4].startswith("(all "))
+        # an offset page is not the whole grep output: no "all ... shown"
+        self.assertTrue(out[4].startswith("("), out[4])
+        self.assertNotIn("are shown", out[4])
 
     def test_offset_zero_ok_negative_rejected(self):
         self.assertEqual(self.cli("show", "l:p#s", "--offset", "0").returncode, 0)
@@ -2909,8 +2918,9 @@ class HelpTests(unittest.TestCase):
             return f.read()
 
     def test_skill_md_not_larger(self):
+        # 6,398 at 0.7.3; phases 1 and 2 must not grow it past 0.7.4's size
         self.assertLessEqual(os.path.getsize(os.path.join(SKILL, "SKILL.md")),
-                             6398)
+                             6002)
 
     def test_skill_md_keeps_reference_links(self):
         text = self._skill_md()
