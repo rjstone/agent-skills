@@ -64,7 +64,7 @@ items are done.
     the `"docvols"` list, Haiku sometimes skips that offer. Accepted: weaker
     models may skip it (the user, 2026-11-17).
   - Done 2026-11-18 (0.7.3, DevDocs node/zig/pony, CLI, Haiku, default
-    effort): no-skill baseline 5.5/9, skill 9/9; web arm see
+    effort): no-skill 5.5/9, web 7/9, skill 9/9; see
     `docs/trials/2026-11-18-haiku-node-zig-pony/`.
   - Still open: the opencode model set, `--mcp`, docsets.
 

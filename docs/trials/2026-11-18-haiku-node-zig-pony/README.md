@@ -28,8 +28,11 @@ as Claude Code general-purpose subagents.
 | zig, skill | ✅ | ✅ | ✅ | 3 | 8 | 21 s | 119k |
 | pony, no skill | ✅ | ½ capabilities missing | ❌ join order "input order" at high confidence; wrong `next` signature | 1.5 | 1 | 18 s | 111k |
 | pony, skill | ✅ | ✅ | ✅ | 3 | 8 | 27 s | 120k |
+| node, web | ✅ | ✅ | ✅ | 3 | 9 | 39 s | 117k |
+| zig, web | ✅ | ✅ | ½ `@Int` right, `std.builtin.Signedness` again | 2.5 | 10 | 33 s | 121k |
+| pony, web | ✅ | ❌ gave today's `AmbientAuth` (no `None`), not 0.38.1's union | ½ order right; `next` parameter types wrong | 1.5 | 15 | 41 s | 123k |
 
-Totals: skill 9/9 (every answer cites a REF), no skill 5.5/9.
+Totals: skill 9/9 (every answer cites a REF), web 7/9, no skill 5.5/9.
 
 ## Observations
 
@@ -44,3 +47,16 @@ Totals: skill 9/9 (every answer cites a REF), no skill 5.5/9.
   contradict the stated wildcard rule; it followed the rule (correct).
 - One skill run made a stray session-messaging tool call with no arguments;
   the permission check denied it.
+
+## Web arm
+
+- The sandbox's network allowlist blocked ziglang.org, codeberg.org,
+  stdlib.ponylang.io and docs.w3cub.com, so the Zig and Pony web runs
+  worked from search snippets and mirrors; nodejs.org was reachable. On an
+  open network the web arm would likely do better on Zig and Pony.
+- Version drift is the web's real weakness here: for Pony P2 it found the
+  current `Env.root: AmbientAuth` (ponyc PR #3962, 2022) and answered with
+  it, though it saw that older docs had `(AmbientAuth val | None val)`.
+  docshelf answers from the pinned 0.38.1 docvol.
+- The web arm cost more than the skill: 9-15 tool calls and 33-41 s per
+  three questions, against 8 calls and 21-29 s.
