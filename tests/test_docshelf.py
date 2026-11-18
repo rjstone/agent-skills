@@ -2817,8 +2817,8 @@ Only if you need these, see `<command> --help`:
 Global: --version, --mcp (run as a stdio MCP server; references/mcp.md).
 Exit codes: 0 ok; 1 notes --check found problems; 2 usage error, ambiguous
   name or no FTS5; 4 search scope too wide (use -d, a project list or --all)
-  or unknown -d name; 5 not found (docvol, page or entry); 7 network
-  (DevDocs could not be reached)
+  or unknown -d name; 5 not found or damaged (docvol, page or entry); 7
+  network (DevDocs could not be reached), or an unreadable docset archive
 """
 
 
@@ -3498,7 +3498,17 @@ class McpExplainTests(unittest.TestCase):
         self.assertIn("warning: skipping", text)
         self.assertIn("the `remove` tool", text)
         self.assertIn("the `install` tool", text)
+        self.assertIn('the `remove` tool with name "alpha", then', text)
         self.assertNotIn("docshelf.py", text)
+
+    def test_show_cap_line_tool_wording(self):
+        body = "".join("<p>line %d</p>" % i for i in range(30))
+        self.mcp_env(entries=[("Guide", "Guide", "p")],
+                     pages={"p": "<h1>Guide</h1>" + body})
+        text = self.call("show", ref="alpha:p", max_lines=5)
+        self.assertIn("more lines", text)
+        self.assertNotIn("--offset", text)
+        self.assertNotIn("--full", text)
 
     def test_doc_text_untouched(self):
         body = "raise --max-lines and docshelf.py install x"
@@ -3880,6 +3890,52 @@ class FinalReviewTests(unittest.TestCase):
         self.assertIn("a \u2192 b".encode("utf-8"), r.stdout)
 
 
+class NotesDamagedFamilyTests(unittest.TestCase):
+    """A damaged family member must not turn a good notes write into exit 5."""
+
+    def setUp(self):
+        self.tmp, self.cache, self.notes, self.env = temp_env(self)
+        self.env["DOCSHELF_DOCSET_DIRS"] = os.path.join(self.tmp, "docs")
+
+    def cli(self, *args):
+        return run_cli(*args, env=self.env, cwd=self.tmp)
+
+    def check(self, family):
+        for args in (("notes", family, "--set", "Guide", "--text", "hi"),
+                     ("notes", family, "--check")):
+            r = self.cli(*args)
+            self.assertEqual(r.returncode, 0, (args, r.stdout, r.stderr))
+            self.assertIn("skipping docvol", r.stderr)
+            self.assertNotIn("Traceback", r.stderr)
+        self.assertTrue(os.path.exists(os.path.join(self.notes, family + ".md")))
+
+    def test_devdocs_family(self):
+        for slug in ("alpha~1", "alpha~2"):
+            f = make_devdocs(self.cache, slug, name="Alpha", release="1",
+                             entries=[("Guide", "Guide", "guide")],
+                             pages={"guide": "<h1>Guide</h1><p>x</p>"})
+        mp = os.path.join(f, "meta.json")
+        with open(mp, encoding="utf-8") as fh:
+            meta = json.load(fh)
+        meta["entry_count"] = 1  # so discovery keeps it and use finds it damaged
+        with open(mp, "w", encoding="utf-8") as fh:
+            json.dump(meta, fh)
+        with open(os.path.join(f, "index.json"), "w") as fh:
+            fh.write("{not json")
+        self.check("alpha")
+
+    def test_docset_family(self):
+        docs = os.path.join(self.tmp, "docs")
+        make_docset(docs, "Lib_1", [("Guide", "Guide", "g.html")],
+                    {"g.html": "<h1>Guide</h1>"})
+        bad = make_docset(docs, "Lib_2", [("Guide", "Guide", "g.html")],
+                          {"g.html": "<h1>Guide</h1>"})
+        with open(os.path.join(bad, "Contents", "Resources", "docSet.dsidx"),
+                  "r+b") as fh:
+            fh.truncate(20)
+        self.check("lib")
+
+
 class NotesRetryTests(unittest.TestCase):
     """Another writer changing the notes file mid-write (TODO 6.9.2)."""
 
@@ -3990,6 +4046,58 @@ class NotesRetryTests(unittest.TestCase):
         self.run_notes([other], set="A", text="a")
         self.assertEqual(self.read(),
                          "## X\r\nx\r\n\r\n## B\r\nb\r\n\r\n## A\r\na\r\n")
+
+    def test_replace_permission_error_once_retries(self):
+        self.put("## X\nx\n")
+        real = os.replace
+        calls = []
+
+        def flaky(src, dst):
+            if dst != self.file:
+                return real(src, dst)  # other users of os.replace
+            calls.append(1)
+            if len(calls) == 1:
+                raise PermissionError("in use")
+            return real(src, dst)
+
+        with mock.patch.object(shelf_notes.os, "replace", side_effect=flaky), \
+                mock.patch.object(shelf_notes.time, "sleep") as sleep, \
+                contextlib.redirect_stdout(io.StringIO()):
+            self.assertEqual(shelf_notes.cmd_notes(
+                self.cfg, self.args(set="A", text="a")), 0)
+        self.assertEqual(len(calls), 2)
+        sleep.assert_called_once()
+        self.assertEqual(self.read(), "## X\nx\n\n## A\na\n")
+        self.assertEqual(os.listdir(self.notes), ["python.md"])
+
+    def test_reread_permission_error_once_retries(self):
+        self.put("## X\nx\n")
+        real = shelf_notes._read_notes_strict
+        calls = []
+
+        def flaky(path):
+            calls.append(1)
+            if len(calls) == 2:  # the compare-and-replace re-read
+                raise shelf_notes.NotesBusy("cannot read: in use; not written")
+            return real(path)
+
+        with mock.patch.object(shelf_notes, "_read_notes_strict", flaky), \
+                mock.patch.object(shelf_notes.time, "sleep"), \
+                contextlib.redirect_stdout(io.StringIO()):
+            self.assertEqual(shelf_notes.cmd_notes(
+                self.cfg, self.args(set="A", text="a")), 0)
+        self.assertIn("## A", self.read())
+
+    def test_replace_permission_error_persistent_tries_all(self):
+        self.put("## X\nx\n")
+        with mock.patch.object(shelf_notes.os, "replace",
+                               side_effect=PermissionError("in use")) as rep, \
+                mock.patch.object(shelf_notes.time, "sleep"):
+            with self.assertRaises(CLIError) as cm, \
+                    contextlib.redirect_stdout(io.StringIO()):
+                shelf_notes.cmd_notes(self.cfg, self.args(set="A", text="a"))
+        self.assertEqual(rep.call_count, shelf_notes.NOTES_TRIES)
+        self.assertIn("cannot write", str(cm.exception))
 
     def test_replace_permission_error(self):
         self.put("## X\nx\n")
@@ -7622,7 +7730,7 @@ class DamagedDocvolTests(unittest.TestCase):
         self.assertEqual(r.returncode, 0, r.stderr)
         self.assertIn("beta:guide", r.stdout)
         self.assertNotIn("alpha:", r.stdout)
-        self.assertIn("warning: skipping", r.stderr)
+        self.assertIn("skipping docvol alpha", r.stderr)
         self.assertIn(self.REPAIR, r.stderr)
         self.assertNotIn("Traceback", r.stderr)
         for cmd in (("list",), ("suggest",)):
@@ -7656,14 +7764,14 @@ class DamagedDocvolTests(unittest.TestCase):
         r = self.cli("search", "--json", "Guide")
         self.assertEqual(r.returncode, 0, r.stderr)
         self.assertEqual([i["docvol"] for i in json.loads(r.stdout)], ["beta"])
-        self.assertIn("warning: skipping", r.stderr)
+        self.assertIn("skipping docvol alpha", r.stderr)
 
     def test_types_and_fts_skip(self):
         self.pair()
         for cmd in (("types",), ("fts", "hello")):
             r = self.cli(*cmd)
             self.assertEqual(r.returncode, 0, (cmd, r.stderr))
-            self.assertIn("warning: skipping", r.stderr)
+            self.assertIn("skipping docvol alpha", r.stderr)
             self.assertIn("beta", r.stdout)
 
     def test_damaged_db_json_skips(self):
@@ -7673,7 +7781,7 @@ class DamagedDocvolTests(unittest.TestCase):
         for cmd in (("search", "hello"), ("fts", "hello")):
             r = self.cli(*cmd)
             self.assertEqual(r.returncode, 0, (cmd, r.stderr))
-            self.assertIn("warning: skipping", r.stderr)
+            self.assertIn("skipping docvol alpha", r.stderr)
             self.assertIn(self.REPAIR, r.stderr)
             self.assertNotIn("Traceback", r.stderr)
 
@@ -7709,6 +7817,50 @@ class DamagedDocvolTests(unittest.TestCase):
         r = self.cli("list")
         self.assertEqual(r.returncode, 0, r.stderr)
         self.assertNotIn("Traceback", r.stderr)
+
+    def test_old_cache_named_damaged_exits_5_with_repair(self):
+        self.pair(with_count=False)  # discovery drops it; the folder is found
+        for args in (("search", "-d", "alpha", "Guide"), ("show", "alpha:guide")):
+            r = self.cli(*args)
+            self.assertEqual(r.returncode, 5, (args, r.stderr))
+            last = r.stderr.strip().splitlines()[-1]
+            self.assertNotIn("not installed", last)
+            self.assertIn(self.REPAIR, last)
+
+    def test_old_cache_install_is_clean_error(self):
+        self.make("alpha", with_count=False)
+        self.corrupt(os.path.join(self.cache, "devdocs", "alpha"))
+        r = self.cli("install", "alpha")
+        self.assertEqual(r.returncode, 5, r.stderr)
+        self.assertNotIn("ValueError", r.stderr)
+        self.assertNotIn("Traceback", r.stderr)
+        self.assertIn(self.REPAIR, r.stderr.strip().splitlines()[-1])
+
+    def test_old_cache_mcp_names_repair(self):
+        self.pair(with_count=False)
+        import shelf_mcp
+        with mock.patch.dict(os.environ, self.env):
+            res = shelf_mcp.call_tool("show", {"ref": "alpha:guide"})
+        text = res["content"][0]["text"]
+        self.assertTrue(res["isError"])
+        self.assertNotIn("not installed", text)
+        self.assertIn('the `remove` tool with name "alpha", then', text)
+
+    def test_docset_cache_write_error_is_not_damage(self):
+        docs = os.path.join(self.tmp, "docs")
+        make_docset(docs, "Lib", [("os", "Module", "os.html")],
+                    {"os.html": "<h1>os</h1>"}, wal=True)
+        with mock.patch.dict(os.environ, self.env), \
+                mock.patch.object(shelf_dash.shutil, "copyfile",
+                                  side_effect=PermissionError("denied")):
+            cfg = shelf_core.load_config()
+            d = shelf_backends.installed_docvols(cfg)[0]
+            with self.assertRaises(CLIError) as cm:
+                d.entries()
+        self.assertNotIsInstance(cm.exception, shelf_core.DamagedDocvol)
+        self.assertEqual(cm.exception.code, 2)
+        self.assertIn("cannot write", str(cm.exception))
+        self.assertNotIn("reinstall it in Dash", str(cm.exception))
 
     def test_list_warns_damaged_once(self):
         self.make("beta")

@@ -6,6 +6,8 @@ from html.parser import HTMLParser
 from typing import Callable, Dict, List, Optional, Tuple
 from urllib.parse import unquote
 
+import shelf_core
+
 
 @dataclass
 class Block:
@@ -392,8 +394,8 @@ def _print_lines(lines, args, def_ends=None, header=()) -> bool:
         if not lines:
             for line in header:
                 print(line)
-            print("no lines match %s in this section (%d lines); drop --grep to "
-                  "see it" % (wanted, total))
+            print("no lines match %s in this section (%d lines); %s"
+                  % (wanted, total, shelf_core.hint("drop --grep to see it")))
             return True
         footer = ("(all %d lines containing %s are shown; the section has %d lines)"
                   % (matched, wanted, total))
@@ -402,15 +404,15 @@ def _print_lines(lines, args, def_ends=None, header=()) -> bool:
     offset = getattr(args, "offset", 0) or 0
     if offset:
         if offset >= len(lines):
-            print("nothing at --offset %d: the output has %d lines"
-                  % (offset, len(lines)))
+            print("nothing at %s: the output has %d lines"
+                  % (shelf_core.hint("--offset %d" % offset), len(lines)))
             return False
         lines = lines[offset:]
     if not args.full and len(lines) > args.max_lines:
         more = len(lines) - args.max_lines
         lines = lines[:args.max_lines] + [
-            "... %d more lines; --offset %d continues (or --full)"
-            % (more, offset + args.max_lines)]
+            "... %d more lines; %s" % (more, shelf_core.hint(
+                "--offset %d continues (or --full)" % (offset + args.max_lines)))]
     for line in list(header) + lines:
         print(line)
     if footer:

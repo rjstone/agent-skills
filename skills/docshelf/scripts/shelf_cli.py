@@ -59,7 +59,8 @@ def cmd_where(cfg: Config, args: argparse.Namespace) -> int:
 def cmd_list(cfg: Config, args: argparse.Namespace) -> int:
     docvols = shelf_backends.installed_docvols(cfg)
     if not docvols:
-        print("no docvols installed (install NAME; sources QUERY finds names)")
+        print("no docvols installed (%s)"
+              % shelf_core.hint("install NAME; sources QUERY finds names"))
         return 0
     for d in docvols:
         count = d.entry_count  # a damaged docset counts 0, noting why
@@ -169,8 +170,9 @@ COMMANDS: List[Command] = [
 
 EXIT_CODES = ("0 ok; 1 notes --check found problems; 2 usage error, ambiguous "
               "name or no FTS5; 4 search scope too wide (use -d, a project "
-              "list or --all) or unknown -d name; 5 not found (docvol, page "
-              "or entry); 7 network (DevDocs could not be reached)")
+              "list or --all) or unknown -d name; 5 not found or damaged "
+              "(docvol, page or entry); 7 network (DevDocs could not be "
+              "reached), or an unreadable docset archive")
 
 # Top-level --help: the command lines agents normally need. Options that
 # have rare=True in COMMANDS are only named (not described) under "only if
@@ -386,10 +388,12 @@ def main(argv: Optional[List[str]] = None) -> int:
         cfg = shelf_core.load_config()
         return args._command.func(cfg, args)
     except CLIError as e:
-        msg = (e.docvol and cfg and shelf_devdocs.not_installed_message(
+        damaged = e.docvol and cfg and shelf_devdocs.damaged_message(
+            cfg, e.docvol)
+        msg = damaged or (e.docvol and cfg and shelf_devdocs.not_installed_message(
             cfg, e.docvol, lambda slug: "docshelf.py install " + slug))
         print(msg or str(e), file=sys.stderr)
-        return e.code
+        return 5 if damaged else e.code
     except BrokenPipeError:
         return _closed_stdout()
     except (OSError, sqlite3.Error, ValueError) as e:

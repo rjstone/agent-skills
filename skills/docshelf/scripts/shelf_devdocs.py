@@ -14,6 +14,7 @@ from typing import Dict, List, Optional, Tuple
 from urllib.parse import urlsplit
 
 import shelf_backends  # imports this module back; used only inside functions
+import shelf_core
 from shelf_core import (VERSION, CLIError, DamagedDocvol, warn, Config, Docvol, Entry, make_temp,
                         pick_docvol, sweep_stale_tmp)
 
@@ -396,6 +397,19 @@ def not_installed_message(cfg: Config, name: str, how) -> Optional[str]:
     return None
 
 
+def damaged_message(cfg: Config, name: str) -> Optional[str]:
+    """For a docvol name that is not loadable but has a folder in the cache
+    (a damaged DevDocs copy discovery dropped): why, and how to repair it."""
+    folder = _unloadable_folder(cfg, name)
+    if folder is None:
+        return None
+    try:
+        DevDocsDocvol(os.path.join(devdocs_dir(cfg), folder))
+        return None  # it loads now: not damaged
+    except (OSError, ValueError, KeyError, TypeError) as e:
+        return str(e)  # the text already says how to repair it
+
+
 def _manifest_rows(data) -> List[dict]:
     if not isinstance(data, list) or not all(
             isinstance(r, dict) and isinstance(r.get("slug"), str) for r in data):
@@ -561,7 +575,10 @@ def remove(cfg: Config, slug: str) -> None:
 
 # --- commands --------------------------------------------------------------
 def _describe(cfg: Config, status: str, slug: str) -> str:
-    d = DevDocsDocvol(os.path.join(devdocs_dir(cfg), slug))
+    try:
+        d = DevDocsDocvol(os.path.join(devdocs_dir(cfg), slug))
+    except (ValueError, KeyError, TypeError) as e:  # an old-cache copy that
+        raise DamagedDocvol(str(e))  # cannot load; its text has the repair
     return "%s %s (%s %s, %d entries)" % (status, slug, d.display_name,
                                           d.release, d.entry_count)
 
@@ -737,7 +754,8 @@ def cmd_update(cfg, args) -> int:
             print("no DevDocs docvols to update (Dash/Zeal docsets are updated "
                   "in Dash or Zeal)")
         else:
-            print("no docvols installed (install NAME; sources QUERY finds names)")
+            print("no docvols installed (%s)"
+                  % shelf_core.hint("install NAME; sources QUERY finds names"))
         return 0
     rows = get_manifest(cfg, refresh=True)
     by_slug = {}

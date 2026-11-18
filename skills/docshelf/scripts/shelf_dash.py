@@ -229,25 +229,35 @@ class DashDocvol(Docvol):
         if os.path.isfile(dest) and (sub in self._copied
                                      or _load_json(stamp_file).get("stamp") == stamp):
             return dest
-        os.makedirs(dest_dir, exist_ok=True)
         moves = []
+        reading = False  # an OSError while True is about the docset itself
         try:
+            os.makedirs(dest_dir, exist_ok=True)
             for suffix in ("", "-wal"):
                 if os.path.exists(path + suffix):
                     fd, tmp = make_temp(dest_dir)
                     os.close(fd)
                     moves.append((tmp, dest + suffix))
+                    reading = True
+                    open(path + suffix, "rb").close()  # is the docset readable?
+                    reading = False
                     shutil.copyfile(path + suffix, tmp)
             for old in (stamp_file, dest + "-wal", dest + "-shm"):
                 if os.path.exists(old):
                     os.remove(old)
             for tmp, final in moves:
                 os.replace(tmp, final)
+            _write_json(stamp_file, {"stamp": stamp})
+        except OSError as e:
+            if reading:
+                raise  # the docset cannot be read: damaged
+            raise CLIError("cannot write %s: %s (check free disk space and "
+                           "that DOCSHELF_CACHE_DIR is a writable folder)"
+                           % (dest_dir, e), 2)
         finally:
             for tmp, _ in moves:
                 if os.path.exists(tmp):
                     os.remove(tmp)
-        _write_json(stamp_file, {"stamp": stamp})
         self._copied.add(sub)
         return dest
 
@@ -269,8 +279,8 @@ class DashDocvol(Docvol):
     @property
     def entry_count(self) -> int:
         """Rows in the index, read only when asked for and cached in
-        data_dir()/count.json under stamp(); 0 (silently; callers that read the index report it) when the
-        index cannot be read."""
+        data_dir()/count.json under stamp(); 0 (silently; callers that read
+        the index report it) when the index cannot be read."""
         if self._count is None:
             cache = os.path.join(self.data_dir(), "count.json")
             stamp = self.stamp()

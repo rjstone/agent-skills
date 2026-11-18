@@ -5,12 +5,14 @@ import os
 import re
 import stat
 import sys
+import time
 from typing import Dict, Iterable, List, Optional, Tuple
 
 import shelf_backends
 import shelf_dash
 import shelf_devdocs
 from shelf_core import (CLIError, Config, make_temp, pick_docvol, short_name,
+                        skip_damaged,
                         umask_mode, warn)
 
 NOTES_GENERAL_MAX = 50
@@ -72,6 +74,14 @@ def read_notes(cfg, family):
         return path, None
 
 
+class NotesBusy(CLIError):
+    """The notes file is held open by another process (a Windows sharing
+    violation shows as PermissionError); a write retries, then reports it."""
+
+    def __init__(self, message: str):
+        super().__init__(message, 2)
+
+
 def _read_notes_strict(path) -> Optional[str]:
     """For a write: the text, None only when the file does not exist. Any
     other read problem refuses the write, so no note is lost or altered."""
@@ -80,6 +90,8 @@ def _read_notes_strict(path) -> Optional[str]:
             raw = f.read()
     except FileNotFoundError:
         return None
+    except PermissionError as e:
+        raise NotesBusy("cannot read %s: %s; not written" % (path, e))
     except OSError as e:
         raise CLIError("cannot read %s: %s; not written" % (path, e), 2)
     try:
@@ -390,6 +402,7 @@ def _new_file_mode() -> int:
     return umask_mode()
 
 
+NOTES_BUSY_WAIT = 0.05  # seconds to wait before retrying a busy notes file
 NOTES_TRIES = 3  # reads of the file per write when another writer interferes
 _NO_CHECK = object()
 
@@ -429,6 +442,8 @@ def _write_notes(path, text, expect=_NO_CHECK):
         os.replace(tmp, path)
     except OSError as e:
         shelf_devdocs._discard(tmp)
+        if isinstance(e, PermissionError):
+            raise NotesBusy("cannot write %s: %s" % (path, e))
         raise CLIError("cannot write %s: %s" % (path, e), 2)
     except BaseException:
         shelf_devdocs._discard(tmp)
@@ -445,12 +460,19 @@ def _write_request(cfg, args, path):
     if args.set is not None and any(_HEADING.match(l) for l in _split(args.text)):
         raise CLIError("--text must not contain a line starting with '## ' "
                        "(that starts a new section; use one --set each)", 2)
-    for _ in range(NOTES_TRIES):
-        text = _read_notes_strict(path)
+    busy = None
+    for attempt in range(NOTES_TRIES):
         try:
+            text = _read_notes_strict(path)
             return _apply_request(args, path, text)
         except NotesChanged:
-            continue
+            busy = None
+        except NotesBusy as e:
+            busy = e
+            if attempt < NOTES_TRIES - 1:
+                time.sleep(NOTES_BUSY_WAIT)
+    if busy is not None:
+        raise busy
     raise CLIError("notes changed by another writer; not written: %s" % path, 2)
 
 
@@ -503,16 +525,17 @@ def cmd_notes(cfg: Config, args) -> int:
     if not args.check:
         sys.stdout.write(text)
         return 0
-    entries = [e for d in docvols if d.family == family for e in d.entries()]
+    members = skip_damaged([d for d in docvols if d.family == family], False,
+                           lambda d: d.entries())  # warns, drops damaged ones
+    entries = [e for d in members for e in d.entries()]
     names = {e.name.lower() for e in entries}
     page_headings = []
     skipped = 0
-    for d in docvols:
-        if d.family == family:
-            heads, bad = headings_index(d)
-            skipped += bad
-            for page, rows in heads.items():
-                page_headings += [(h, d.make_ref(page, a)) for h, a in rows]
+    for d in members:
+        heads, bad = headings_index(d)
+        skipped += bad
+        for page, rows in heads.items():
+            page_headings += [(h, d.make_ref(page, a)) for h, a in rows]
     warns = check_notes(text, names, {h for h, _r in page_headings})
     print("notes file present: %s" % path)
     for line in notes_matches(text, entries, page_headings):
