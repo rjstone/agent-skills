@@ -73,7 +73,10 @@ items are done.
     from nemotron-3-super-120b up, prompt not naming the skill): 8/8 answered
     3/3; 7 loaded docshelf, nemotron-3.5-super-vl grepped the cache files;
     see `docs/trials/2026-11-18-opencode-docshelf-zig/`.
-  - Still open: docsets.
+  - Done 2026-11-18 (0.8.0, zig/node/pony/HTTP docset, same eight models,
+    bubblewrap sandbox): seven answered all four sets; see
+    `docs/trials/2026-11-18-opencode-docshelf-sandboxed/`.
+  - Still open: a docsets-only trial with more docsets.
 
 #### 6. Deferred review items
 
@@ -166,6 +169,24 @@ Done in 0.7.4 (lookup card: 7.1, 7.5 via the card) and 0.8.0 (defaults:
       for MCP-level cost. Check the SKILL.md size cost of the addition
       against the saving (each run reads SKILL.md once).
 
+- [x] 7.6 `show REF -d NAME` fails ("unrecognized arguments: -d") though
+      the REF names the docvol: three of eight opencode models did it in
+      the 2026-11-18 sandboxed trial (the card shows `-d` on `search` and
+      `fts`). Consider accepting `-d` on `show`/`toc` when it matches the
+      REF's docvol, or a hint in the error. One model also ran `sources`
+      with no query.
+      Done in 0.8.1: `show` and `toc` accept a `-d` naming the REF's docvol
+      or family; any other `-d` is an error naming the REF's docvol.
+      Also in 0.8.1 (round 2 of that trial): a query word starting with `-`
+      (`search "--permission"`) and arguments to `list` or `where` get a
+      hint instead of argparse's message.
+
+- [ ] 7.7 MCP argument slips seen in the 2026-11-18 MCP arms (the user,
+      2026-11-18): accept a string where `docvols` expects a list (models
+      sent `"[node]"`), and suggest the closest docvol name when one is
+      unknown (models invented `nodejs`, `node~26`, `mdn/http`). See
+      `docs/trials/2026-11-18-opencode-docshelf-sandboxed/` ("MCP arms").
+
 #### Reference: other docset and DevDocs readers (skimmed 2026-11-17)
 
 Read Zeal's folder, no network:
@@ -184,6 +205,21 @@ DevDocs-based: https://github.com/maxwhipw/devdocs-mcp,
 Docker transports, talking to the running Dash app, Readability/Turndown
 conversion, Apple's DocC format (needs brotli), downloading from Kapeli's
 servers.
+
+### sandboxing
+
+- [ ] Bind `/etc/hosts` read-only by default: without it `localhost`
+      doesn't resolve inside (SKILL.md says to pass `--ro /etc/hosts`).
+- [ ] A working-directory option below `/work` (today: `sh -c 'cd ... &&
+      exec CMD'`, as in `references/nested-agents.md`).
+- [ ] sandbox.py's own errors exit 2, the same as a command that exits 2;
+      consider a distinct status or a marker line on stderr.
+- [ ] Started as root, `--rw` binds are checked only for read access by the
+      sandbox user: a root-owned `--rw` folder passes preflight but is
+      read-only inside. Check write access too, or chown it like `--work`.
+- [ ] `--mem` is an address-space limit (`prlimit --as`); Node.js/V8
+      reserves large virtual ranges, so it likely breaks Node agents such as
+      opencode. Test, then document it or offer a cgroup-based limit.
 
 ## Automation
 

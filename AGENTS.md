@@ -90,6 +90,12 @@ vendors' plugin formats):
   unit tests and the skills CLI check (`npx skills add . --list`) only for
   the selected skills (`SKILLS=<list>`; unset locally = all). No network in
   the tests.
+- `.github/workflows/bandit.yml` - Bandit security scan, uploaded as SARIF to
+  the Security tab: the code with all checks, `tests/` without B105/B603
+  (false positives there; the user, 2026-11-18). The header has the same
+  commands for a local run. `codeql.yml` - CodeQL advanced setup (actions,
+  python); it only uploads when CodeQL *default* setup is off in the repo's
+  Code security settings.
 - `.github/pull_request_template.md` - every PR fills it in: Kind and
   What changed always; Skill and version, Public-repo checklist and
   Testing for skills; Docs touched if it applies; Follow-ups optional
@@ -216,6 +222,15 @@ metadata:
   native format: a third-party documentation bundle (a DevDocs
   documentation, or a Dash/Zeal docset read in place, read-only) plus
   docshelf's own metadata, indexes and notes (the user, 2026-11-16).
+- `sandboxing` - run a nested agent CLI or test harness in a bubblewrap
+  sandbox (Linux) that hides the caller's environment, processes and files:
+  `scripts/sandbox.py` (`env -i` + bwrap `--clearenv`, `/work` as `HOME`,
+  `--ro`/`--rw` binds, placeholder keys via `--setenv`, setpriv to the
+  `sandboxer` host user when started as root) and `scripts/leak_test.py`
+  (plants a marker, probes for it inside, PASS/FAIL). Stdlib only. Not a
+  boundary against hostile code; `references/limits.md` names stronger
+  tools (the user, 2026-11-18). Bind sources must be readable by the
+  sandbox user (a root-only scratch folder is not).
 
 ## Decisions (the user, 2026-11-08)
 

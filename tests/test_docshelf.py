@@ -1297,6 +1297,24 @@ class ShowOffsetTests(unittest.TestCase):
     def full(self):
         return self.cli("show", "l:p#s", "--full", "--no-notes").stdout.splitlines()
 
+    def test_show_and_toc_accept_matching_d(self):
+        # agents copy search's -d DOCVOL onto show (2026-11-18 opencode trial)
+        for cmd, ref in (("show", "l:p#s"), ("toc", "l:p")):
+            plain = self.cli(cmd, ref, "--no-notes") if cmd == "show" else self.cli(cmd, ref)
+            extra = ("--no-notes",) if cmd == "show" else ()
+            r = self.cli(cmd, ref, "-d", "l", *extra)
+            self.assertEqual(r.returncode, 0, r.stderr)
+            self.assertEqual(r.stdout, plain.stdout, cmd)
+            r = self.cli(cmd, ref, "-d", "L", *extra)  # names match case-insensitively
+            self.assertEqual(r.returncode, 0, r.stderr)
+
+    def test_show_and_toc_reject_other_d(self):
+        for cmd, ref in (("show", "l:p#s"), ("toc", "l:p")):
+            r = self.cli(cmd, ref, "-d", "other")
+            self.assertEqual(r.returncode, 2, cmd)
+            self.assertIn("names docvol l", r.stderr)
+            self.assertIn("-d other", r.stderr)
+
     def test_offset_skips_lines(self):
         full = self.full()
         self.assertEqual(len(full), 400)
@@ -2869,8 +2887,9 @@ or unreadable docset archive.
 # changes must not touch the MCP tools. Re-pinned for 0.8.0, whose only
 # schema changes are the max_lines defaults (search 20, show 40, toc 60) and
 # the search/fts `json` descriptions (a list as long as the cap may be cut).
+# 0.8.1 adds an optional `docvols` (a check against the REF) to show and toc.
 TOOL_SCHEMAS_SHA256 = (
-    "b6b4246bd1c31d445c1575a59c4f506c5830462fe53e96eb362610f17ab522f4")
+    "7c78106bc788b5105a87bbe3813f64d8b6d54e798e4bc139b117b1599ed84a68")
 
 
 class HelpTests(unittest.TestCase):
@@ -2961,6 +2980,31 @@ class HelpTests(unittest.TestCase):
     def test_remove_help_says_notes_kept_once(self):
         text = " ".join(run_cli("remove", "--help").stdout.split()).lower()
         self.assertEqual(text.count("notes are kept"), 1, text)
+
+    def test_query_starting_with_dashes_gets_a_hint(self):
+        # an opencode model ran `search "--permission" -d node` (2026-11-18)
+        for cmd in ("search", "fts"):
+            r = run_cli(cmd, "--permission", "-d", "node")
+            self.assertEqual(r.returncode, 2, cmd)
+            self.assertIn("-- --permission", r.stderr, cmd)
+            self.assertIn("options first", r.stderr, cmd)
+
+    def test_known_options_and_negative_numbers_get_no_hint(self):
+        r = run_cli("search", "--max-lines", "3", "-d", "zzz", "foo")
+        self.assertNotIn("options first", r.stderr)
+        r = run_cli("search", "-d", "zzz", "--", "--permission")
+        self.assertNotIn("options first", r.stderr)
+        r = run_cli("search", "-d", "zzz", "-5")
+        self.assertNotIn("options first", r.stderr)
+        r = run_cli("search", "-d", "zzz", "- ()")  # a word with a space
+        self.assertNotIn("options first", r.stderr)
+
+    def test_list_with_an_argument_gets_a_hint(self):
+        # an opencode model ran `list HTTP` (2026-11-18)
+        r = run_cli("list", "HTTP")
+        self.assertEqual(r.returncode, 2)
+        self.assertIn("list takes no arguments", r.stderr)
+        self.assertIn("search -d HTTP", r.stderr)
 
     def test_every_command_in_help(self):
         text = shelf_cli.top_help()
@@ -3294,10 +3338,12 @@ class McpTests(unittest.TestCase):
             "all": "boolean", "max_lines": "integer=20>=1",
             "json": "boolean"}),
         "show": (["ref"], {
-            "ref": "string", "grep": "string[]", "full": "boolean",
+            "ref": "string", "docvols": "string[]", "grep": "string[]",
+            "full": "boolean",
             "max_lines": "integer=40>=1", "offset": "integer=0>=0",
             "no_notes": "boolean"}),
-        "toc": (["ref"], {"ref": "string", "max_lines": "integer=60>=1"}),
+        "toc": (["ref"], {"ref": "string", "docvols": "string[]",
+                          "max_lines": "integer=60>=1"}),
         "fts": (["query"], {
             "query": "string[]", "docvols": "string[]", "all": "boolean",
             "max_lines": "integer=11>=1", "json": "boolean"}),

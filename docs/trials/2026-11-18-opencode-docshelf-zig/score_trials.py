@@ -10,7 +10,7 @@ missing from the reply. -v adds every docshelf command and the reply.
 
 The answer checks are patterns over the reply, so read a flagged reply
 before calling it wrong. Adapted from the dash-docset trial scorer
-(rjstone/experiments, branch skill/dash-docset).
+(an earlier trial, kept outside this repo).
 """
 import json
 import os
