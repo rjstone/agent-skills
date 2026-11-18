@@ -272,6 +272,8 @@ def browse(data, a):
             g["input"].update(mod.get("input") or [])
             g["output"].update(mod.get("output") or [])
             c = m.get("cost") or {}
+            if getattr(a, "paid", False) and not (isinstance(c.get("input"), (int, float)) and c["input"] > 0):
+                continue  # --paid: skip $0 (free-tier or unpublished) and missing prices
             if isinstance(c.get("input"), (int, float)) and (g["min_in"] is None or c["input"] < g["min_in"]):
                 g["min_in"], g["cheapest"] = c["input"], {"provider": pid, "id": mid}
             if isinstance(c.get("output"), (int, float)) and (g["min_out"] is None or c["output"] < g["min_out"]):
@@ -280,6 +282,8 @@ def browse(data, a):
         key = lambda g: (g["min_in"] is None, g["min_in"] or 0, g["min_out"] or 0, -len(g["providers"]), g["name"])
     else:
         key = lambda g: (-len(g["providers"]), g["name"])
+    if getattr(a, "paid", False):
+        groups = {k: g for k, g in groups.items() if g["min_in"] is not None}
     rows = sorted(groups.values(), key=key)
     return [{"name": g["name"], "type": g["type"], "providers": len(g["providers"]),
              "cheapest_usd_per_1m": {"input": g["min_in"], "output": g["min_out"]},
@@ -302,15 +306,20 @@ def render_browse(rows, a, notes):
     for r in rows[: a.limit if a.limit > 8 else 50]:
         c = r["cheapest_usd_per_1m"]
         at = r.get("cheapest_at")
+        listed = lambda v: money(v) if v is not None else "not listed"
         L.append("| %s | %s | %d | %s / %s | %s | %s | %s | %s |" % (
-            clean(r["name"], 80), r["type"], r["providers"], money(c["input"]), money(c["output"]),
+            clean(r["name"], 80), r["type"], r["providers"], listed(c["input"]), listed(c["output"]),
             "%s: `%s`" % (clean(at["provider"], 40), clean(at["id"], 60)) if at else "-",
             ",".join(r["input"]), ",".join(r["output"]), ", ".join("`%s`" % clean(i, 60) for i in r["example_ids"])))
     if len(rows) > max(a.limit, 50):
         L.append("")
         L.append("_%d more; add --limit %d_" % (len(rows) - max(a.limit, 50), len(rows)))
     L.append("")
-    L.append("Next: `lookup.py --model <example id>` for providers, endpoints and prices.")
+    if any(r["type"] in UNIT_NOTE for r in rows):
+        L.append("Speech and transcription prices are per 1M tokens as the source lists them; many vendors bill per character or per minute.")
+        L.append("")
+    L.append("Next: `lookup.py --model <example id>` for providers, endpoints and prices.%s"
+             % ("" if getattr(a, "paid", False) else " Add --paid to skip $0 (free-tier or unpublished) listings."))
     return "\n".join(L)
 
 
@@ -396,10 +405,16 @@ def money(v):
     return "$%g" % v if isinstance(v, (int, float)) else "?"
 
 
-def fmt_cost(c):
+UNIT_NOTE = {"speech": "per 1M tokens as the source lists it; many speech vendors bill per character or per minute, check the pricing page",
+             "transcription": "per 1M tokens as the source lists it; many vendors bill per audio minute, check the pricing page"}
+
+
+def fmt_cost(c, mtype=None):
     if not c:
         return None
     s = "%s in / %s out per 1M tokens" % (money(c.get("input")), money(c.get("output")))
+    if mtype in UNIT_NOTE:
+        s += " (%s)" % UNIT_NOTE[mtype]
     if c.get("output") == 0 and c.get("input"):
         s += " (output 0: not published, or not billed as for some decision and embedding models)"
     if c.get("cache_read") is not None:
@@ -676,7 +691,7 @@ def build_entry(pid, prov, mid, model, ov, manual=None):
         "model": {
             "id": mid or manual.get("model_id"), "name": m.get("name"),
             "type": m.get("type"),
-            "limit": m.get("limit"), "cost": fmt_cost(m.get("cost")), "cost_usd_per_1m": m.get("cost"),
+            "limit": m.get("limit"), "cost": fmt_cost(m.get("cost"), m.get("type")), "cost_usd_per_1m": m.get("cost"),
             "modalities": m.get("modalities"), "reasoning": m.get("reasoning"),
             "tool_call": m.get("tool_call"), "status": m.get("status"),
             "release_date": m.get("release_date"), "open_weights": m.get("open_weights"),
@@ -694,7 +709,9 @@ def build_entry(pid, prov, mid, model, ov, manual=None):
 
 def snippets(e):
     pid, base = e["provider_id"], e["base_url"]
-    env = (e["env"] or ["<PROVIDER>_API_KEY"])[0]
+    envs = e["env"] or ["<PROVIDER>_API_KEY"]
+    env = next((v for v in envs if re.search(r"KEY|TOKEN", v)), None) or next(
+        (v for v in envs if "CREDENTIAL" in v), envs[0])
     mid = (e["model"] or {}).get("id") or "<model-id>"
     out = {}
     pkg = e["opencode_package"]
@@ -717,9 +734,10 @@ def snippets(e):
                               "settings": {"baseURL": base or "<base-url>", "apiKey": "{env:%s}" % env},
                               "models": {mid: mcfg}}},
           "model": "%s/%s" % (pid, mid)}
-    out["opencode"] = json.dumps(oc, indent=2) + guess
-    usable = bool(base) and e["protocol"] == "openai"
     mtype = (e["model"] or {}).get("type") or "chat"
+    out["opencode"] = (json.dumps(oc, indent=2) + guess) if mtype == "chat" else (
+        "// no opencode provider block: %s model, not a chat model; call it with its own API (see the docs)" % mtype)
+    usable = bool(base) and e["protocol"] == "openai"
     docs = e["docs"] or "the provider docs"
     out["fast_agent"] = ("# no fast-agent generic snippet: %s; see %s" % (
         "base URL unknown" if not base else "protocol is %s, not OpenAI-compatible" % e["protocol"] if not usable
@@ -879,6 +897,8 @@ def main():
     ap.add_argument("--output-modality", help="required output modalities, comma-separated: text, image, audio, video")
     ap.add_argument("--sort", choices=["providers", "price"], default="providers",
                     help="browse order: most providers first (default) or cheapest input price first")
+    ap.add_argument("--paid", action="store_true",
+                    help="browse: ignore $0 and missing input prices (free-tier variants, unpublished prices)")
     ap.add_argument("--list-types", action="store_true", help="count models by type and modality, then exit")
     ap.add_argument("--all-matches", action="store_true", help="model-only query: also list near matches when exact ones exist")
     ap.add_argument("--litellm", action="store_true", help="add LiteLLM pricing, limits, deprecation and source links")
@@ -931,11 +951,16 @@ def main():
             print(render_browse(rows, a, notes))
         return 0 if rows else 2
     retried = []
-    if a.model and not a.all_types and data and not any(match_models(a.model, p) for p in data.values()):
+    def exact_types(d):
+        return sorted({model_type(x[2]) for p in d.values() for x in match_models(a.model, p) if is_exact(a.model, x[1], x[2])})
+
+    if a.model and not a.all_types and data and not exact_types(data):
+        # no chat model has exactly this name: it may be a decision, speech, ... model hidden by default
         a.all_types = True
         data, more = load_data(a)
+        data = apply_filters(data, a)
         notes += more
-        types = sorted({model_type(x[2]) for p in data.values() for x in match_models(a.model, p)})
+        types = [t for t in exact_types(data) if t != "chat"]
         if types:
             retried.append("%r is not a chat model; found it with --all-types (type: %s). "
                            "Browse similar models with --type %s" % (a.model, ", ".join(types), types[0]))

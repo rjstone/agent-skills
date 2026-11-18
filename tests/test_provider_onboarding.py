@@ -678,3 +678,69 @@ class AllowlistProvenanceTests(unittest.TestCase):
     def test_verified_override_hosts_are_labelled(self):
         e = lookup.build_entry("typesafe", {}, None, None, lookup.load_overrides(None)["typesafe"])
         self.assertEqual(e["hosts_source"], "override (verified 2026-11-18)")
+
+
+class Round5Tests(unittest.TestCase):
+    """Round-5 fixes: exact-match retry, key variable choice, --paid, no chat config for non-chat, speech units."""
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        api = json.loads(json.dumps(CategoryAndRound3Tests.API3))
+        api["gw"]["models"]["acme/decide-free"] = {"id": "acme/decide-free", "name": "Decide Free", "type": "decision",
+                                                   "cost": {"input": 0, "output": 0}}
+        api["gw"]["models"]["acme/voice-1"]["cost"] = {"input": 0.5, "output": 6.0}
+        self.api3 = api
+        self.api = os.path.join(self.tmp.name, "api.json")
+        with open(self.api, "w") as f:
+            json.dump(api, f)
+
+    def run_json(self, *args):
+        r = subprocess.run([sys.executable, SCRIPT, "--file", self.api, "--format", "json", *args], capture_output=True, text=True)
+        self.assertEqual(r.returncode, 0, r.stderr)
+        return json.loads(r.stdout)
+
+    def test_retry_when_only_a_fuzzy_chat_match_exists(self):
+        chat_only = {"gw": dict(self.api3["gw"], models={"acme/decide-1-chat": {"id": "acme/decide-1-chat", "name": "Decide 1 Chat"}})}
+        calls = []
+
+        def fake_load(a):
+            calls.append(a.all_types)
+            return (self.api3 if a.all_types else chat_only), ["fake"]
+
+        orig_load, orig_argv = lookup.load_data, sys.argv
+        lookup.load_data, sys.argv = fake_load, ["lookup.py", "-m", "acme/decide-1", "--format", "json"]
+        buf = io.StringIO()
+        try:
+            with contextlib.redirect_stdout(buf):
+                lookup.main()
+        finally:
+            lookup.load_data, sys.argv = orig_load, orig_argv
+        res = json.loads(buf.getvalue())
+        self.assertEqual(calls, [False, True])
+        self.assertEqual(res["entries"][0]["model"]["id"], "acme/decide-1")
+        self.assertTrue(any("not a chat model" in w for w in res["warnings"]))
+
+    def test_key_variable_prefers_key_or_token(self):
+        e = lookup.build_entry("v", {"api": "https://v.example/v1", "env": ["V_PROJECT", "V_LOCATION", "V_API_KEY"]}, None, None, {})
+        self.assertIn("{env:V_API_KEY}", lookup.snippets(e)["opencode"])
+        e = lookup.build_entry("v", {"env": ["V_PROJECT", "GOOGLE_APPLICATION_CREDENTIALS"]}, None, None, {})
+        self.assertTrue(lookup.snippets(e)["env"].startswith("export GOOGLE_APPLICATION_CREDENTIALS="))
+
+    def test_paid_skips_zero_prices(self):
+        names = [r["name"] for r in self.run_json("--type", "decision", "--sort", "price")["models"]]
+        self.assertEqual(names[0], "Decide Free")
+        paid = self.run_json("--type", "decision", "--sort", "price", "--paid")["models"]
+        self.assertEqual([r["name"] for r in paid], ["Decide 1"])
+
+    def test_missing_price_says_not_listed(self):
+        out = subprocess.run([sys.executable, SCRIPT, "--file", self.api, "--type", "chat,decision"], capture_output=True, text=True).stdout
+        self.assertNotIn("| ? /", out)
+
+    def test_no_opencode_block_for_non_chat(self):
+        sn = self.run_json("-p", "gw", "-m", "acme/decide-1")["entries"][0]["snippets"]
+        self.assertTrue(sn["opencode"].startswith("// no opencode provider block: decision model"))
+
+    def test_speech_price_has_unit_note(self):
+        self.assertIn("per character or per minute", lookup.fmt_cost({"input": 0.5, "output": 6}, "speech"))
+        self.assertNotIn("per character", lookup.fmt_cost({"input": 0.5, "output": 6}))

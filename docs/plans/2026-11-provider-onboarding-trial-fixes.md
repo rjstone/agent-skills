@@ -69,3 +69,15 @@ user, 2026-11-18). Fixed:
 5. Zero output wording: "not published, or not billed".
 6. SKILL.md: check ids against a provider's own API (jev vs jev-latest), TTS
    price units, and never quote a closest-match price.
+
+## Round 5 (same three vague requests, after the round-4 fixes)
+
+Better answers (Jev 1.14; Decider Flash at $0.01 in 7 calls; TTS priced per
+character from vendor pages). Fixed: retry with all types when no chat model
+matches exactly (a fuzzy chat match no longer hides a decision model); the key
+variable prefers *KEY*/*TOKEN* (Vertex used the project id); `--paid` and
+"not listed" in browse; no opencode chat config for non-chat models; speech
+and transcription prices carry a units note. Not fixed: OpenAI's TTS models
+are not under `openai` in models.dev (data gap). The user turned off GitHub's
+experimental code-scanning reviews after five rounds of near-duplicate findings
+(2026-11-18).
