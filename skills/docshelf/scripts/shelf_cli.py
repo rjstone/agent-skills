@@ -169,7 +169,7 @@ COMMANDS: List[Command] = [
 # Top-level --help: a short lookup card. Each command's own --help (argparse,
 # with DETAILS as its epilog) documents every option and the rest.
 TOP_HELP = """\
-docshelf {version}: look up DevDocs documentation and Dash/Zeal docsets offline.
+docshelf {version}: DevDocs docs and Dash/Zeal docsets, offline.
 REF = <docvol>:<path>[#anchor], as search and fts print it (a docset's:
 <Name>:<id> or <Name>:page:<path>[#anchor]). -d takes a docvol name (see
 list) or a family (all its versions).
@@ -177,8 +177,9 @@ list) or a family (all its versions).
 Look up:
   search NAME... -d DOCVOL     entry names (and page headings) with all the
                                words; the exact name works best
-  show REF --max-lines 40      read a section (default 150 lines); go on
-                               with --offset N, as its last line says
+  show REF --max-lines 40      read a section (default 150 lines); the
+                               "... more lines" line gives the --offset N
+                               to go on
   show REF --grep=TEXT         only the lines with TEXT (repeatable); try
                                it before toc
   fts WORDS... -d DOCVOL       words inside pages; include the function name

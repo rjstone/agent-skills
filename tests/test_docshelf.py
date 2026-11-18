@@ -2754,7 +2754,7 @@ class NetworkTests(unittest.TestCase):
 
 
 TOP_HELP_EXPECTED = "docshelf " + shelf_core.VERSION + """\
-: look up DevDocs documentation and Dash/Zeal docsets offline.
+: DevDocs docs and Dash/Zeal docsets, offline.
 REF = <docvol>:<path>[#anchor], as search and fts print it (a docset's:
 <Name>:<id> or <Name>:page:<path>[#anchor]). -d takes a docvol name (see
 list) or a family (all its versions).
@@ -2762,8 +2762,9 @@ list) or a family (all its versions).
 Look up:
   search NAME... -d DOCVOL     entry names (and page headings) with all the
                                words; the exact name works best
-  show REF --max-lines 40      read a section (default 150 lines); go on
-                               with --offset N, as its last line says
+  show REF --max-lines 40      read a section (default 150 lines); the
+                               "... more lines" line gives the --offset N
+                               to go on
   show REF --grep=TEXT         only the lines with TEXT (repeatable); try
                                it before toc
   fts WORDS... -d DOCVOL       words inside pages; include the function name
@@ -2793,8 +2794,17 @@ class HelpTests(unittest.TestCase):
     def test_top_help_fits(self):
         text = shelf_cli.top_help()
         self.assertLessEqual(len(text), 1600)
-        for line in text.splitlines():
+        # room for a longer version than today's (0.10.10)
+        long = shelf_cli.TOP_HELP.format(version="0.10.10")
+        for line in text.splitlines() + long.splitlines():
             self.assertLessEqual(len(line), 76, line)
+
+    def test_top_help_offset_hint_is_true(self):
+        # show's cut line reads "... N more lines; --offset N continues";
+        # notes or a --grep footer can follow it, so it is not the last line
+        text = " ".join(shelf_cli.top_help().split())
+        self.assertNotIn("last line", text)
+        self.assertIn("more lines", text)
 
     def test_no_command_and_dash_h_print_card(self):
         r = run_cli("-h")
@@ -2812,12 +2822,15 @@ class HelpTests(unittest.TestCase):
                     self.assertIn(p.flags[0], out, c.name)
 
     def test_moved_facts_in_command_help(self):
-        facts = {"install": ["newest", "docvols", "--force"],
-                 "remove": ["devdocs", "dash or zeal"],
+        # phrases only the epilogs (shelf_cli.DETAILS) carry, not the
+        # option names: each fact the old top-level help gave survives
+        facts = {"install": ["newest", "is skipped unless --force"],
+                 "remove": ["devdocs docvols only", "dash or zeal"],
                  "list": ["also as"], "suggest": ["no network"],
-                 "sources": ["dash or zeal"], "show": ["notes", "--grep"],
-                 "types": ["--type"], "fts": ["function name"],
-                 "notes": ["--check"]}
+                 "sources": ["dash or zeal"],
+                 "show": ["your notes for it", "table header row"],
+                 "types": ["search --type"], "fts": ["function name"],
+                 "notes": ["then ok", "--set writes"]}
         for name, words in facts.items():
             text = " ".join(run_cli(name, "--help").stdout.split()).lower()
             for w in words:
