@@ -16,13 +16,14 @@ SK = os.path.normpath(os.path.join(os.path.dirname(os.path.abspath(__file__)),
 SCRIPT = os.path.join(SK, "scripts", "docshelf.py")
 
 def segments(cmd):
-    m = re.search(r"\bS=([^\s;&]+)", cmd)
-    svar = m.group(1) if m else None
+    # a shell variable holding the script path (S=.../docshelf.py; $S show ...)
+    svars = dict((v, p) for v, p in re.findall(
+        r"\b([A-Za-z_]\w*)=([^\s;&]*docshelf\.py)", cmd))
     for seg in re.split(r";|&&|\n", cmd):
         seg = seg.strip()
-        if svar:
-            seg = seg.replace("$S ", svar + " ")
-        if "docshelf.py" in seg and not seg.startswith(("export", "S=")):
+        for v, p in svars.items():
+            seg = seg.replace("$%s " % v, p + " ").replace('"$%s" ' % v, p + " ")
+        if "docshelf.py" in seg and not re.match(r"(export\s|[A-Za-z_]\w*=)", seg):
             yield seg
 
 def to_call(args):

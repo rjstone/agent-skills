@@ -220,3 +220,42 @@ names (`path.basename`, `DatabaseSync`) rather than broad words (`node`,
 schemas put `max_lines` and `docvols` in front of the model as named
 parameters; SKILL.md can teach the same habits to CLI agents (TODO.md
 docshelf 7.5).
+
+## Phase 1: lookup-only `--help` (docshelf 0.7.4)
+
+Branch `optimize/docshelf`: the top-level `--help` became a 1.2k lookup card
+(was 3.9k) whose lines carry the habits (`search NAME -d DOCVOL`,
+`show REF --max-lines 40` then `--offset`, `--grep` before `toc`, `list`);
+SKILL.md 6,398 -> 6,002 bytes. Same nine questions, docs (node 26.3.1, zig
+0.17.1, pony 0.38.1), model (Haiku, default effort) and skill-arm prompts,
+plus "do not read anything under docs/" (the key is in the repo now).
+Answers: `answers/<docs>-skill-p1.md`.
+
+| Docs | Score | Tool calls | Time | Tokens | docshelf I/O, 0.7.3 | **0.7.4** | MCP arm |
+|---|---|---|---|---|---|---|---|
+| node | 3 | 7 | 26 s | 119k | 5,645 | **3,576 (−37%)** | ~2.4k |
+| zig | 3 | 8 | 23 s | 119k | 3,435 | **2,649 (−23%)** | ~2.3k |
+| pony | 3 | 11 | 31 s | 120k | 3,410 | **2,893 (−15%)** | ~1.6k |
+
+9/9, every answer with the key's REF. docshelf I/O = (typed + printed) / 4
+from `tools/replay_docshelf.py`. The replay runs the current code, so
+replaying the 0.7.3 runs today prints the new 1.2k `--help`; the 0.7.3
+column is the measurement taken at 0.7.3.
+
+What changed:
+- `--help` costs ~320 tokens per run instead of ~900-1,000 (every run
+  still read it, as SKILL.md says).
+- Every `show` set `--max-lines` (none did at 0.7.3), and node searched
+  exact names (`basename`, `DatabaseSync`, `permission drop`) instead of
+  `search node` over all docvols.
+- Still large: short searches (`search Int -d zig`, 2.8k; `search Type`,
+  1.1k), and pony read whole pages with generous caps
+  (`show pony:promises-promise --max-lines 200 --grep=...`, 3.3k;
+  `pony:builtin-env` and `pony:promises-promises`, 1.6k each). These are
+  TODO 7.2 and 7.4 (phase 2: output defaults).
+- Agent totals barely move (116-123k): most of each is the harness's
+  baseline context.
+
+`tools/replay_docshelf.py` and `replay_mcp.py` now follow any shell
+variable holding the script path (`D=.../docshelf.py; $D show ...`, not only
+`S=`), and count output an agent sent to `/dev/null` as 0.
