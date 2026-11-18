@@ -110,3 +110,50 @@ hyphens (U+2010-U+2015, U+2212) as `-`: nemotron-120b wrote
   `list HTTP` (`list` takes no arguments).
 - Luna stayed the cheapest and fastest of the models that always used the
   skill; totals moved by up to ~30% per model between rounds.
+
+## MCP arms: docshelf as an MCP server, no skill (0.8.1)
+
+Same eight models, sets, prompts and sandbox, docshelf 0.8.1 (`update/docshelf`).
+No skill is installed; docshelf's scripts (without SKILL.md) are served as
+the opencode MCP server `docshelf` (`ARM=mcp`). opencode v2 calls MCP tools
+in **code mode** by default: the model writes JavaScript in one `execute`
+call (`await Promise.all([tools.docshelf.search({...}), ...])`). The second
+arm sets the server's `"codemode": false` (`ARM=mcp-direct`), so the models
+call `docshelf_search`, `docshelf_show`, ... directly. MCP I/O = (call JSON or
+`execute` code + result) / 4.
+
+| Model | Skill (round 2) | MCP, code mode | MCP, direct |
+|---|---|---|---|
+| `Beam-1.0-501B-A23B` | 4/4, used 3/4, 10.2k, 103 s | 4/4, used 4/4, 11.4k, 85 s | 4/4, used 4/4, 11.6k, 88 s |
+| `deepseek-v4.1-flash` | 4/4, 4/4, 16.6k, 330 s | 4/4, 4/4, 17.3k, 210 s | 4/4, 4/4, 12.8k, 159 s |
+| `gpt-6-luna` | 4/4, 4/4, 10.5k, 129 s | 4/4, 4/4, 21.1k, 82 s | 4/4, 4/4, 14.2k, 72 s |
+| `mimo-v2.6-flash` | 4/4, 4/4, 17.8k, 604 s | 4/4, 4/4, 18.7k, 373 s | 4/4, 4/4, 13.5k, 361 s |
+| `muse-spark-1.3-contributor` | 4/4, 4/4, 16.7k, 189 s | 4/4, 4/4, 17.5k, 144 s | 4/4, 4/4, 17.4k, 175 s |
+| `nemotron-3-super-120b-a12b` | 4/4, 4/4, 10.1k, 206 s | 3/4, 4/4, 7.4k, 163 s | 4/4, 4/4, 22.8k, 131 s |
+| `nemotron-3.5-super-vl:free` | 4/4, **0/4**, -, 334 s | 4/4, **4/4**, 12.9k, 976 s | 4/4, **4/4**, 13.4k, 555 s |
+| `stepfun/step-3.7-flash` | 4/4, 4/4, 15.9k, 403 s | 4/4, 4/4, 44.3k, 211 s | 3½/4, 4/4, 27.9k, 491 s |
+
+Cells: sets answered, sets where docshelf was used, docshelf I/O (tokens,
+sum of four sets), time (sum).
+
+- **Everyone used docshelf over MCP, in every set, in both modes**,
+  including nemotron-3.5-super-vl, which never loaded the skill and read the
+  cache files instead. A tool already in the tool list is harder to ignore
+  than a skill the model must choose to load.
+- Failures: nemotron-120b's node reply in code mode degenerated into a
+  repeated `<t <t ...` after correct lookups (as on pony in skill round 1);
+  Step (direct) quoted the `defensive` history row as "v25.5.0, v22.16.0"
+  (the docs say v24.14.0): a misquote presented as a quotation.
+- Code mode costs more for some models: they batch many calls with
+  `Promise.all` and ask for whole pages (`full: true`). Luna 21.1k vs 14.2k
+  direct vs 10.5k with the skill; Step 44.3k in code mode (a `show` that
+  printed a whole page). Direct calls were cheapest for DeepSeek and MiMo
+  and fastest for most models.
+- MCP tool-use slips (all recovered from the error message): `docvols`
+  passed as the string `"[node]"`; invented docvol names (`nodejs`,
+  `node~26`, `mdn/http`); guessed REFs (`pony:builtin-main`); a
+  nonexistent `limit` argument to `show`; nemotron-vl first called a tool
+  literally named `tools.docshelf.list` before finding `execute`.
+- The scorer counts code-mode calls however the namespace is reached
+  (`tools.docshelf.x(`, `tools["docshelf"].x(`, an alias); its Z2 check is
+  now case-insensitive ("Labeled switch").

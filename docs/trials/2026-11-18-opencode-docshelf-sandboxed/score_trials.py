@@ -25,7 +25,7 @@ CHECKS = {
     "zig": [
         ("Z1 divFloor=-2", r"divFloor[\s\S]{0,120}(-2|−2)"),
         ("Z1 divTrunc=-1", r"divTrunc[\s\S]{0,120}(-1|−1)"),
-        ("Z2 label", r"label"),
+        ("Z2 label", r"(?i)label"),
         ("Z2 operand", r"operand"),
         ("Z3 @Int(.unsigned, 18)", r"@Int\(\s*\.unsigned\s*,\s*18\s*\)"),
         ("Z3 std.lang.Signedness", r"std\.lang\.Signedness"),
