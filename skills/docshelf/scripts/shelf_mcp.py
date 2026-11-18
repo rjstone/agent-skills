@@ -260,6 +260,7 @@ def call_tool(name: str, arguments: Any) -> dict:
     message = cfg = None
     try:
         with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
+            shelf_core.HINT_REWRITER = explain
             cfg = shelf_core.load_config()
             code = c.func(cfg, ns)
     except CLIError as e:
@@ -270,7 +271,9 @@ def call_tool(name: str, arguments: Any) -> dict:
                 + json.dumps([slug])) or message
     except Exception as e:  # keep serving whatever a command does
         code, message = 1, "internal error: %s: %s" % (type(e).__name__, e)
-    text = out.getvalue() + err.getvalue()
+    finally:
+        shelf_core.HINT_REWRITER = None
+    text = out.getvalue() + explain(err.getvalue())
     if message is not None:
         text += message
     return _result(text, bool(code))

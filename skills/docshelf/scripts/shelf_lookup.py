@@ -17,9 +17,9 @@ import shelf_dash
 import shelf_notes
 from shelf_render import (_print_lines, _page_title_line, page_title,
                           section_headings, section_lines, unquote_all)
-from shelf_core import (CLIError, Config, cap_lines, make_temp, pick_docvol, rank,
-                        same_family_note, select_docvols, short_name,
-                        skip_damaged, warn)
+from shelf_core import (CLIError, Config, cap_lines, hint, make_temp,
+                        pick_docvol, rank, same_family_note, select_docvols,
+                        short_name, skip_damaged, warn)
 
 FUZZY_SHOWN = 0  # fuzzy hits shown when exact, prefix or substring hits exist
 
@@ -164,7 +164,7 @@ def cmd_search(cfg: Config, args: argparse.Namespace) -> int:
     # within a rank, entries with an anchor (a section) before whole pages
     hits.sort(key=lambda h: (h[0], h[4] in no_anchor) + h[1:5])
     hits, also = _fold_bare_entries(hits, no_anchor, page_of)
-    hint = "raise --max-lines or narrow the query, -d or --type"
+    hint_text = hint("raise --max-lines or narrow the query, -d or --type")
     if args.json:
         items = []
         for r, _l, n, d, ref, t in hits[:args.max_lines]:
@@ -182,8 +182,8 @@ def cmd_search(cfg: Config, args: argparse.Namespace) -> int:
         cut = 0
     lines = []
     if only_headings and hits and hits[0][5] == HEADING:
-        lines.append("no entry name matches %r; headings inside pages "
-                     "(show REF opens the section):" % args.query)
+        lines.append("no entry name matches %r; headings inside pages %s"
+                     % (args.query, hint("(show REF opens the section):")))
     for k, (r, _l, n, d, ref, t) in enumerate(hits):
         if r == 3 and (k == 0 or hits[k - 1][0] < 3):
             lines.append("no exact, prefix or substring matches; fuzzy matches "
@@ -209,7 +209,7 @@ def cmd_search(cfg: Config, args: argparse.Namespace) -> int:
             lines.append("no matches for %r (%s; fts searches the text inside "
                          "pages)" % (args.query, "entry names only" if want_type
                                      else "entry names and page headings"))
-    for line in cap_lines(lines, args.max_lines, hint):
+    for line in cap_lines(lines, args.max_lines, hint_text):
         print(line)
     return 0
 
@@ -280,8 +280,9 @@ def cmd_toc(cfg: Config, args: argparse.Namespace) -> int:
                                      ds.make_ref(page, head_id)))
     else:
         out.append("(no headings)")
-    for line in cap_lines(out, args.max_lines,
-                          "use show REF for a section, or raise --max-lines"):
+    for line in cap_lines(
+            out, args.max_lines,
+            hint("use show REF for a section, or raise --max-lines")):
         print(line)
     return 0
 
@@ -624,8 +625,8 @@ def cmd_fts(cfg: Config, args: argparse.Namespace) -> int:
         lines.append(h["ref"])
         lines.append("    " + h["snippet"])
     if len(hits) > room:
-        lines.append("... more hits cut; add words (e.g. the function name), "
-                     "-d, or raise --max-lines")
+        lines.append(hint("... more hits cut; add words (e.g. the function name), "
+                          "-d, or raise --max-lines"))
     # a cap too small for one hit plus the cut line still holds: REF line first
     for line in lines[:max(1, args.max_lines)]:
         print(line)

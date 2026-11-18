@@ -7,7 +7,7 @@ import tempfile
 import time
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
-from typing import Dict, Iterator, List, Optional, Tuple
+from typing import Callable, Dict, Iterator, List, Optional, Tuple
 from urllib.parse import unquote
 
 VERSION = "0.7.2"
@@ -453,6 +453,16 @@ def select_docvols(cfg, all_docvols, names, use_all) -> List[Docvol]:
         % (len(full), listed, PROJECT_FILE))
 
 
+# Set by the MCP tool call while it runs: turns CLI wording in our own hint
+# lines into tool wording. Never applied to text that came from the docs.
+HINT_REWRITER: Optional[Callable[[str], str]] = None
+
+
+def hint(text: str) -> str:
+    """Our own hint text, in tool wording while an MCP call runs."""
+    return HINT_REWRITER(text) if HINT_REWRITER else text
+
+
 def same_family_note(docs) -> Optional[str]:
     """Note for the first family with two or more docvols in docs, or None."""
     groups: Dict[str, List[str]] = {}
@@ -460,8 +470,8 @@ def same_family_note(docs) -> Optional[str]:
         groups.setdefault(d.family, []).append(d.name)
     for family, names in groups.items():
         if len(names) > 1:
-            return ("note: searching %d docvols of %s (%s); -d NAME picks one"
-                    % (len(names), family, ", ".join(names)))
+            return hint("note: searching %d docvols of %s (%s); -d NAME picks one"
+                        % (len(names), family, ", ".join(names)))
     return None
 
 

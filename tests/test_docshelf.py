@@ -3371,6 +3371,91 @@ class McpExplainTests(unittest.TestCase):
         self.assertNotRegex(text, r"(?<![\w-])--[a-z]")
         self.assertNotRegex(text, r"(?<![\w-])-d\b")
 
+    # -- hint lines in normal output and stderr (6.13.12) --
+
+    def mcp_env(self, slugs=(("alpha", "1"),), pages=None, entries=None):
+        tmp, cache, _notes, env = temp_env(self)
+        env["DOCSHELF_DOCSET_DIRS"] = os.path.join(tmp, "docs")
+        entries = entries or [("Guide%d" % i, "Guide", "p%d" % i)
+                              for i in range(6)]
+        pages = pages or {p: "<h1>%s</h1><p>hello</p>" % n
+                          for n, _t, p in entries}
+        folders = [make_devdocs(cache, slug, name=slug.title(), release=rel,
+                                entries=entries, pages=pages)
+                   for slug, rel in slugs]
+        patcher = mock.patch.dict(os.environ, env)
+        patcher.start()
+        self.addCleanup(patcher.stop)
+        return folders
+
+    def call(self, tool, **arguments):
+        import shelf_mcp
+        r = shelf_mcp.call_tool(tool, arguments)
+        return r["content"][0]["text"]
+
+    def test_search_cut_hint_tool_wording(self):
+        self.mcp_env()
+        text = self.call("search", query="Guide", max_lines=2)
+        self.assertIn("more lines cut", text)
+        self.assertIn("max_lines", text)
+        self.assertNotIn("--max-lines", text)
+        self.assertNotRegex(text, r"(?<![\w-])-d\b")
+
+    def test_family_note_tool_wording(self):
+        self.mcp_env(slugs=(("alpha~1", "1"), ("alpha~2", "2")))
+        text = self.call("search", query="Guide")
+        self.assertIn("note: searching 2 docvols of alpha", text)
+        self.assertNotIn("-d NAME", text)
+
+    def test_fts_cut_hint_tool_wording(self):
+        self.mcp_env()
+        text = self.call("fts", query="hello", max_lines=4)
+        self.assertIn("more hits cut", text)
+        self.assertNotIn("--max-lines", text)
+        self.assertNotRegex(text, r"(?<![\w-])-d\b")
+
+    def test_toc_hint_tool_wording(self):
+        page = "".join("<h2>H%d</h2><p>x</p>" % i for i in range(6))
+        self.mcp_env(entries=[("Guide", "Guide", "p")],
+                     pages={"p": "<h1>T</h1>" + page})
+        text = self.call("toc", ref="alpha:p", max_lines=2)
+        self.assertIn("more lines cut", text)
+        self.assertNotIn("--max-lines", text)
+        self.assertNotIn("show REF", text)
+
+    def test_stderr_explained(self):
+        folders = self.mcp_env(slugs=(("alpha", "1"), ("beta", "1")))
+        with open(os.path.join(folders[0], "index.json"), "w") as f:
+            f.write("{not json")
+        text = self.call("search", query="Guide")
+        self.assertIn("warning: skipping", text)
+        self.assertIn("the `remove` tool", text)
+        self.assertIn("the `install` tool", text)
+        self.assertNotIn("docshelf.py", text)
+
+    def test_doc_text_untouched(self):
+        body = "raise --max-lines and docshelf.py install x"
+        self.mcp_env(entries=[("Guide", "Guide", "p")],
+                     pages={"p": "<h1>Guide</h1><p>%s</p>" % body})
+        text = self.call("show", ref="alpha:p")
+        self.assertIn(body, text)
+
+    def test_rewriter_reset_after_call(self):
+        import shelf_mcp
+        self.mcp_env()
+        self.call("search", query="Guide", max_lines=2)
+        self.assertIsNone(shelf_core.HINT_REWRITER)
+        r = shelf_mcp.call_tool("search", {"query": "Guide", "docvol": "nope"})
+        self.assertTrue(r["isError"])
+        with mock.patch.object(shelf_core, "load_config",
+                               side_effect=RuntimeError("boom")):
+            r = shelf_mcp.call_tool("search", {"query": "Guide"})
+        self.assertIn("internal error", r["content"][0]["text"])
+        self.assertIsNone(shelf_core.HINT_REWRITER)
+        env = {k: v for k, v in os.environ.items()}
+        out = run_cli("search", "Guide", "--max-lines", "2", env=env)
+        self.assertIn("--max-lines", out.stdout)
+
     def test_unknown_docvol_see_list(self):
         out = self.explain("unknown docvol 'x' (see: docshelf.py list)")
         self.assertEqual(out, "unknown docvol 'x' (see: the `list` tool)")
@@ -5979,8 +6064,8 @@ class DashCatalogTests(unittest.TestCase):
         self.assertFalse(r["isError"], text)
         self.assertIn("python~3.12", text)
         self.assertIn("cannot reach api.zealdocs.org", text)
-        self.assertIn("assets/allowlist.txt", text)
-        self.assertNotIn(shelf_mcp.HINTS["assets/allowlist.txt"], text)
+        self.assertIn(shelf_mcp.HINTS["assets/allowlist.txt"], text)
+        self.assertNotIn("assets/allowlist.txt", text)
 
     def test_catalog_notes_name_the_lists_that_fell_back(self):
         self.zeal_install()
@@ -7420,7 +7505,7 @@ class DamagedDocvolTests(unittest.TestCase):
         self.assertEqual(r.returncode, 0, r.stderr)
         self.assertIn("beta:guide", r.stdout)
         self.assertNotIn("alpha:", r.stdout)
-        self.assertIn("skipping docvol alpha", r.stderr)
+        self.assertIn("warning: skipping", r.stderr)
         self.assertIn(self.REPAIR, r.stderr)
         self.assertNotIn("Traceback", r.stderr)
         for cmd in (("list",), ("suggest",)):
@@ -7454,14 +7539,14 @@ class DamagedDocvolTests(unittest.TestCase):
         r = self.cli("search", "--json", "Guide")
         self.assertEqual(r.returncode, 0, r.stderr)
         self.assertEqual([i["docvol"] for i in json.loads(r.stdout)], ["beta"])
-        self.assertIn("skipping docvol alpha", r.stderr)
+        self.assertIn("warning: skipping", r.stderr)
 
     def test_types_and_fts_skip(self):
         self.pair()
         for cmd in (("types",), ("fts", "hello")):
             r = self.cli(*cmd)
             self.assertEqual(r.returncode, 0, (cmd, r.stderr))
-            self.assertIn("skipping docvol alpha", r.stderr)
+            self.assertIn("warning: skipping", r.stderr)
             self.assertIn("beta", r.stdout)
 
     def test_damaged_db_json_skips(self):
@@ -7471,7 +7556,7 @@ class DamagedDocvolTests(unittest.TestCase):
         for cmd in (("search", "hello"), ("fts", "hello")):
             r = self.cli(*cmd)
             self.assertEqual(r.returncode, 0, (cmd, r.stderr))
-            self.assertIn("skipping docvol alpha", r.stderr)
+            self.assertIn("warning: skipping", r.stderr)
             self.assertIn(self.REPAIR, r.stderr)
             self.assertNotIn("Traceback", r.stderr)
 
