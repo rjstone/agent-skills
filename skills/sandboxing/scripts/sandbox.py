@@ -15,6 +15,7 @@ import os
 import pwd
 import shlex
 import shutil
+import signal
 import stat
 import subprocess
 import sys
@@ -38,6 +39,9 @@ CREDENTIAL_DIRS = [".ssh", ".aws", ".config/gh", ".claude", ".codex",
 # top-level paths that are symlinks into /usr on merged-/usr systems
 USR_LINKS = ["/bin", "/lib", "/lib64", "/sbin"]
 SHOW_TMP = "/tmp/sandbox.XXXXXX"
+# sandbox.py's own failures (usage, preflight, missing tools): 125, as env,
+# timeout and chroot use, so they don't look like the command's own status
+EXIT_SANDBOX_ERROR = 125
 # --mem is an address-space limit; Node.js (V8) reserves this much virtual
 # memory at startup (Node 22 fails to start below about 768 MB)
 NODE_MIN_MEM_MB = 1024
@@ -53,8 +57,14 @@ if touch /work/.sandbox-check 2>/dev/null; then rm -f /work/.sandbox-check; echo
 '''
 
 
+class _Parser(argparse.ArgumentParser):
+    def error(self, message):
+        self.print_usage(sys.stderr)
+        self.exit(EXIT_SANDBOX_ERROR, "%s: error: %s\n" % (self.prog, message))
+
+
 def parse_args(argv):
-    p = argparse.ArgumentParser(
+    p = _Parser(
         prog="sandbox.py",
         description="Run COMMAND in a bubblewrap sandbox that hides the caller's "
                     "environment, processes and files (Linux).",
@@ -62,6 +72,8 @@ def parse_args(argv):
     p.add_argument("--work", metavar="DIR",
                    help="writable folder mounted at /work, also HOME and the working "
                         "directory (default: a new temp folder, removed afterwards)")
+    p.add_argument("--cwd", metavar="DIR",
+                   help="working directory inside; relative to /work (default /work)")
     p.add_argument("--ro", action="append", default=[], metavar="SRC[:DEST]",
                    help="read-only bind (repeatable); DEST defaults to SRC")
     p.add_argument("--rw", action="append", default=[], metavar="SRC[:DEST]",
@@ -111,6 +123,18 @@ def binds(opts):
     out = [("--ro", *split_bind(s)) for s in opts.ro]
     out += [("--rw", *split_bind(s)) for s in opts.rw]
     return out
+
+
+def cwd_path(opts):
+    """The working directory inside the sandbox."""
+    if not opts.cwd:
+        return "/work"
+    return os.path.normpath(os.path.join("/work", opts.cwd))
+
+
+def hosts_text():
+    """A minimal /etc/hosts: localhost only (the host's own may name internal hosts)."""
+    return "127.0.0.1\tlocalhost\n::1\tlocalhost ip6-localhost ip6-loopback\n"
 
 
 def _real(path):
@@ -259,6 +283,13 @@ def preflight(opts, env, euid):
                           "o+w, or chown it), copy the data into the --work folder, "
                           "or use --ro" % (label, src, who))
 
+    cwd = cwd_path(opts)
+    if opts.cwd and opts.work and cwd.startswith("/work/"):
+        host_cwd = os.path.join(os.path.abspath(opts.work), os.path.relpath(cwd, "/work"))
+        if not os.path.isdir(host_cwd):
+            errors.append("--cwd %s: %s does not exist in the --work folder (%s); "
+                          "create it before the run" % (opts.cwd, cwd, host_cwd))
+
     if not opts.no_net and not opts.allow_proxy_credentials:
         for name in PROXY_VARS:
             value = env.get(name)
@@ -297,7 +328,7 @@ def _usr_binds():
     return out
 
 
-def build_command(opts, env, euid, work, ca_copy):
+def build_command(opts, env, euid, work, ca_copy, hosts=None):
     """The full command line: env -i [setpriv ...] bwrap ... -- [prlimit ...] COMMAND."""
     cmd = ["env", "-i"]
     if euid == 0:
@@ -314,6 +345,9 @@ def build_command(opts, env, euid, work, ca_copy):
           "--ro-bind-try", "/etc/ssl", "/etc/ssl"]
     if net:
         b += ["--ro-bind-try", "/etc/resolv.conf", "/etc/resolv.conf"]
+    if hosts:
+        # before the caller's binds, so a --ro of their own /etc/hosts wins
+        b += ["--ro-bind", hosts, "/etc/hosts"]
     b += ["--proc", "/proc", "--dev", "/dev", "--tmpfs", "/tmp",
           "--bind", work, "/work"]
     path = []
@@ -337,7 +371,7 @@ def build_command(opts, env, euid, work, ca_copy):
     b.append("--clearenv")
     for name, value in setenv:
         b += ["--setenv", name, value]
-    b += ["--chdir", "/work", "--"]
+    b += ["--chdir", cwd_path(opts), "--"]
     cmd += b
 
     limits = []
@@ -411,10 +445,20 @@ def _userns_error(prefix):
     return None
 
 
+class _Signalled(Exception):
+    def __init__(self, signum):
+        super().__init__(signum)
+        self.signum = signum
+
+
+def _raise_signal(signum, frame):
+    raise _Signalled(signum)
+
+
 def _fail(errors):
     for e in errors:
         print("sandbox.py: error: " + e, file=sys.stderr)
-    return 2
+    return EXIT_SANDBOX_ERROR
 
 
 def main(argv=None):
@@ -431,7 +475,7 @@ def main(argv=None):
     if opts.show:
         work = os.path.abspath(opts.work) if opts.work else SHOW_TMP + "/work"
         ca = SHOW_TMP + "/ca.crt" if net and _ca_source(env) else None
-        print(shlex.join(build_command(opts, env, euid, work, ca)))
+        print(shlex.join(build_command(opts, env, euid, work, ca, SHOW_TMP + "/hosts")))
         return 0
 
     errors = _tool_errors(opts, euid)
@@ -447,10 +491,13 @@ def main(argv=None):
     if err:
         return _fail([err])
 
-    tmp = None
-    if not opts.work or net:
-        tmp = tempfile.mkdtemp(prefix="sandbox.", dir="/tmp")
-        os.chmod(tmp, 0o755)
+    # per-run files the sandbox user must read: CA copy, hosts, default work
+    tmp = tempfile.mkdtemp(prefix="sandbox.", dir="/tmp")
+    os.chmod(tmp, 0o755)
+    hosts = os.path.join(tmp, "hosts")
+    with open(hosts, "w") as f:
+        f.write(hosts_text())
+    os.chmod(hosts, 0o644)
     work = os.path.abspath(opts.work) if opts.work else os.path.join(tmp, "work")
     os.makedirs(work, exist_ok=True)
     ca_copy = None
@@ -467,20 +514,23 @@ def main(argv=None):
         uid, gid = _sandbox_ids(opts.user)
         _chown_tree(work, uid, gid)
 
-    cmd = build_command(opts, env, euid, work, ca_copy)
+    cmd = build_command(opts, env, euid, work, ca_copy, hosts)
     keep_tmp = opts.keep and not opts.work
-    if tmp is None:
-        sys.stdout.flush()
-        sys.stderr.flush()
-        os.execvp(cmd[0], cmd)
+    # SIGTERM (timeout, kill) or SIGHUP: stop the sandbox and still clean up;
+    # subprocess.call kills its child when the wait is interrupted
+    for sig in (signal.SIGTERM, signal.SIGHUP):
+        signal.signal(sig, _raise_signal)
     try:
         status = subprocess.call(cmd)
     except KeyboardInterrupt:
         status = 130
+    except _Signalled as e:
+        status = 128 + e.signum
     finally:
         if keep_tmp:
-            if ca_copy:
-                os.unlink(ca_copy)
+            for f in (ca_copy, hosts):
+                if f:
+                    os.unlink(f)
             print("sandbox.py: kept work folder " + work, file=sys.stderr)
         else:
             shutil.rmtree(tmp, ignore_errors=True)

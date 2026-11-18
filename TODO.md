@@ -208,12 +208,6 @@ servers.
 
 ### sandboxing
 
-- [ ] Bind `/etc/hosts` read-only by default: without it `localhost`
-      doesn't resolve inside (SKILL.md says to pass `--ro /etc/hosts`).
-- [ ] A working-directory option below `/work` (today: `sh -c 'cd ... &&
-      exec CMD'`, as in `references/nested-agents.md`).
-- [ ] sandbox.py's own errors exit 2, the same as a command that exits 2;
-      consider a distinct status or a marker line on stderr.
 - [ ] A real memory limit (resident memory, whole process tree): `--mem` is
       `prlimit --as` (address space), which Node.js needs 768 MB+ of just to
       start (0.2.0 warns and documents it). Options: a cgroup v2

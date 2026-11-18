@@ -4,14 +4,17 @@ so they need no bwrap, no network and no real user changes. Run from the
 repo root: python3 -m unittest discover -s tests -v
 """
 import contextlib
+import glob
 import importlib.util
 import io
 import os
 import re
 import shutil
+import signal
 import subprocess
 import sys
 import tempfile
+import time
 import unittest
 from unittest import mock
 
@@ -40,9 +43,10 @@ CA = "/fixture/ca.crt"
 BASE_ENV = {"HOME": "/fixture/home", "PATH": "/usr/bin:/bin"}
 
 
-def build(argv, env=None, euid=1000, work=WORK, ca_copy=CA):
+def build(argv, env=None, euid=1000, work=WORK, ca_copy=CA, hosts=None):
     opts = sandbox.parse_args(argv)
-    return sandbox.build_command(opts, dict(BASE_ENV, **(env or {})), euid, work, ca_copy)
+    return sandbox.build_command(opts, dict(BASE_ENV, **(env or {})), euid, work, ca_copy,
+                                 hosts=hosts)
 
 
 def pairs(cmd, flag):
@@ -162,6 +166,34 @@ class CommandTests(TempDirs):
         self.assertNotIn("prlimit", build(["--", "true"]))
 
 
+class HostsAndCwdTests(unittest.TestCase):
+    def test_hosts_text_has_localhost(self):
+        text = sandbox.hosts_text()
+        self.assertRegex(text, r"(?m)^127\.0\.0\.1\s+localhost\b")
+        self.assertRegex(text, r"(?m)^::1\s+localhost\b")
+
+    def test_hosts_bound_before_user_binds(self):
+        cmd = build(["--ro", "/fixture/etc-hosts:/etc/hosts", "--", "true"],
+                    hosts="/fixture/run/hosts")
+        part = bwrap_part(cmd)
+        ro = triples(part, "--ro-bind")
+        self.assertIn(("/fixture/run/hosts", "/etc/hosts"), ro)
+        # the user's own bind comes later, so it wins
+        self.assertLess(ro.index(("/fixture/run/hosts", "/etc/hosts")),
+                        ro.index(("/fixture/etc-hosts", "/etc/hosts")))
+
+    def test_no_hosts_bind_without_file(self):
+        part = bwrap_part(build(["--", "true"]))
+        self.assertNotIn("/etc/hosts", [d for _, d in triples(part, "--ro-bind")])
+
+    def test_cwd_relative_and_absolute(self):
+        self.assertEqual(pairs(bwrap_part(build(["--cwd", "proj/a", "--", "true"])), "--chdir"),
+                         ["/work/proj/a"])
+        self.assertEqual(pairs(bwrap_part(build(["--cwd", "/data", "--", "true"])), "--chdir"),
+                         ["/data"])
+        self.assertEqual(pairs(bwrap_part(build(["--", "true"])), "--chdir"), ["/work"])
+
+
 class PreflightTests(TempDirs):
     def make_home(self):
         home = self.mkdir()
@@ -211,6 +243,16 @@ class PreflightTests(TempDirs):
         self.assertTrue(any("'%s'" % private in e for e in errs), errs)
         os.chmod(private, 0o755)
         self.assertEqual(self.errors(["--ro", src, "--", "true"], euid=0), [])
+
+    def test_cwd_missing_under_work(self):
+        work = self.mkdir()
+        errs = self.errors(["--work", work, "--cwd", "proj", "--", "true"])
+        self.assertTrue(any("--cwd" in e and "proj" in e for e in errs), errs)
+        os.mkdir(os.path.join(work, "proj"))
+        self.assertEqual(self.errors(["--work", work, "--cwd", "proj", "--", "true"]), [])
+        # a --work folder that sandbox.py will create, and no --cwd: fine
+        new = os.path.join(work, "not-yet")
+        self.assertEqual(self.errors(["--work", new, "--", "true"]), [])
 
     def test_preflight_rw_not_writable(self):
         src = self.mkdir(0o755)  # owned by the test's user: not the sandbox user
@@ -268,13 +310,20 @@ class MainTests(unittest.TestCase):
         self.assertIn("bwrap", text)
         self.assertTrue(text.rstrip().endswith("true"), text)
 
-    def test_preflight_error_exits_2(self):
+    def test_preflight_error_exits_125(self):
         err = io.StringIO()
         with mock.patch.dict(os.environ, {"HOME": "/fixture/home"}, clear=True), \
                 contextlib.redirect_stderr(err):
             status = sandbox.main(["--show", "--user", "root", "--", "true"])
-        self.assertEqual(status, 2)
+        self.assertEqual(status, sandbox.EXIT_SANDBOX_ERROR)
+        self.assertEqual(sandbox.EXIT_SANDBOX_ERROR, 125)
         self.assertIn("root", err.getvalue())
+
+    def test_usage_error_exits_125(self):
+        with contextlib.redirect_stderr(io.StringIO()), \
+                self.assertRaises(SystemExit) as cm:
+            sandbox.main(["--no-such-option", "--", "true"])
+        self.assertEqual(cm.exception.code, sandbox.EXIT_SANDBOX_ERROR)
 
     def test_version(self):
         self.assertRegex(sandbox.VERSION, r"^\d+\.\d+\.\d+$")
@@ -392,6 +441,31 @@ class IntegrationTests(unittest.TestCase):
         os.remove(f)
         self.assertFalse(os.path.exists(f))
         shutil.rmtree(work)
+
+    def test_sigterm_cleans_up(self):
+        before = set(glob.glob("/tmp/sandbox.*"))
+        p = subprocess.Popen([sys.executable, SANDBOX_PY, "--no-net", "--", "sleep", "30"],
+                             stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        deadline = time.time() + 15
+        while time.time() < deadline and set(glob.glob("/tmp/sandbox.*")) == before:
+            time.sleep(0.1)
+        time.sleep(0.5)  # let bwrap start
+        p.terminate()
+        self.assertEqual(p.wait(timeout=15), 128 + signal.SIGTERM)
+        self.assertEqual(set(glob.glob("/tmp/sandbox.*")) - before, set())
+
+    def test_localhost_resolves(self):
+        r = self.run_sandbox(["--no-net", "--", "python3", "-c",
+                              "import socket; print(socket.gethostbyname('localhost'))"])
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertEqual(r.stdout.strip(), "127.0.0.1")
+
+    def test_cwd_inside_work(self):
+        work = os.path.join(self.mkdir(), "work")
+        os.makedirs(os.path.join(work, "proj"))
+        r = self.run_sandbox(["--no-net", "--work", work, "--cwd", "proj", "--", "pwd"])
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertEqual(r.stdout.strip(), "/work/proj")
 
     def test_rw_bind_writable_inside(self):
         data = os.path.join(self.mkdir(), "data")

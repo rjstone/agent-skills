@@ -30,12 +30,12 @@ mkdir -p "$RUN/work/.config/opencode" "$RUN/work/proj"
 cp opencode.json "$RUN/work/.config/opencode/"   # providers, models, no keys
 cp -r task-files/. "$RUN/work/proj/"             # what the agent works on
 
-timeout 900 python3 "$SANDBOX" --work "$RUN/work" --ro "$NODE_DIR" \
+timeout 900 python3 "$SANDBOX" --work "$RUN/work" --cwd proj --ro "$NODE_DIR" \
     --setenv OPENROUTER_API_KEY=placeholder \
-    -- sh -c 'cd /work/proj && exec opencode run --standalone --archived \
-              --auto --format json --model "$1" "$2"' sh "$MODEL" "$PROMPT" \
+    -- opencode run --standalone --archived --auto --format json \
+       --model "$MODEL" "$PROMPT" \
     > "$RUN/events.jsonl" 2> "$RUN/stderr.txt"
-echo "exit $?"
+echo "exit $?"   # 124: timed out; 125: sandbox.py refused (see stderr.txt)
 ```
 
 - `NODE_DIR` must be readable by the sandbox user: a runtime under `/opt`

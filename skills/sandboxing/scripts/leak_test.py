@@ -26,11 +26,12 @@ import sys
 import tempfile
 import time
 
-VERSION = "0.1.0"
+VERSION = "0.2.0"
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 SANDBOX_PY = os.path.join(HERE, "sandbox.py")
 MARKER_VAR = "LEAK_TEST_SECRET"
+SANDBOX_ERROR = 125  # sandbox.py's exit status for its own errors
 HTTPS_URL = "https://pypi.org/simple/"
 PROXY_VARS = ["HTTPS_PROXY", "https_proxy", "HTTP_PROXY", "http_proxy",
               "ALL_PROXY", "all_proxy"]
@@ -150,6 +151,16 @@ def _find_process(argv, timeout=15):
     return None, None
 
 
+def _stop(proc):
+    """SIGTERM first, so sandbox.py removes its temp folder; SIGKILL if stuck."""
+    proc.terminate()
+    try:
+        proc.wait(timeout=15)
+    except subprocess.TimeoutExpired:
+        proc.kill()
+        proc.wait()
+
+
 def _host_user_probe(opts, work):
     """info line: which host user runs the sandboxed process (seen from outside)."""
     tag = "leak-test-" + secrets.token_hex(6)
@@ -159,8 +170,7 @@ def _host_user_probe(opts, work):
     try:
         pid, uid = _find_process(inner)
     finally:
-        proc.kill()
-        proc.wait()
+        _stop(proc)
     if pid is None:
         return "info host-user: sandboxed process not found from the host side"
     try:
@@ -219,7 +229,7 @@ def run(opts):
                                         home, secret, bound, url]),
             env=env, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
             text=True, timeout=600)
-        if r.returncode == 2 and not r.stdout:
+        if r.returncode == SANDBOX_ERROR and not r.stdout:
             print(r.stderr.rstrip(), file=sys.stderr)
             return 2
         seen = set()
