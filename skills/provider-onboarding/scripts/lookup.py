@@ -20,7 +20,7 @@ import urllib.error
 import urllib.request
 from urllib.parse import urlparse
 
-VERSION = "0.3.0"
+VERSION = "0.4.0"
 DEFAULT_URLS = "https://models.dev/api.json,https://models.opencode.ai/api.json"
 UA = "provider-onboarding/" + VERSION
 
@@ -38,6 +38,31 @@ PORTKEY_IDS = {
     "alibaba-cn": "dashscope", "cloudflare-workers-ai": "workers-ai", "azure-cognitive-services": "azure-ai",
     "nearai": "near-ai",
 }
+# LiteLLM's price table (MIT): main detailed-pricing source, read at run time.
+LITELLM_URL = "https://raw.githubusercontent.com/BerriAI/litellm/main/model_prices_and_context_window.json"
+# models.dev provider id -> LiteLLM litellm_provider values, where names differ
+# (checked against both live lists, 2026-11-18). Otherwise names are matched
+# after removing punctuation (together_ai = togetherai).
+LITELLM_IDS = {
+    "google": ["gemini"], "google-vertex": ["vertex_ai-language-models", "vertex_ai"],
+    "google-vertex-anthropic": ["vertex_ai-anthropic_models"],
+    "amazon-bedrock": ["bedrock_converse", "bedrock"], "azure": ["azure", "azure_ai"],
+    "cohere": ["cohere_chat"], "moonshotai": ["moonshot"], "moonshotai-cn": ["moonshot"],
+    "alibaba": ["dashscope"], "alibaba-cn": ["dashscope"], "zhipuai": ["bigmodel"],
+    "novita-ai": ["novita"], "nvidia": ["nvidia_nim"], "cloudflare-workers-ai": ["cloudflare"],
+    "cloudflare-ai-gateway": ["clf_ai_gateway"], "vercel": ["vercel_ai_gateway"],
+    "friendli": ["friendliai"], "github-copilot": ["github_copilot"], "xiaomi": ["xiaomi_mimo"],
+}
+LITELLM_PRICE_FIELDS = (
+    ("input_cost_per_token", "input"), ("output_cost_per_token", "output"),
+    ("cache_read_input_token_cost", "cache_read"), ("cache_creation_input_token_cost", "cache_write"),
+    ("input_cost_per_token_batches", "batch_input"), ("output_cost_per_token_batches", "batch_output"),
+    ("input_cost_per_token_priority", "priority_input"), ("output_cost_per_token_priority", "priority_output"),
+    ("input_cost_per_token_flex", "flex_input"), ("output_cost_per_token_flex", "flex_output"),
+)
+LITELLM_TIERED = re.compile(r"^(input|output)_cost_per_token_above_(\w+?)_tokens$")
+LITELLM_CHAT_MODES = ("chat", "responses", None)
+
 # Community provider list (no license, no sources): last resort, read at run time,
 # never copied. Session-cookie, app-login and anonymous web endpoints are skipped.
 EXTRA_LIST_URL = "https://raw.githubusercontent.com/foisalislambd/all-llm-provider-list/main/data/providers.json"
@@ -362,6 +387,89 @@ def portkey_info(pid, model_id, args):
     return info
 
 
+# ---------- LiteLLM ----------
+
+def litellm_load(args):
+    """Return (table, source) or (None, error)."""
+    try:
+        if args.litellm_file:
+            return json.load(open(args.litellm_file)), args.litellm_file
+        cache_dir = args.cache_dir or os.path.join(tempfile.gettempdir(), "provider-onboarding-cache")
+        data, how = fetch(LITELLM_URL, cache_dir, args.refresh)
+        return data, "%s (%s)" % (LITELLM_URL, how)
+    except Exception as e:
+        return None, "FAILED LiteLLM: %s" % e
+
+
+def litellm_providers(pid, table):
+    names = set(LITELLM_IDS.get(pid) or [])
+    for v in table.values():
+        lp = isinstance(v, dict) and v.get("litellm_provider")
+        if lp and norm(lp) == norm(pid):
+            names.add(lp)
+    return names
+
+
+def litellm_match(pid, model_id, table):
+    """Best LiteLLM key for a models.dev provider/model, or None."""
+    names = litellm_providers(pid, table)
+    cands = {}
+    for k, v in table.items():
+        if not isinstance(v, dict) or v.get("litellm_provider") not in names or v.get("mode") not in LITELLM_CHAT_MODES:
+            continue
+        short = k.split("/", 1)[1] if k.startswith(v["litellm_provider"] + "/") else k
+        cands[k] = short
+    if not cands:
+        return None, names
+    want = (model_id or "").strip()
+    for k, short in sorted(cands.items()):
+        if short == want or k == want:
+            return k, names
+    tail = want.split("/")[-1]
+    for k, short in sorted(cands.items()):
+        if short.split("/")[-1] == tail:
+            return k, names
+    hits = sorted(((score(want, short, short.split("/")[-1]), k) for k, short in cands.items()), key=lambda x: (-x[0], x[1]))
+    return (hits[0][1] if hits and hits[0][0] >= 80 else None), names
+
+
+def litellm_pricing(entry):
+    out = {}
+    for src, dst in LITELLM_PRICE_FIELDS:
+        if isinstance(entry.get(src), (int, float)):
+            out[dst] = round(entry[src] * 1e6, 6)
+    for k, v in entry.items():
+        m = LITELLM_TIERED.match(k)
+        if m and isinstance(v, (int, float)):
+            out["%s_above_%s" % (m.group(1), m.group(2))] = round(v * 1e6, 6)
+    return out
+
+
+def litellm_info(pid, model_id, table, src, md_cost=None):
+    if not model_id:
+        return {"error": "give a model id for LiteLLM prices"}
+    key, names = litellm_match(pid, model_id, table)
+    if not names:
+        return {"error": "LiteLLM has no provider matching %s" % pid}
+    if not key:
+        return {"error": "LiteLLM (%s) has no model matching %r" % (", ".join(sorted(names)), model_id)}
+    e = table[key]
+    info = {"key": key, "table": src, "pricing_usd": litellm_pricing(e),
+            "pricing_source": e.get("source"),
+            "max_input_tokens": e.get("max_input_tokens"), "max_output_tokens": e.get("max_output_tokens"),
+            "capabilities": sorted(k[len("supports_"):] for k, v in e.items() if k.startswith("supports_") and v is True)}
+    for k in ("deprecation_date", "successor_model"):
+        if e.get(k):
+            info[k] = e[k]
+    p = info["pricing_usd"]
+    if md_cost:
+        diffs = ["%s: LiteLLM $%g vs models.dev $%g" % (f, p[f], md_cost[f]) for f in ("input", "output")
+                 if isinstance(md_cost.get(f), (int, float)) and f in p and abs(p[f] - md_cost[f]) > 1e-6]
+        if diffs:
+            info["disagrees_with_models_dev"] = diffs
+    return {k: v for k, v in info.items() if v not in (None, [], {})}
+
+
 # ---------- community list ----------
 
 def load_extra(args):
@@ -431,7 +539,7 @@ def build_entry(pid, prov, mid, model, ov, manual=None):
         "protocol": protocol_of(npm, base),
         "model": {
             "id": mid or manual.get("model_id"), "name": m.get("name"),
-            "limit": m.get("limit"), "cost": fmt_cost(m.get("cost")),
+            "limit": m.get("limit"), "cost": fmt_cost(m.get("cost")), "cost_usd_per_1m": m.get("cost"),
             "modalities": m.get("modalities"), "reasoning": m.get("reasoning"),
             "tool_call": m.get("tool_call"), "status": m.get("status"),
             "release_date": m.get("release_date"), "open_weights": m.get("open_weights"),
@@ -506,6 +614,18 @@ def render_md(res):
         L.append("- Sign-up / key page candidates (inferred, NOT verified):")
         for c in e["signup_candidates"] or [{"url": None, "confidence": "none", "basis": "no base URL or docs"}]:
             L.append("  - %s [%s] %s" % (c["url"] or "(none)", c["confidence"], c["basis"]))
+        ll = e.get("litellm")
+        if ll:
+            L.append("- LiteLLM: %s  _[%s]_" % (ll.get("error") or "model `%s`" % ll["key"], ll.get("table") or "BerriAI/litellm"))
+            if ll.get("pricing_usd"):
+                L.append("  - pricing (USD per 1M tokens): %s" % json.dumps(ll["pricing_usd"]))
+            for k in ("pricing_source", "max_input_tokens", "max_output_tokens", "deprecation_date", "successor_model"):
+                if ll.get(k):
+                    L.append("  - %s: %s" % (k, ll[k]))
+            if ll.get("capabilities"):
+                L.append("  - capabilities: %s" % ", ".join(ll["capabilities"]))
+            for d in ll.get("disagrees_with_models_dev", []):
+                L.append("  - DISAGREES with models.dev: %s" % d)
         pk = e.get("portkey")
         if pk:
             L.append("- Portkey: %s  _[%s]_" % (pk.get("error") or ("model `%s`" % pk["model_key"] if pk.get("model_key") else "provider file found; give a model id for prices"), pk.get("source") or "Portkey-AI/models"))
@@ -543,6 +663,8 @@ def main():
     ap.add_argument("--limit", type=int, default=8, help="max providers listed for a model-only query")
     ap.add_argument("--portkey", action="store_true", help="add Portkey-AI/models pricing and param ranges")
     ap.add_argument("--portkey-dir", help="local clone of Portkey-AI/models (implies --portkey, no network)")
+    ap.add_argument("--litellm", action="store_true", help="add LiteLLM pricing, limits, deprecation and source links")
+    ap.add_argument("--litellm-file", help="local copy of LiteLLM's model_prices_and_context_window.json (implies --litellm)")
     ap.add_argument("--extra-list", action="store_true", help="last resort: community provider list when models.dev has no match")
     ap.add_argument("--extra-list-file", help="local copy of that list's data/providers.json (implies --extra-list)")
     ap.add_argument("--version", action="version", version="%(prog)s " + VERSION)
@@ -551,6 +673,7 @@ def main():
 
     ov = load_overrides(a.overrides)
     a.extra_list = a.extra_list or bool(a.extra_list_file)
+    a.litellm = a.litellm or bool(a.litellm_file)
 
     # manual mode: no data needed
     if a.base_url:
@@ -643,6 +766,13 @@ def main():
         for s, pid, mid, m in hits[: a.limit]:
             entries.append(build_entry(pid, data[pid], mid, m, ov.get(pid, {})))
 
+    if a.litellm and entries:
+        table, src = litellm_load(a)
+        if table is None:
+            notes.append(src)
+        for e in entries:
+            m = e["model"] or {}
+            e["litellm"] = litellm_info(e["provider_id"], m.get("id"), table, src, m.get("cost_usd_per_1m")) if table else {"error": src}
     if a.portkey or a.portkey_dir:
         for e in entries:
             e["portkey"] = portkey_info(e["provider_id"], (e["model"] or {}).get("id"), a)

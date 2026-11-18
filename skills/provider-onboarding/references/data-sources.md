@@ -46,7 +46,24 @@ A model-level `provider.api` / `provider.npm` overrides the provider's, and `loo
 4. The provider's own docs and `/models` endpoint (OpenAI-compatible providers usually expose `GET <base>/models`).
 5. A local stdio MCP server such as `arifpambudi242/models.dev-mcp` if the user already runs it.
 
-## Pricing source: Portkey-AI/models (`--portkey`)
+## Pricing source: LiteLLM (`--litellm`)
+
+`BerriAI/litellm`, `model_prices_and_context_window.json` (MIT, about 4 MB, read 2026-11-18): about
+6,200 entries from about 157 providers, keyed by LiteLLM model name (OpenAI models unprefixed,
+most others `<litellm_provider>/<model>`, e.g. `groq/openai/gpt-oss-120b`).
+
+- Prices are USD **per token**; `lookup.py` shows USD per 1M tokens. Fields used: `input/output_cost_per_token`,
+  `cache_read_input_token_cost`, `cache_creation_input_token_cost`, `*_batches`, `*_priority`, `*_flex`,
+  `*_above_<N>_tokens`. Also `max_input_tokens`, `max_output_tokens`, `supports_*`, `source`
+  (provider pricing page, on about 3/4 of chat entries), `deprecation_date`, `successor_model`.
+- Only `mode` chat / responses entries are matched; embeddings, images, audio and video are ignored.
+- Provider names differ from models.dev (`gemini` vs `google`, `bedrock_converse` vs `amazon-bedrock`);
+  `LITELLM_IDS` in `lookup.py` maps them, otherwise names match after removing punctuation.
+- Spot check (2026-11-18): 247 of 266 shared models had the same in/out price as models.dev. DeepSeek
+  differs by exactly 2x (LiteLLM has the peak price); Mistral `-latest` aliases were newer in LiteLLM.
+- `--litellm-file` reads a local copy.
+
+## Second pricing opinion: Portkey-AI/models (`--portkey`)
 
 MIT-licensed data behind Portkey's AI Gateway, about 54 providers. Read 2026-11-18.
 
@@ -79,6 +96,22 @@ GitHub raw and never copied into this repo.
   is not an `http` URL. About 416 entries remain.
 - Its base URLs agreed with models.dev for 82 of 115 shared providers (2026-11-18): check them.
 - `--extra-list-file` reads a local copy of `providers.json`.
+
+## Reviewed and skipped (2026-11-18)
+
+Don't re-review these unless they change shape:
+
+- `tashfeenahmed/freellmapi` - free-tier router app. Its free-tier rate limits are only in TypeScript
+  database migrations; the current catalog is a signed feed from its own service (free tier 30 days late).
+- `cheaper-inference/OmniRoute` - free-tier gateway app built around reusing Claude Code, Codex,
+  Cursor and Copilot logins (client-fingerprint files); no data file, provider details live in app code.
+- `latere-ai/lux` - self-hosted gateway; only an example catalog (7 providers, 94 models) that
+  is a 2026-09 snapshot its README says users must keep current themselves.
+- `vercel-labs/provider-models-monitor` - model-id lists from the `/models` endpoints of 4 providers
+  (Anthropic, Google, OpenAI, xAI), ids only; updates arrive as PRs and `main` was last updated
+  2026-04-21. Checking the provider's own `/models` endpoint does the same job live.
+- `jeffkit/recursive-providers` (CC0) - 12 providers mirrored from LiteLLM; not a source, but its
+  `key_url` values are a good seed for `signup_url` in the overrides once checked.
 
 ## Network notes
 
