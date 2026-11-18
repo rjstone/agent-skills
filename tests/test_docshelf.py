@@ -40,6 +40,7 @@ import shelf_dash  # noqa: E402
 from shelf_core import CLIError  # noqa: E402
 import shelf_core  # noqa: E402
 import shelf_devdocs  # noqa: E402
+import shelf_mcp  # noqa: E402
 import shelf_lookup  # noqa: E402
 import shelf_notes  # noqa: E402
 import shelf_render  # noqa: E402
@@ -2753,73 +2754,34 @@ class NetworkTests(unittest.TestCase):
 
 
 TOP_HELP_EXPECTED = "docshelf " + shelf_core.VERSION + """\
-: look up DevDocs documentation offline (stdlib only).
-This is the command reference; `<command> --help` adds only the options
-listed at the end. REF = <docvol>:<path>[#anchor], as search and fts print
-them; <docvol> is the name `list` prints. A Dash/Zeal docset's REFs read
-<Name>:<id> (an entry) and <Name>:page:<path>[#anchor] (a page).
-A docvol is a DevDocs documentation or a read-only Dash/Zeal docset on disk,
-plus docshelf's own metadata, indexes and notes. -d NAME takes a docvol or
-a family name (all its docvols, with a note).
+: look up DevDocs documentation and Dash/Zeal docsets offline.
+REF = <docvol>:<path>[#anchor], as search and fts print it (a docset's:
+<Name>:<id> or <Name>:page:<path>[#anchor]). -d takes a docvol name (see
+list) or a family (all its versions).
 
-Look up (usual order):
-  search QUERY... [-d NAME]      entries whose names contain all the words,
-                                 and headings inside pages when no entry
-                                 name is an exact match; one REF per hit,
-                                 best first
-  show REF                       that entry's section (max 150 lines) plus
-                                 your notes for it
-  show REF --grep=TEXT           only lines containing TEXT, with their
-                                 heading, table header row, and a matching
-                                 term's definition (repeatable; plain text,
-                                 not a pattern, case-insensitive)
-  toc REF                        the page's headings, indented, each with
-                                 its REF (to show one section)
-  fts QUERY... [-d NAME]         words inside pages, 5 best hits with REFs;
-                                 include the function name: fts read_csv skip
-  types [-d NAME]                each docvol's entry types with counts, most
-                                 frequent first (the names `search --type`
-                                 takes)
+Look up:
+  search NAME... -d DOCVOL     entry names (and page headings) with all the
+                               words; the exact name works best
+  show REF --max-lines 40      read a section (default 150 lines); go on
+                               with --offset N, as its last line says
+  show REF --grep=TEXT         only the lines with TEXT (repeatable); try
+                               it before toc
+  fts WORDS... -d DOCVOL       words inside pages; include the function name
+  toc REF                      a long page's headings, each with its REF
+  list                         installed docvols and versions
 
-Notes (format: references/notes.md in the skill folder):
-  notes DOCVOL --path            the notes file to edit
-  notes DOCVOL --check           after editing: which REFs show each section,
-                                 then "ok"
-  notes DOCVOL --set HEADING --text TEXT   write a section (--delete HEADING
-                                 removes it), then the --check report
-
-Get and manage docvols (references/getting-docvols.md):
-  list                           docvols, versions, source (devdocs, zeal,
-                                 dash) and "also as" redundancy flags
-  suggest                        docvols for the project's build files
-                                 and version files, then a "docvols"
-                                 list to paste (no network)
-  sources QUERY...               documentations DevDocs offers, with sizes;
-                                 docsets Dash or Zeal could download
-  install [NAME...] [--force]    download one (NAME without a version = the
-                                 newest; no NAME = the project's docvols
-                                 list); skips documentation already on
-                                 disk as a docset unless --force; update
-                                 [NAME...]; remove NAME (DevDocs docvols
-                                 only: Dash or Zeal manages docsets)
-  where                          cache, notes folder, project file, docset
-                                 folders and Dash/Zeal apps found
-  index-text DOCVOL              build the fts index now
-
-Only if you need these, see `<command> --help`:
-  search     --type --all --max-lines --json
-  show       --full --max-lines --offset --no-notes
-  toc        --max-lines
-  fts        --all --max-lines --json
-  types      --all
-  sources    --refresh
-  install    --force
-Global: --version, --mcp (run as a stdio MCP server; references/mcp.md).
-Exit codes: 0 ok; 1 notes --check found problems; 2 usage error, ambiguous
-  name or no FTS5; 4 search scope too wide (use -d, a project list or --all)
-  or unknown -d name; 5 not found or damaged (docvol, page or entry); 7
-  network (DevDocs could not be reached), or an unreadable docset archive
+Other commands, each with its own --help: types, notes, suggest, sources,
+install, update, remove, where, index-text. Also --version, and --mcp
+(run as a stdio MCP server).
+Exit codes: 0 ok; 1 notes --check found problems; 2 usage; 4 scope too
+wide or unknown -d; 5 not found or damaged; 7 network or unreadable
+docset archive.
 """
+
+# sha256 of json.dumps(shelf_mcp.tool_schemas(), sort_keys=True) before the
+# 0.7.4 help change: the MCP tools must not change with the help text.
+TOOL_SCHEMAS_SHA256 = (
+    "9109b519cae051d54e7727899ef97bf9fd55fcfb35795e16a9c1b5344f1fe578")
 
 
 class HelpTests(unittest.TestCase):
@@ -2827,6 +2789,45 @@ class HelpTests(unittest.TestCase):
         r = run_cli("--help")
         self.assertEqual(r.returncode, 0, r.stderr)
         self.assertEqual(r.stdout, TOP_HELP_EXPECTED)
+
+    def test_top_help_fits(self):
+        text = shelf_cli.top_help()
+        self.assertLessEqual(len(text), 1600)
+        for line in text.splitlines():
+            self.assertLessEqual(len(line), 76, line)
+
+    def test_no_command_and_dash_h_print_card(self):
+        r = run_cli("-h")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertEqual(r.stdout, TOP_HELP_EXPECTED)
+        r = run_cli()  # no command: the card, as a usage error (exit 2)
+        self.assertEqual(r.returncode, 2, r.stderr)
+        self.assertEqual(r.stdout, TOP_HELP_EXPECTED)
+
+    def test_every_option_in_command_help(self):
+        for c in shelf_cli.COMMANDS:
+            out = run_cli(c.name, "--help").stdout
+            for p in c.params:
+                if p.flags[0].startswith("--"):
+                    self.assertIn(p.flags[0], out, c.name)
+
+    def test_moved_facts_in_command_help(self):
+        facts = {"install": ["newest", "docvols", "--force"],
+                 "remove": ["devdocs", "dash or zeal"],
+                 "list": ["also as"], "suggest": ["no network"],
+                 "sources": ["dash or zeal"], "show": ["notes", "--grep"],
+                 "types": ["--type"], "fts": ["function name"],
+                 "notes": ["--check"]}
+        for name, words in facts.items():
+            text = " ".join(run_cli(name, "--help").stdout.split()).lower()
+            for w in words:
+                self.assertIn(w, text, name)
+
+    def test_mcp_tools_list_unchanged(self):
+        import hashlib
+        s = json.dumps(shelf_mcp.tool_schemas(), sort_keys=True)
+        self.assertEqual(hashlib.sha256(s.encode()).hexdigest(),
+                         TOOL_SCHEMAS_SHA256)
 
     def test_every_command_in_help(self):
         text = shelf_cli.top_help()

@@ -3,7 +3,6 @@ import argparse
 import os
 import sqlite3
 import sys
-import textwrap
 from dataclasses import dataclass
 from typing import Any, Callable, List, Optional, Tuple
 
@@ -24,7 +23,6 @@ class Param:
     kind: str = "str"  # "str", "int", "posint" (>= 1), "nonneg" (>= 0) or "flag"
     nargs: Optional[str] = None
     repeat: bool = False
-    rare: bool = False
     default: Any = None
 
 
@@ -86,42 +84,42 @@ COMMANDS: List[Command] = [
             shelf_lookup.cmd_search, [
         Param(("query",), "Words to find in entry names or page headings.", nargs="+"),
         Param(("-d", "--docvol"), "Docvol or family to search (repeatable).", repeat=True),
-        Param(("--type",), "Only entries of this type (no headings).", rare=True),
-        Param(("--all",), "Search every installed docvol.", kind="flag", rare=True),
-        Param(("--max-lines",), "Output line cap.", kind="posint", rare=True,
+        Param(("--type",), "Only entries of this type (no headings)."),
+        Param(("--all",), "Search every installed docvol.", kind="flag"),
+        Param(("--max-lines",), "Output line cap.", kind="posint",
               default=40),
-        Param(("--json",), "Print JSON.", kind="flag", rare=True),
+        Param(("--json",), "Print JSON.", kind="flag"),
     ]),
     Command("show", "Show a page or section as text.", shelf_lookup.cmd_show, [
         Param(("ref",), "REF from search: <docvol>:<path>[#anchor]."),
         Param(("--grep",), "Only lines containing this text (repeatable).",
               repeat=True),
-        Param(("--full",), "No line cap.", kind="flag", rare=True),
-        Param(("--max-lines",), "Output line cap.", kind="posint", rare=True,
+        Param(("--full",), "No line cap.", kind="flag"),
+        Param(("--max-lines",), "Output line cap.", kind="posint",
               default=150),
         Param(("--offset",), "Skip this many lines first (continue after the cap).",
-              kind="nonneg", rare=True, default=0),
-        Param(("--no-notes",), "Do not print notes.", kind="flag", rare=True),
+              kind="nonneg", default=0),
+        Param(("--no-notes",), "Do not print notes.", kind="flag"),
     ]),
     Command("toc", "List a page's headings with their REFs.",
             shelf_lookup.cmd_toc, [
         Param(("ref",), "REF from search: <docvol>:<path>[#anchor]."),
-        Param(("--max-lines",), "Output line cap.", kind="posint", rare=True,
+        Param(("--max-lines",), "Output line cap.", kind="posint",
               default=150),
     ]),
     Command("fts", "Full-text search inside pages (SQLite FTS5).",
             shelf_lookup.cmd_fts, [
         Param(("query",), "Words that must all appear in a page.", nargs="+"),
         Param(("-d", "--docvol"), "Docvol or family to search (repeatable).", repeat=True),
-        Param(("--all",), "Search every installed docvol.", kind="flag", rare=True),
-        Param(("--max-lines",), "Output line cap.", kind="posint", rare=True,
+        Param(("--all",), "Search every installed docvol.", kind="flag"),
+        Param(("--max-lines",), "Output line cap.", kind="posint",
               default=shelf_lookup.FTS_MAX_LINES),
-        Param(("--json",), "Print JSON.", kind="flag", rare=True),
+        Param(("--json",), "Print JSON.", kind="flag"),
     ]),
     Command("types", "List each docvol's entry types with counts.",
             shelf_lookup.cmd_types, [
         Param(("-d", "--docvol"), "Docvol or family to list (repeatable).", repeat=True),
-        Param(("--all",), "List every installed docvol.", kind="flag", rare=True),
+        Param(("--all",), "List every installed docvol.", kind="flag"),
     ]),
     Command("index-text", "Build the full-text index of docvols ahead of fts.",
             shelf_lookup.cmd_index_text, [
@@ -130,7 +128,7 @@ COMMANDS: List[Command] = [
     Command("sources", "Search the DevDocs list of documentations to install.",
             shelf_devdocs.cmd_sources, [
         Param(("query",), "Words in the slug or name.", nargs="+"),
-        Param(("--refresh",), "Fetch the list again now.", kind="flag", rare=True),
+        Param(("--refresh",), "Fetch the list again now.", kind="flag"),
     ]),
     Command("suggest", "Suggest docvols from the project's build files "
             "(package.json, pyproject.toml, CMakeLists.txt, ...).",
@@ -142,7 +140,7 @@ COMMANDS: List[Command] = [
         Param(("names",), "Slug, alias or family (python, python~3.14); "
               "default: the project file's \"docvols\" list.", nargs="*"),
         Param(("--force",), "Download even when a Dash/Zeal docset has the "
-              "same documentation.", kind="flag", rare=True),
+              "same documentation.", kind="flag"),
     ]),
     Command("update", "Re-download documentations that DevDocs has updated.",
             shelf_devdocs.cmd_update, [
@@ -168,87 +166,70 @@ COMMANDS: List[Command] = [
 ]
 
 
-EXIT_CODES = ("0 ok; 1 notes --check found problems; 2 usage error, ambiguous "
-              "name or no FTS5; 4 search scope too wide (use -d, a project "
-              "list or --all) or unknown -d name; 5 not found or damaged "
-              "(docvol, page or entry); 7 network (DevDocs could not be "
-              "reached), or an unreadable docset archive")
-
-# Top-level --help: the command lines agents normally need. Options that
-# have rare=True in COMMANDS are only named (not described) under "only if
-# you need these", generated from the table, so a new option can't be left
-# out; `<command> --help` (argparse) describes them.
+# Top-level --help: a short lookup card. Each command's own --help (argparse,
+# with DETAILS as its epilog) documents every option and the rest.
 TOP_HELP = """\
-docshelf {version}: look up DevDocs documentation offline (stdlib only).
-This is the command reference; `<command> --help` adds only the options
-listed at the end. REF = <docvol>:<path>[#anchor], as search and fts print
-them; <docvol> is the name `list` prints. A Dash/Zeal docset's REFs read
-<Name>:<id> (an entry) and <Name>:page:<path>[#anchor] (a page).
-A docvol is a DevDocs documentation or a read-only Dash/Zeal docset on disk,
-plus docshelf's own metadata, indexes and notes. -d NAME takes a docvol or
-a family name (all its docvols, with a note).
+docshelf {version}: look up DevDocs documentation and Dash/Zeal docsets offline.
+REF = <docvol>:<path>[#anchor], as search and fts print it (a docset's:
+<Name>:<id> or <Name>:page:<path>[#anchor]). -d takes a docvol name (see
+list) or a family (all its versions).
 
-Look up (usual order):
-  search QUERY... [-d NAME]      entries whose names contain all the words,
-                                 and headings inside pages when no entry
-                                 name is an exact match; one REF per hit,
-                                 best first
-  show REF                       that entry's section (max 150 lines) plus
-                                 your notes for it
-  show REF --grep=TEXT           only lines containing TEXT, with their
-                                 heading, table header row, and a matching
-                                 term's definition (repeatable; plain text,
-                                 not a pattern, case-insensitive)
-  toc REF                        the page's headings, indented, each with
-                                 its REF (to show one section)
-  fts QUERY... [-d NAME]         words inside pages, 5 best hits with REFs;
-                                 include the function name: fts read_csv skip
-  types [-d NAME]                each docvol's entry types with counts, most
-                                 frequent first (the names `search --type`
-                                 takes)
+Look up:
+  search NAME... -d DOCVOL     entry names (and page headings) with all the
+                               words; the exact name works best
+  show REF --max-lines 40      read a section (default 150 lines); go on
+                               with --offset N, as its last line says
+  show REF --grep=TEXT         only the lines with TEXT (repeatable); try
+                               it before toc
+  fts WORDS... -d DOCVOL       words inside pages; include the function name
+  toc REF                      a long page's headings, each with its REF
+  list                         installed docvols and versions
 
-Notes (format: references/notes.md in the skill folder):
-  notes DOCVOL --path            the notes file to edit
-  notes DOCVOL --check           after editing: which REFs show each section,
-                                 then "ok"
-  notes DOCVOL --set HEADING --text TEXT   write a section (--delete HEADING
-                                 removes it), then the --check report
-
-Get and manage docvols (references/getting-docvols.md):
-  list                           docvols, versions, source (devdocs, zeal,
-                                 dash) and "also as" redundancy flags
-  suggest                        docvols for the project's build files
-                                 and version files, then a "docvols"
-                                 list to paste (no network)
-  sources QUERY...               documentations DevDocs offers, with sizes;
-                                 docsets Dash or Zeal could download
-  install [NAME...] [--force]    download one (NAME without a version = the
-                                 newest; no NAME = the project's docvols
-                                 list); skips documentation already on
-                                 disk as a docset unless --force; update
-                                 [NAME...]; remove NAME (DevDocs docvols
-                                 only: Dash or Zeal manages docsets)
-  where                          cache, notes folder, project file, docset
-                                 folders and Dash/Zeal apps found
-  index-text DOCVOL              build the fts index now
-
-Only if you need these, see `<command> --help`:
-{rare}
-Global: --version, --mcp (run as a stdio MCP server; references/mcp.md).
-{exit_codes}
+Other commands, each with its own --help: types, notes, suggest, sources,
+install, update, remove, where, index-text. Also --version, and --mcp
+(run as a stdio MCP server).
+Exit codes: 0 ok; 1 notes --check found problems; 2 usage; 4 scope too
+wide or unknown -d; 5 not found or damaged; 7 network or unreadable
+docset archive.
 """
+
+# What the old top-level help said about each command beyond its summary;
+# argparse only (the epilog), so the MCP tool descriptions stay as they are.
+DETAILS = {
+    "search": "Page headings are listed (marked (heading)) when no entry name "
+              "is an exact match; hits are best first, one REF each.",
+    "show": "Prints the section and your notes for it. --grep prints only "
+            "the matching lines, with their heading, the table header row "
+            "and a matching term's definition (plain text, case-insensitive).",
+    "toc": "Indented headings, each with the REF that shows that section.",
+    "fts": "The 5 best pages with REFs. Include the function name "
+           "(fts read_csv skip). The first fts on a docvol builds its index.",
+    "types": "Most frequent first; these are the names search --type takes.",
+    "notes": "After editing, --check lists which REFs show each section, "
+             "then ok; --set writes a section, then prints that report. "
+             "Format: references/notes.md in the skill folder.",
+    "list": "Version, size class, source (devdocs, zeal, dash) and \"also "
+            "as\" when a DevDocs copy and a docset hold the same documentation.",
+    "suggest": "Reads the project's build and version files (no network) "
+               "and prints a \"docvols\" list to paste into .docshelf.json.",
+    "sources": "Documentations DevDocs offers, with sizes, and docsets Dash "
+               "or Zeal could download.",
+    "install": "A NAME without a version installs the newest; no NAME "
+               "installs the project's \"docvols\" list. Documentation already "
+               "on disk as a Dash/Zeal docset is skipped unless --force. See "
+               "references/getting-docvols.md.",
+    "update": "DevDocs docvols only; Dash or Zeal updates docsets.",
+    "remove": "DevDocs docvols only: Dash or Zeal manages docsets. Notes are "
+              "kept.",
+    "where": "Cache, notes folder, project file, docset folders and the "
+             "Dash/Zeal apps found.",
+    "index-text": "Builds the fts index now (the first fts builds it "
+                  "otherwise).",
+}
 
 
 def top_help() -> str:
-    rare = []
-    for c in COMMANDS:
-        flags = [p.flags[0] for p in c.params if p.rare]
-        if flags:
-            rare.append("  %-10s %s" % (c.name, " ".join(flags)))
-    codes = textwrap.fill("Exit codes: " + EXIT_CODES, width=76,
-                          subsequent_indent="  ")
-    return TOP_HELP.format(version=shelf_core.VERSION, rare="\n".join(rare),
-                           exit_codes=codes)
+    return TOP_HELP.format(version=shelf_core.VERSION)
 
 
 def positive_int(text):
@@ -327,7 +308,8 @@ def build_parser() -> argparse.ArgumentParser:
                         help="run as a stdio MCP server")
     sub = parser.add_subparsers(dest="command", metavar="<command>")
     for c in COMMANDS:
-        sp = sub.add_parser(c.name, help=c.summary, description=c.summary)
+        sp = sub.add_parser(c.name, help=c.summary, description=c.summary,
+                            epilog=DETAILS.get(c.name))
         for p in c.params:
             _add_param(sp, p)
         sp.set_defaults(_command=c)
