@@ -205,3 +205,65 @@ class PortkeyTests(unittest.TestCase):
         r = subprocess.run([sys.executable, SCRIPT, "--file", self.api, "-p", "acme", "--format", "json"],
                            capture_output=True, text=True)
         self.assertNotIn("portkey", json.loads(r.stdout)["entries"][0])
+
+
+EXTRA = [
+    {"slug": "zeta", "name": "Zeta Cloud", "aliases": ["zc"], "category": "Gateway",
+     "website": "https://zeta.example", "api_base_url": "https://api.zeta.example/v1/",
+     "env_variable": "ZETA_API_KEY", "openai_compatible": True, "notes": "n", "popular_models": ["z1"]},
+    {"slug": "zeta-web", "name": "Zeta Web", "category": "Web Cookie",
+     "api_base_url": "https://zeta.example/api/chat", "env_variable": "", "openai_compatible": False},
+    {"slug": "zeta-free", "name": "Zeta Free", "category": "No-auth",
+     "api_base_url": "https://free.zeta.example/v1", "env_variable": "", "openai_compatible": True},
+    {"slug": "zeta-hook", "name": "Zeta Hook", "category": "Frontier",
+     "api_base_url": "Custom webhooks", "env_variable": "X", "openai_compatible": False},
+]
+
+
+class ExtraListTests(unittest.TestCase):
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self.api = os.path.join(self.tmp.name, "api.json")
+        json.dump(API, open(self.api, "w"))
+        self.extra = os.path.join(self.tmp.name, "providers.json")
+        json.dump(EXTRA, open(self.extra, "w"))
+
+    def run_json(self, *args):
+        r = subprocess.run([sys.executable, SCRIPT, "--file", self.api, "--format", "json",
+                            "--extra-list-file", self.extra, *args], capture_output=True, text=True)
+        return r
+
+    def test_skips_cookie_noauth_and_non_url_entries(self):
+        args = type("A", (), {"extra_list_file": self.extra, "cache_dir": None, "refresh": False})()
+        ok, note = lookup.load_extra(args)
+        self.assertEqual([p["slug"] for p in ok], ["zeta"])
+        self.assertIn("1 usable", note)
+
+    def test_community_only_provider_is_labelled_unverified(self):
+        r = self.run_json("-p", "zeta")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        res = json.loads(r.stdout)
+        e = res["entries"][0]
+        self.assertEqual(e["base_url"], "https://api.zeta.example/v1")
+        self.assertEqual(e["base_url_source"], lookup.EXTRA_TAG)
+        self.assertEqual(e["env"], ["ZETA_API_KEY"])
+        self.assertEqual(e["protocol"], "openai")
+        self.assertTrue(any("community list" in w for w in res["warnings"]))
+
+    def test_alias_matches(self):
+        self.assertEqual(json.loads(self.run_json("-p", "zc").stdout)["entries"][0]["provider_id"], "zeta")
+
+    def test_models_dev_match_wins(self):
+        e = json.loads(self.run_json("-p", "acme").stdout)["entries"][0]
+        self.assertEqual(e["provider_id"], "acme")
+        self.assertNotEqual(e["base_url_source"], lookup.EXTRA_TAG)
+
+    def test_skipped_category_not_offered(self):
+        r = self.run_json("-p", "zeta-web")
+        e = json.loads(r.stdout)["entries"]
+        self.assertTrue(all(x["provider_id"] != "zeta-web" for x in e))
+
+    def test_off_by_default(self):
+        r = subprocess.run([sys.executable, SCRIPT, "--file", self.api, "-p", "zeta"], capture_output=True, text=True)
+        self.assertEqual(r.returncode, 2)

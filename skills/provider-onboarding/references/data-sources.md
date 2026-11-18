@@ -65,6 +65,21 @@ MIT-licensed data behind Portkey's AI Gateway, about 54 providers. Read 2026-11-
   them. Portkey-only providers (fal-ai, voyage, elevenlabs, ...) work in manual mode via `--name`.
 - Per-model API: `https://api.portkey.ai/model-configs/pricing/<provider>/<model>` (not used by the script).
 
+## Last resort: community provider list (`--extra-list`)
+
+`foisalislambd/all-llm-provider-list`, `data/providers.json`: about 494 providers (slug, aliases,
+category, website, `api_base_url`, `env_variable`, `openai_compatible`, popular models, notes).
+Read 2026-11-18. No license file and no per-entry sources or dates, so it is read at run time from
+GitHub raw and never copied into this repo.
+
+- Used only when models.dev and the overrides have no match or a weak fuzzy one (score below 80),
+  and the list matches better. Every field is tagged `community list (UNVERIFIED ...)`.
+- Skipped: categories `Web Cookie`, `OAuth` and `No-auth` (pasted browser cookies, reused app
+  logins, anonymous chat widgets; many break the services' terms), and entries whose base URL
+  is not an `http` URL. About 416 entries remain.
+- Its base URLs agreed with models.dev for 82 of 115 shared providers (2026-11-18): check them.
+- `--extra-list-file` reads a local copy of `providers.json`.
+
 ## Network notes
 
 - Sandboxed agents often block models.dev until the user allows the host in the agent's network settings

@@ -13,3 +13,10 @@ Goal: optional second data source for detailed pricing and parameter ranges in
 
 Done. In the session sandbox the Portkey hosts were blocked and the GitHub
 fallback served the data (gpt-4o: $2.50 / $10 per 1M, matching OpenAI).
+
+## Follow-up: community list (0.3.0)
+
+`--extra-list`: `foisalislambd/all-llm-provider-list` as a last resort when
+models.dev has no or only a weak match. Read at run time (no license), every
+field tagged UNVERIFIED, Web Cookie / OAuth / No-auth categories and non-URL
+endpoints skipped (the user, 2026-11-18). Offline tests use a fixture file.

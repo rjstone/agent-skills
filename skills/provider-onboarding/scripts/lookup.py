@@ -20,7 +20,7 @@ import urllib.error
 import urllib.request
 from urllib.parse import urlparse
 
-VERSION = "0.2.0"
+VERSION = "0.3.0"
 DEFAULT_URLS = "https://models.dev/api.json,https://models.opencode.ai/api.json"
 UA = "provider-onboarding/" + VERSION
 
@@ -38,6 +38,12 @@ PORTKEY_IDS = {
     "alibaba-cn": "dashscope", "cloudflare-workers-ai": "workers-ai", "azure-cognitive-services": "azure-ai",
     "nearai": "near-ai",
 }
+# Community provider list (no license, no sources): last resort, read at run time,
+# never copied. Session-cookie, app-login and anonymous web endpoints are skipped.
+EXTRA_LIST_URL = "https://raw.githubusercontent.com/foisalislambd/all-llm-provider-list/main/data/providers.json"
+EXTRA_SKIP = {"Web Cookie", "OAuth", "No-auth"}
+EXTRA_TAG = "community list (UNVERIFIED; confirm in provider docs)"
+
 PORTKEY_TOKEN_FIELDS = (("request_token", "input"), ("response_token", "output"),
                         ("cache_read_input_token", "cache_read"),
                         ("cache_write_input_token", "cache_write"),
@@ -356,6 +362,46 @@ def portkey_info(pid, model_id, args):
     return info
 
 
+# ---------- community list ----------
+
+def load_extra(args):
+    """Return (usable providers, note). Skips EXTRA_SKIP and non-URL endpoints."""
+    try:
+        if args.extra_list_file:
+            data, src = json.load(open(args.extra_list_file)), args.extra_list_file
+        else:
+            cache_dir = args.cache_dir or os.path.join(tempfile.gettempdir(), "provider-onboarding-cache")
+            data, how = fetch(EXTRA_LIST_URL, cache_dir, args.refresh)
+            src = "%s (%s)" % (EXTRA_LIST_URL, how)
+    except Exception as e:
+        return [], "FAILED community list: %s" % e
+    ok = [p for p in (data if isinstance(data, list) else [])
+          if isinstance(p, dict) and p.get("category") not in EXTRA_SKIP
+          and str(p.get("api_base_url") or "").startswith("http")]
+    return ok, "loaded %s (%d usable providers)" % (src, len(ok))
+
+
+def match_extra(q, providers):
+    hits = []
+    for p in providers:
+        s = score(q, p.get("slug"), p.get("name"), *(p.get("aliases") or []))
+        if s:
+            hits.append((s, p.get("slug") or "", p))
+    hits.sort(key=lambda x: (-x[0], x[1]))
+    return [(h[0], h[2]) for h in hits]
+
+
+def extra_entry(p, model_id):
+    prov = {"name": p.get("name"), "api": p["api_base_url"].rstrip("/"),
+            "env": [p["env_variable"]] if p.get("env_variable") else [],
+            "doc": p.get("website"), "_src": EXTRA_TAG,
+            "npm": "@ai-sdk/openai-compatible" if p.get("openai_compatible") else None}
+    e = build_entry(p.get("slug") or norm(p.get("name")), prov, model_id, {}, {})
+    e["base_url_source"] = EXTRA_TAG
+    e["extras"]["community_list"] = {k: p[k] for k in ("category", "website", "popular_models", "notes") if p.get(k)}
+    return e
+
+
 # ---------- entry construction ----------
 
 def build_entry(pid, prov, mid, model, ov, manual=None):
@@ -497,11 +543,14 @@ def main():
     ap.add_argument("--limit", type=int, default=8, help="max providers listed for a model-only query")
     ap.add_argument("--portkey", action="store_true", help="add Portkey-AI/models pricing and param ranges")
     ap.add_argument("--portkey-dir", help="local clone of Portkey-AI/models (implies --portkey, no network)")
+    ap.add_argument("--extra-list", action="store_true", help="last resort: community provider list when models.dev has no match")
+    ap.add_argument("--extra-list-file", help="local copy of that list's data/providers.json (implies --extra-list)")
     ap.add_argument("--version", action="version", version="%(prog)s " + VERSION)
     ap.add_argument("--name"); ap.add_argument("--base-url"); ap.add_argument("--env-var"); ap.add_argument("--model-id")
     a = ap.parse_args()
 
     ov = load_overrides(a.overrides)
+    a.extra_list = a.extra_list or bool(a.extra_list_file)
 
     # manual mode: no data needed
     if a.base_url:
@@ -532,13 +581,24 @@ def main():
 
     if a.provider:
         pm = match_providers(a.provider, data, ov)
-        if not pm:
+        best = pm[0][0] if pm else 0
+        if a.extra_list and best < 80:  # no match, or only a weak fuzzy one
+            extra, note = load_extra(a)
+            notes.append(note)
+            hits = match_extra(a.provider, extra)
+            if hits and hits[0][0] > best:
+                for s, p in hits[:2]:
+                    entries.append(extra_entry(p, a.model))
+                warnings.append("provider found only in the community list; every field is unverified")
+                pm = []
+        if not pm and not entries:
             if not data:
                 sys.stderr.write(FALLBACK_HELP)
                 return 3
             names = difflib.get_close_matches(norm(a.provider), [norm(k) for k in data], n=5, cutoff=0.4)
             sys.stderr.write("No provider matches %r. Closest: %s\nTry --list-providers, or manual mode.\n" % (a.provider, names or "none"))
             return 2
+    if a.provider and pm:
         top = pm[0][0]
         close = [pid for s, pid in pm if s >= top - 10][:3]
         if len(close) > 1:
@@ -566,7 +626,7 @@ def main():
                         also.append({"provider_id": pid, "provider_name": e["provider_name"], "base_url": e["base_url"],
                                      "model_id": mid, "cost": e["model"]["cost"]})
                         break
-    else:
+    elif not a.provider:
         if not data:
             sys.stderr.write(FALLBACK_HELP)
             return 3

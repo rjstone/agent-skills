@@ -191,6 +191,9 @@ metadata:
   carry a `verified` date and `source`; re-verify before trusting old ones).
   `--portkey` adds detailed pricing from `Portkey-AI/models` (cents per token
   upstream): `configs.portkey.ai` first, GitHub raw files as the fallback
+  (the user, 2026-11-18). `--extra-list` is a last-resort, unverified
+  community list (`foisalislambd/all-llm-provider-list`, no license: read at
+  run time, never copied), minus its cookie/OAuth/no-auth entries
   (the user, 2026-11-18).
 - `opencode-cli` - opencode v2 CLI docs (commands, `cli.json`, keybinds,
   themes, web UI, ACP) cached like `opencode-build`, with its own refresh
