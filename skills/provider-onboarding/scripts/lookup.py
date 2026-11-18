@@ -624,7 +624,30 @@ def snippets(e):
 
 # ---------- rendering ----------
 
+_CTRL = re.compile(r"[\x00-\x1f\x7f\u2028\u2029]+")
+
+
+def clean(v, limit=500):
+    """Make a remote string safe to put on one Markdown line: no line breaks or
+    control characters (which could start a heading or fake instructions), no
+    backticks (which could break out of a code span), bounded length."""
+    t = _CTRL.sub(" ", str(v)).replace("`", "'").strip()
+    return t if len(t) <= limit else t[:limit] + "..."
+
+
+def clean_tree(x):
+    """clean() every string in a result (keys too) before it is rendered as Markdown."""
+    if isinstance(x, str):
+        return clean(x)
+    if isinstance(x, list):
+        return [clean_tree(i) for i in x]
+    if isinstance(x, dict):
+        return {(clean(k) if isinstance(k, str) else k): clean_tree(v) for k, v in x.items()}
+    return x
+
+
 def render_md(res):
+    res = clean_tree(res)
     L = ["# Provider card query: %s" % res["query"], "", "_Data: %s_" % "; ".join(res["notes"] or ["no remote data"]), ""]
     for w in res.get("warnings", []):
         L.append("> WARNING: " + w)
