@@ -231,9 +231,22 @@ def _anchor_on_page(blocks, anchor: str, page: str) -> bool:
     return False
 
 
+def _check_docvol_option(args, ds, ref) -> None:
+    """show and toc take -d only as a check: agents copy search's -d onto
+    them. A -d naming the REF's docvol (or its family) is fine; any other
+    is an error that says which docvol the REF names."""
+    wanted = getattr(args, "docvol", None) or []
+    names = (ds.name.lower(), ds.family.lower())
+    if wanted and not any(w.lower() in names for w in wanted):
+        raise CLIError("%s names docvol %s; -d %s does not match (a REF already "
+                       "names its docvol, so -d is not needed)"
+                       % (ref, ds.name, " -d ".join(wanted)), 2)
+
+
 def cmd_show(cfg: Config, args: argparse.Namespace) -> int:
     name, rest = _split_ref(args.ref)
     ds = pick_docvol(shelf_backends.installed_docvols(cfg), name)
+    _check_docvol_option(args, ds, args.ref)
     page, anchor, entry = ds.resolve(rest)
     blocks = ds.page_blocks(page, link=lambda href: ds.resolve_href(page, href))
     if anchor:
@@ -263,6 +276,7 @@ def cmd_toc(cfg: Config, args: argparse.Namespace) -> int:
     """The whole page's headings, indented by level, each with its REF."""
     name, rest = _split_ref(args.ref)
     ds = pick_docvol(shelf_backends.installed_docvols(cfg), name)
+    _check_docvol_option(args, ds, args.ref)
     page, anchor, _entry = ds.resolve(rest)
     blocks = ds.page_blocks(page, link=lambda href: ds.resolve_href(page, href))
     if anchor:  # same warning as show; the toc is the whole page either way

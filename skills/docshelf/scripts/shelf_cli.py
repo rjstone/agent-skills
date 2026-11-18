@@ -93,6 +93,8 @@ COMMANDS: List[Command] = [
     ]),
     Command("show", "Show a page or section as text.", shelf_lookup.cmd_show, [
         Param(("ref",), "REF from search: <docvol>:<path>[#anchor]."),
+        Param(("-d", "--docvol"), "Docvol or family the REF names (optional; "
+              "checked against the REF).", repeat=True),
         Param(("--grep",), "Only lines containing this text (repeatable).",
               repeat=True),
         Param(("--full",), "No line cap.", kind="flag"),
@@ -105,6 +107,8 @@ COMMANDS: List[Command] = [
     Command("toc", "List a page's headings with their REFs.",
             shelf_lookup.cmd_toc, [
         Param(("ref",), "REF from search: <docvol>:<path>[#anchor]."),
+        Param(("-d", "--docvol"), "Docvol or family the REF names (optional; "
+              "checked against the REF).", repeat=True),
         Param(("--max-lines",), "Output line cap.", kind="posint",
               default=60),
     ]),
