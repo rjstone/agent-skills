@@ -12,7 +12,9 @@ plus three HTTP questions). The prompts never name the skill. Models: as in
 
 `run_trials.sh` runs every opencode run in a bubblewrap sandbox: started
 under `env -i`, as an unprivileged host user (`setpriv`), with
-`--clearenv`. A run sees placeholder provider keys (the egress proxy
+`--clearenv`. Since 2026-11-18 (after the runs below) it does this through
+the `sandboxing` skill's `scripts/sandbox.py` instead of its own bwrap
+command line; the view is the same (checked with `SMOKE=1`). A run sees placeholder provider keys (the egress proxy
 injects the real ones), the proxy and CA variables, read-only `/usr`,
 `/etc/ssl`, the Node.js folder and the HTTP docset (`/docsets`,
 `DOCSHELF_DOCSET_DIRS`); a private `/tmp`, `/proc` and `/dev`; and its
