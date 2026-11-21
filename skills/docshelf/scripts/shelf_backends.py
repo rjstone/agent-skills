@@ -8,9 +8,18 @@ from shelf_core import Config, Docvol, warn
 
 
 def installed_docvols(cfg: Config) -> List[Docvol]:
-    """Every installed docvol, whatever its backend: DevDocs, then docsets."""
-    docvols: List[Docvol] = list(shelf_devdocs.installed_docvols(cfg))
+    """Every installed docvol, whatever its backend: built (docshelf-build),
+    DevDocs, then docsets. A built docvol wins a name clash: it was made on
+    purpose."""
+    docvols: List[Docvol] = list(shelf_devdocs.installed_built(cfg))
     names = {d.name for d in docvols}
+    for d in shelf_devdocs.installed_docvols(cfg):
+        if d.name in names:
+            warn("skipping DevDocs docvol %s: a built docvol has the same name"
+                 % d.name)
+            continue
+        docvols.append(d)
+        names.add(d.name)
     for d in shelf_dash.installed_docsets(cfg):
         if d.name in names:
             warn("skipping docset %s (%s): DevDocs docvol %s has the same name"

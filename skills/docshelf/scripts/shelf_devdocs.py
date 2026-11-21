@@ -37,6 +37,15 @@ def devdocs_dir(cfg: Config) -> str:
     return os.path.join(cfg.cache_dir, "devdocs")
 
 
+def built_dir(cfg: Config) -> str:
+    """Docvols the docshelf-build skill writes (same files as DevDocs ones)."""
+    return os.path.join(cfg.cache_dir, "built")
+
+
+def built_plan_path(cfg: Config, name: str) -> str:
+    return os.path.join(cfg.cache_dir, "built-plans", name + ".json")
+
+
 def build_page_index(db_path: str) -> Dict[str, Tuple[int, int]]:
     """Byte spans (quotes included) of each string value in a flat JSON
     object {key: html}. Reads the file once; never builds the pages in
@@ -130,7 +139,7 @@ class DevDocsDocvol(Docvol):
         if not os.path.isfile(os.path.join(folder, "index.json")):
             # a cheap check that reads nothing: installed_docvols() skips a
             # docvol without its index, entry_count or not
-            raise OSError("index.json is missing; " + _repair(self.name))
+            raise OSError("index.json is missing; " + self._repair_text())
         count = meta.get("entry_count")
         if isinstance(count, int) and not isinstance(count, bool) and count >= 0:
             self.entry_count = count  # stored at install: index.json stays unread
@@ -160,7 +169,7 @@ class DevDocsDocvol(Docvol):
             except (ValueError, KeyError, TypeError, AttributeError) as e:
                 # with entry_count the constructor no longer reads the index
                 raise DamagedDocvol("docvol %s: damaged index.json (%s); %s"
-                                    % (self.name, e, _repair(self.name)))
+                                    % (self.name, e, self._repair_text()))
             self._entries = out
         return self._entries
 
@@ -169,7 +178,7 @@ class DevDocsDocvol(Docvol):
             st = os.stat(self.db_path)
         except OSError:
             raise DamagedDocvol("docvol %s: db.json is missing; %s"
-                                % (self.name, _repair(self.name)))
+                                % (self.name, self._repair_text()))
         return st.st_size, st.st_mtime_ns
 
     def page_index(self) -> Dict[str, Tuple[int, int]]:
@@ -189,7 +198,7 @@ class DevDocsDocvol(Docvol):
                 index = build_page_index(self.db_path)
             except ValueError as e:
                 raise DamagedDocvol("docvol %s: damaged db.json (%s); %s"
-                                    % (self.name, e, _repair(self.name)))
+                                    % (self.name, e, self._repair_text()))
             self._write_page_index(index, size, mtime)
         self._index, self._idx_stat = index, (size, mtime)
         return index
@@ -237,6 +246,21 @@ class DevDocsDocvol(Docvol):
     def stamp(self) -> str:
         return "%d|%d" % (self.mtime, self._db_stat()[0])
 
+    def _repair_text(self) -> str:
+        return _repair(self.name)
+
+
+class BuiltDocvol(DevDocsDocvol):
+    """A docvol the docshelf-build skill made; rebuilt there, never from
+    DevDocs."""
+
+    def __init__(self, folder: str):
+        super().__init__(folder)
+        self.source = "built"
+
+    def _repair_text(self) -> str:
+        return "rebuild with: docshelf-build build %s" % self.name
+
 
 def _repair(name: str) -> str:
     return ("repair with: docshelf.py remove %s, then docshelf.py install %s"
@@ -244,7 +268,14 @@ def _repair(name: str) -> str:
 
 
 def installed_docvols(cfg: Config) -> List[DevDocsDocvol]:
-    root = devdocs_dir(cfg)
+    return _scan(devdocs_dir(cfg), DevDocsDocvol)
+
+
+def installed_built(cfg: Config) -> List[BuiltDocvol]:
+    return _scan(built_dir(cfg), BuiltDocvol)
+
+
+def _scan(root: str, cls) -> list:
     try:
         names = sorted(os.listdir(root))
     except OSError:
@@ -255,7 +286,7 @@ def installed_docvols(cfg: Config) -> List[DevDocsDocvol]:
         if not os.path.isdir(folder):
             continue
         try:
-            out.append(DevDocsDocvol(folder))
+            out.append(cls(folder))
         except (OSError, ValueError, KeyError, TypeError) as e:
             _warn("skipping %s: %s" % (folder, e))
     return out
@@ -673,6 +704,12 @@ def _refuse_read_only(d: Docvol) -> None:
                        % d.name, 2)
 
 
+def _refuse_built(name: str, built: set) -> None:
+    if name in built:
+        raise CLIError("%s was built by the docshelf-build skill; rebuild it "
+                       "there (docshelf-build build %s)" % (name, name), 2)
+
+
 def _installed_note(cfg: Config, name: str) -> Optional[str]:
     """The line for a project-list name already on disk (any backend), or None."""
     low = name.lower()
@@ -729,6 +766,7 @@ def cmd_install(cfg, args) -> int:
             raise CLIError('install needs NAME (or a "docvols" list in '
                            '.docshelf.json)', 2)
     rows = get_manifest(cfg)
+    built = {d.name for d in installed_built(cfg)}
     slugs = {}  # a typed name -> the slug it resolved to, for failure lines
 
     def one(name: str) -> Optional[str]:
@@ -736,8 +774,10 @@ def cmd_install(cfg, args) -> int:
             note = _installed_note(cfg, name)
             if note:
                 return note
+        _refuse_built(name, built)
         row = resolve_install(rows, name)
         slugs[name] = row["slug"]
+        _refuse_built(row["slug"], built)
         if not getattr(args, "force", False):
             _refuse_redundant(cfg, row)
         return _describe(cfg, install(cfg, row), row["slug"])
@@ -750,8 +790,10 @@ def cmd_update(cfg, args) -> int:
         targets = [pick_docvol(have, n) for n in args.names]
         for d in targets:
             _refuse_read_only(d)
+            if d.source == "built":
+                _refuse_built(d.name, {d.name})
     else:
-        targets = [d for d in have if not d.read_only]
+        targets = [d for d in have if not d.read_only and d.source != "built"]
     if not targets:
         if have:
             print("no DevDocs docvols to update (Dash/Zeal docsets are updated "
@@ -784,6 +826,12 @@ def cmd_remove(cfg, args) -> int:
         found = pick_docvol(shelf_backends.installed_docvols(cfg), args.name)
         _refuse_read_only(found)
         name = found.name
+        if found.source == "built":
+            shutil.rmtree(found.folder)
+            plan = built_plan_path(cfg, name)
+            print("removed %s (notes untouched%s)" % (
+                name, "; plan kept: %s" % plan if os.path.isfile(plan) else ""))
+            return 0
     except CLIError as e:
         if e.code == 2:
             raise

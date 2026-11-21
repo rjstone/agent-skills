@@ -84,6 +84,14 @@ changed by docshelf: reinstall it in Dash or Zeal.
 A docset that cannot be used because docshelf cannot write its cache copy
 (exit 2; fix `DOCSHELF_CACHE_DIR` or free disk space) is skipped the same way.
 
+## Built docvols
+
+`list` shows docvols made by the `docshelf-build` skill (from a Sphinx
+site's `objects.inv`) as `built`. They live in `<cache>/built/`; `install`
+and `update` refuse them and say to rebuild with `docshelf-build`, and
+`remove` deletes the docvol but keeps its build plan. A built docvol hides a
+DevDocs one of the same name, with a warning.
+
 ## Where files go
 
 Under the cache folder (`python scripts/docshelf.py where` prints it), in
