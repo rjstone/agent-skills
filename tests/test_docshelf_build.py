@@ -171,6 +171,10 @@ class PlanTests(unittest.TestCase):
         self.assertTrue(any("no page has a domain role" in l and "--full 'guide/*'" in l
                             for l in lines), lines)
 
+    def test_no_warning_once_something_is_full(self):
+        lines = summarize(make_plan(SRC, "h", HDR, STD_ONLY_ENTRIES, [("full", "guide/*")]), None)
+        self.assertFalse(any("no page has a domain role" in l for l in lines), lines)
+
     def test_base_url(self):
         self.assertEqual(make_plan(SRC, "h", HDR, ENTRIES, [])["base_url"], SRC)
         with tempfile.TemporaryDirectory() as d:
@@ -491,6 +495,21 @@ class DocvolTests(unittest.TestCase):
             self.assertEqual(load(self.folder, n), data, n)
         self.assertEqual(sorted(os.listdir(self.folder)), ["db.json", "index.json", "meta.json"])
 
+    def test_partial_failure_keeps_previous_page(self):
+        self.write(now=1)
+        good = load(self.folder, "db.json")["cmd/opt"]
+        meta = self.write(html={"index.html": "<p>i</p>"}, errors={"cmd/opt.html": "HTTP 503"},
+                          now=2)
+        self.assertEqual(load(self.folder, "db.json")["cmd/opt"], good)
+        self.assertEqual(meta["reused"], ["cmd/opt.html"])
+
+    def test_partial_failure_without_previous_copy_is_stub(self):
+        self.write(html={"index.html": "<p>i</p>"}, errors={"cmd/opt.html": "HTTP 503"}, now=1)
+        meta = self.write(html={"index.html": "<p>i</p>"}, errors={"cmd/opt.html": "HTTP 503"},
+                          now=2)
+        self.assertIn("HTTP 503", load(self.folder, "db.json")["cmd/opt"])
+        self.assertEqual(meta["reused"], [])
+
     def test_failed_first_write_leaves_nothing(self):
         with mock.patch("os.replace", side_effect=OSError("disk full")):
             with self.assertRaises(CLIError):
@@ -585,6 +604,23 @@ class CliTests(unittest.TestCase):
         code, out, err = self.run_main("plan", self.site)
         self.assertEqual(code, 0, err)
         self.assertTrue(os.path.isfile(os.path.join(self.cache, "built-plans", "demo~1.0.json")))
+
+    def test_rebuild_when_every_page_fails_keeps_previous(self):
+        self.assertEqual(self.run_main("build", self.site, "--name", "demo")[0], 0)
+        before = load(self.docvol, "db.json")
+        os.remove(os.path.join(self.site, "cmd", "opt.html"))
+        os.remove(os.path.join(self.site, "index.html"))
+        self.run_main("plan", self.site, "--name", "demo", "--full", "index")
+        code, out, err = self.run_main("build", "demo")
+        self.assertEqual(code, 4, out + err)
+        self.assertIn("every page", err)
+        self.assertEqual(load(self.docvol, "db.json"), before)
+
+    def test_failed_pages_warn_on_stderr(self):
+        os.remove(os.path.join(self.site, "index.html"))
+        code, out, err = self.run_main("build", self.site, "--name", "demo", "--full", "index")
+        self.assertEqual(code, 0, err)
+        self.assertIn("1 page failed", err)
 
     def test_build_without_plan(self):
         code, _, err = self.run_main("build", "nothing")

@@ -95,9 +95,7 @@ def summarize(plan: dict, old: Optional[dict]) -> List[str]:
                 more = " ..." if len(keys) > 10 else ""
                 lines.append("%s %d page%s: %s%s" % (word, len(keys), "" if len(keys) == 1
                                                       else "s", ", ".join(keys[:10]), more))
-    no_domain = not any(p["why"].startswith("roles: ") and p["why"] != "roles: std only"
-                        for p in pages.values())
-    if no_domain and biggest:
+    if full == 0 and biggest:
         top = next((g for g in biggest if any("/" in k for k in pages if _group(k) == g)),
                    biggest[0])
         lines.append("warning: no page has a domain role (every entry is std:*), so the "

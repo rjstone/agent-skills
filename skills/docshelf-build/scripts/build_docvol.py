@@ -10,7 +10,7 @@ import urllib.parse
 from typing import Dict, List
 
 from build_core import NAME_RE, CLIError, built_dir
-from build_html import main_content, rewrite_links, stub_html
+from build_html import STUB_CLASS, main_content, rewrite_links, stub_html
 from build_inventory import InvEntry, page_key, split_uri
 
 FILES = ("index.json", "db.json", "meta.json")  # meta.json last: docshelf keys on it
@@ -84,7 +84,19 @@ def _index(plan: dict, entries: List[InvEntry]) -> dict:
     return {"entries": out, "types": types}
 
 
-def _db(plan: dict, pages_html: Dict[str, str], errors: Dict[str, str]) -> Dict[str, str]:
+def _previous_db(folder: str) -> Dict[str, str]:
+    try:
+        with open(os.path.join(folder, "db.json"), encoding="utf-8") as f:
+            db = json.load(f)
+        return db if isinstance(db, dict) else {}
+    except (OSError, ValueError):
+        return {}
+
+
+def _db(plan: dict, pages_html: Dict[str, str], errors: Dict[str, str],
+        previous: Dict[str, str], reused: List[str]) -> Dict[str, str]:
+    """Page HTML by key. A full page that failed keeps its previous stored
+    copy (its uri goes in reused) instead of becoming a stub."""
     pages, live = plan["pages"], plan.get("base_url")
     keys_by_uri = {p["uri"]: key for key, p in pages.items()}
     db = {}
@@ -93,6 +105,11 @@ def _db(plan: dict, pages_html: Dict[str, str], errors: Dict[str, str]) -> Dict[
         url = urllib.parse.urljoin(live, uri) if live else None
         if p["keep"] == "full" and uri in pages_html:
             db[key] = rewrite_links(main_content(pages_html[uri]), key, uri, keys_by_uri, live)
+            continue
+        old = previous.get(key)
+        if p["keep"] == "full" and isinstance(old, str) and STUB_CLASS not in old:
+            db[key] = old
+            reused.append(uri)
             continue
         if p["keep"] == "full":
             note = errors.get(uri, "not fetched")
@@ -108,15 +125,17 @@ def write_docvol(cache: str, name: str, plan: dict, entries: List[InvEntry],
     by inventory page uri. A failure leaves the previous docvol (or none) in
     place and raises CLIError(code 2)."""
     index = _index(plan, entries)
+    folder = os.path.join(built_dir(cache), name)
+    reused: List[str] = []
+    db = _db(plan, pages_html, errors, _previous_db(folder), reused)
     meta = {"slug": name, "name": plan.get("project") or name,
             "release": plan.get("version", ""), "version": plan.get("version", ""),
             "mtime": int(now),
             "installedAt": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(now)),
             "alias": None, "entry_count": len(index["entries"]),
             "origin": "docshelf-build", "source": plan["source"],
-            "inventory_sha256": plan["inventory_sha256"]}
-    data = {"index.json": index, "db.json": _db(plan, pages_html, errors), "meta.json": meta}
-    folder = os.path.join(built_dir(cache), name)
+            "inventory_sha256": plan["inventory_sha256"], "reused": sorted(reused)}
+    data = {"index.json": index, "db.json": db, "meta.json": meta}
     created = not os.path.isdir(folder)
     tmps: Dict[str, str] = {}
     baks: Dict[str, str] = {}

@@ -14,7 +14,9 @@ metadata:
 Builds a docshelf docvol from a Sphinx-style docs site with
 `python scripts/docshelf_build.py` (stdlib only; the path is relative to this
 skill's folder). The result is listed by docshelf as `built` and looked up
-with docshelf as usual. Run `--help` for the commands.
+with docshelf as usual; that needs docshelf 0.9.0 or later (`docshelf.py
+--help` prints the version): older ones never show built docvols. Run
+`--help` for the commands.
 
 Check docshelf first: `docshelf.py sources NAME` finds DevDocs and Dash/Zeal
 documentation, which is better than a build when it exists. This skill

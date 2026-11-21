@@ -76,6 +76,10 @@ def do_build(cache: str, name: str, workers: int) -> None:
     uris = [p["uri"] for p in plan["pages"].values() if p["keep"] == "full"]
     warn("fetching %d pages from %s" % (len(uris), source.base))
     html, errors = fetch_pages(source, uris)
+    if uris and len(errors) == len(uris):
+        first = sorted(errors)[0]
+        raise CLIError("every page failed to download (e.g. %s: %s); nothing written, "
+                       "the previous docvol (if any) is kept" % (first, errors[first]), 4)
     meta = write_docvol(cache, name, plan, entries, html, errors, now=time.time())
     stub = len(plan["pages"]) - len(uris)
     print("built %s: %d full, %d stub, %d failed; %d entries (%s)"
@@ -85,6 +89,10 @@ def do_build(cache: str, name: str, workers: int) -> None:
         print("  failed %s: %s" % (uri, errors[uri]))
     if len(errors) > 10:
         print("  ... %d more" % (len(errors) - 10))
+    if errors:
+        warn("%d page%s failed; kept the previous copy of %d, the rest are stubs with "
+             "the error (rebuild later to retry)" % (len(errors), "" if len(errors) == 1
+                                                     else "s", len(meta["reused"])))
 
 
 def do_list(cache: str) -> None:

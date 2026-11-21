@@ -8,6 +8,7 @@ from typing import Callable, Dict, List, Optional, Tuple
 
 VOID = {"area", "base", "br", "col", "embed", "hr", "img", "input", "link", "meta",
         "param", "source", "track", "wbr"}
+STUB_CLASS = "docshelf-build-stub"  # marks pages that hold no stored content
 DROP = {"script", "style", "nav", "noscript", "template", "iframe", "form", "button"}
 
 Attrs = List[Tuple[str, Optional[str]]]
@@ -164,7 +165,7 @@ def stub_html(title: str, section: Optional[str], description: Optional[str],
     """A page that is not stored: its title, section, description and where
     to read it (or why there is nowhere)."""
     e = htmllib.escape
-    out = ["<h1>%s</h1>" % e(title)]
+    out = ['<div class="%s">' % STUB_CLASS, "<h1>%s</h1>" % e(title)]
     if section:
         out.append("<p>Section: %s</p>" % e(section))
     if description:
@@ -175,4 +176,5 @@ def stub_html(title: str, section: Optional[str], description: Optional[str],
                    % (why, e(url), e(url)))
     else:
         out.append("<p>Not stored: %s.</p>" % e(note or "no source address"))
+    out.append("</div>")
     return "".join(out)
