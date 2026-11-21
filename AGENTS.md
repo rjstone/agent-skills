@@ -245,6 +245,17 @@ metadata:
   native format: a third-party documentation bundle (a DevDocs
   documentation, or a Dash/Zeal docset read in place, read-only) plus
   docshelf's own metadata, indexes and notes (the user, 2026-11-16).
+- `docshelf-build` - builds a docshelf docvol from a Sphinx site's
+  `objects.inv` (Sphinx, PyDoctor, MkDocs + mkdocstrings), URL or local
+  build folder: an editable plan keeps reference pages (any non-`std:`
+  role) in full and makes guide pages stubs with a live link, then only
+  the full pages are fetched (stdlib, one worker, robots.txt). Writes
+  DevDocs-shaped files to `<cache>/built/<name>/`, plan in
+  `<cache>/built-plans/`; docshelf 0.9.0+ lists them as `built`. A separate
+  skill so lookups can ignore it; the on-disk format is the contract with
+  docshelf (it cannot import docshelf). Agents want dense reference, not
+  tutorials (the user, 2026-11-21; spec and plan under
+  `docs/superpowers/`).
 - `sandboxing` - run a nested agent CLI or test harness in a bubblewrap
   sandbox (Linux) that hides the caller's environment, processes and files:
   `scripts/sandbox.py` (`env -i` + bwrap `--clearenv`, `/work` as `HOME`,

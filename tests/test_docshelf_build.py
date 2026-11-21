@@ -2,8 +2,11 @@
 by make_inv() and sites are folders or fake openers. Run from the repo root:
 python3 -m unittest discover -s tests -v
 """
+import contextlib
+import io
 import json
 import os
+import subprocess
 import sys
 import tempfile
 import unittest
@@ -29,6 +32,9 @@ import build_fetch  # noqa: E402
 from build_fetch import fetch_pages, normalize_source, open_source  # noqa: E402
 from build_html import main_content, rewrite_links, stub_html  # noqa: E402
 from build_docvol import check_name, derive_name, role_label, write_docvol  # noqa: E402
+import docshelf_build  # noqa: E402
+
+DOCSHELF = os.path.join(REPO_ROOT, "skills", "docshelf", "scripts", "docshelf.py")
 
 
 def make_inv(entries: List[Tuple[str, str, str, str, str]], project: str = "Demo",
@@ -490,6 +496,132 @@ class DocvolTests(unittest.TestCase):
             with self.assertRaises(CLIError):
                 self.write()
         self.assertFalse(os.path.exists(self.folder))
+
+
+def docshelf_reads_built() -> bool:
+    with open(os.path.join(os.path.dirname(DOCSHELF), "shelf_devdocs.py"), encoding="utf-8") as f:
+        return "class BuiltDocvol" in f.read()
+
+
+class CliTests(unittest.TestCase):
+    def setUp(self):
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        self.tmp = os.path.realpath(tmp.name)
+        self.cache = os.path.join(self.tmp, "cache")
+        self.env = {"HOME": self.tmp, "DOCSHELF_CACHE_DIR": self.cache,
+                    "DOCSHELF_NOTES_DIR": os.path.join(self.tmp, "notes")}
+        self.site = os.path.join(self.tmp, "site")
+        rows = [(e.name, e.role, "1", e.uri, e.dispname) for e in ENTRIES]
+        os.makedirs(self.site)
+        with open(os.path.join(self.site, "objects.inv"), "wb") as f:
+            f.write(make_inv(rows))
+        write(self.site, "cmd/opt.html", DOCVOL_HTML["cmd/opt.html"])
+        write(self.site, "index.html", DOCVOL_HTML["index.html"])
+        for p in ("guide/index.html", "guide/a.html", "guide/b.html"):
+            write(self.site, p, "<div role='main'><p>Guide text %s</p></div>" % p)
+        self.plan_path = os.path.join(self.cache, "built-plans", "demo.json")
+        self.docvol = os.path.join(self.cache, "built", "demo")
+
+    def run_main(self, *argv):
+        out, err = io.StringIO(), io.StringIO()
+        with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
+            code = docshelf_build.main(list(argv), env=self.env)
+        return code, out.getvalue(), err.getvalue()
+
+    def run_docshelf(self, *args):
+        env = dict(os.environ, **self.env)
+        return subprocess.run([sys.executable, DOCSHELF, *args], capture_output=True,
+                              text=True, env=env, cwd=self.tmp)
+
+    def test_plan_then_build(self):
+        code, out, err = self.run_main("plan", self.site, "--name", "demo")
+        self.assertEqual(code, 0, err)
+        self.assertTrue(os.path.isfile(self.plan_path))
+        self.assertIn("1 full, 4 stub", out)
+        self.assertFalse(os.path.exists(self.docvol))
+        code, out, err = self.run_main("build", "demo")
+        self.assertEqual(code, 0, err)
+        self.assertIn("built demo", out)
+        db = load(self.docvol, "db.json")
+        self.assertIn("left out of the build", db["guide/a"])
+        self.assertIn("opt", db["cmd/opt"])
+
+    def test_docshelf_reads_the_build(self):
+        if not docshelf_reads_built():
+            self.skipTest("docshelf without BuiltDocvol (update/docshelf not merged yet)")
+        self.run_main("build", self.site, "--name", "demo")
+        r = self.run_docshelf("search", "opt", "-d", "demo")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertIn("demo:cmd/opt#opt", r.stdout)
+        r = self.run_docshelf("show", "demo:guide/a")
+        self.assertIn("left out of the build", r.stdout)
+
+    def test_build_source_in_one_step_and_rebuild(self):
+        code, _, err = self.run_main("build", self.site, "--name", "demo", "--full", "guide/*")
+        self.assertEqual(code, 0, err)
+        self.assertIn("Guide text guide/a.html", load(self.docvol, "db.json")["guide/a"])
+        first = load(self.docvol, "meta.json")["mtime"]
+        with mock.patch("time.time", return_value=first + 100):
+            code, _, err = self.run_main("build", "demo")
+        self.assertEqual(code, 0, err)
+        self.assertEqual(load(self.docvol, "meta.json")["mtime"], first + 100)
+        self.assertEqual(load_plan(self.plan_path)["overrides"], [["full", "guide/*"]])
+
+    def test_override_order_is_kept(self):
+        self.run_main("plan", self.site, "--name", "demo", "--full", "guide/*",
+                      "--stub", "guide/a")
+        p = load_plan(self.plan_path)
+        self.assertEqual(p["overrides"], [["full", "guide/*"], ["stub", "guide/a"]])
+        self.assertEqual(p["pages"]["guide/a"]["keep"], "stub")
+
+    def test_all_and_reset_flags(self):
+        self.run_main("plan", self.site, "--name", "demo", "--all")
+        self.assertEqual(load_plan(self.plan_path)["overrides"], [["full", "*"]])
+        self.run_main("plan", self.site, "--name", "demo", "--reset")
+        self.assertEqual(load_plan(self.plan_path)["overrides"], [])
+
+    def test_derived_name(self):
+        code, out, err = self.run_main("plan", self.site)
+        self.assertEqual(code, 0, err)
+        self.assertTrue(os.path.isfile(os.path.join(self.cache, "built-plans", "demo~1.0.json")))
+
+    def test_build_without_plan(self):
+        code, _, err = self.run_main("build", "nothing")
+        self.assertEqual(code, 2)
+        self.assertIn("plan", err)
+
+    def test_bad_inventory_exit_3(self):
+        with open(os.path.join(self.site, "objects.inv"), "wb") as f:
+            f.write(b"<html>404</html>")
+        self.assertEqual(self.run_main("plan", self.site, "--name", "demo")[0], 3)
+
+    def test_list_and_remove(self):
+        self.run_main("build", self.site, "--name", "demo")
+        code, out, _ = self.run_main("list")
+        self.assertEqual(code, 0)
+        self.assertIn("demo", out)
+        self.assertIn(self.site, out)
+        code, out, _ = self.run_main("remove", "demo")
+        self.assertEqual(code, 0)
+        self.assertTrue(os.path.isfile(self.plan_path))
+        self.assertFalse(os.path.isdir(self.docvol))
+        code, out, _ = self.run_main("list")
+        self.assertIn("not built", out)
+        self.assertEqual(self.run_main("remove", "demo", "--plan")[0], 0)
+        self.assertFalse(os.path.isfile(self.plan_path))
+        self.assertEqual(self.run_main("remove", "demo")[0], 2)
+
+    def test_version(self):
+        code, out, _ = self.run_main("--version")
+        self.assertEqual(code, 0)
+        self.assertIn(build_core.VERSION, out)
+
+    def test_script_runs(self):
+        r = subprocess.run([sys.executable, os.path.join(SKILL, "scripts", "docshelf_build.py"),
+                            "--help"], capture_output=True, text=True)
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertIn("plan", r.stdout)
 
 
 if __name__ == "__main__":
