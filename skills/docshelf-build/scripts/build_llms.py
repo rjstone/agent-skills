@@ -154,7 +154,7 @@ def read_tree(source: str, get_text: Callable[[str], str],
     raw: List[str] = []
     indexes: List[dict] = []
     pages: List[Tuple[str, str, Optional[str], Optional[str]]] = []  # url, title, section, desc
-    seen_pages: Set[str] = set()
+    seen_keys: Set[str] = set()
     visited: Set[str] = {source}
 
     root_text = read_file(source) if local else get_text(source)
@@ -181,6 +181,9 @@ def read_tree(source: str, get_text: Callable[[str], str],
                 if _host(lk.url) != main_host:
                     sub["note"] = "other host, not followed"
                     indexes.append(sub)
+                elif urlsplit(lk.url).path.rsplit("/", 1)[-1].lower().endswith("-full.txt"):
+                    sub["note"] = "full text, not followed"
+                    indexes.append(sub)
                 elif depth + 1 > MAX_DEPTH:
                     sub["note"] = "depth limit"
                     indexes.append(sub)
@@ -199,10 +202,10 @@ def read_tree(source: str, get_text: Callable[[str], str],
                     sub_section = _join(section, lk.section, name)
                     walk(lk.url, name, sub_links, url, sub_section, depth + 1)
                 continue
-            page_id = lk.url.split("#", 1)[0]
-            if page_id in seen_pages:
+            key = url_key(lk.url, main_host)
+            if key in seen_keys:  # same key = same page; first listed wins
                 continue
-            seen_pages.add(page_id)
+            seen_keys.add(key)
             pages.append((lk.url, lk.title, _join(section, lk.section), lk.note))
             entry["pages"] += 1
 
@@ -211,17 +214,7 @@ def read_tree(source: str, get_text: Callable[[str], str],
         raise CLIError("no page links found in " + source +
                        " (is it an llms.txt index?)", 3)
 
-    used: Set[str] = set()
-    out: List[LlmsPage] = []
-    for url, title, section, desc in pages:
-        key = url_key(url, main_host)
-        if key in used:
-            n = 2
-            while "%s-%d" % (key, n) in used:
-                n += 1
-            warn("page key %r from %s collides; using %s-%d" % (key, url, key, n))
-            key = "%s-%d" % (key, n)
-        used.add(key)
-        out.append(LlmsPage(key, url, title, section, desc))
+    out = [LlmsPage(url_key(url, main_host), url, title, section, desc)
+           for url, title, section, desc in pages]
     digest = hashlib.sha256("".join(raw).encode("utf-8")).hexdigest()
     return Tree(root_title, main_host, out, indexes, digest)

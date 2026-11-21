@@ -85,6 +85,9 @@ prose, then `## Section` headings each followed by a list of
   fetch and parse it the same way, recursively, depth limit 3, each index
   once. Its pages get section `"<parent section> / <sub-index title>"`.
   Sub-indexes on other hosts are listed in the summary but not followed.
+  A same-host `.txt` whose file name ends in `-full.txt` (a full-text dump
+  such as `llms-full.txt`) is listed with the note "full text, not
+  followed" and is neither fetched nor a page (changed after the live trial).
 - Other links are pages. Relative URLs resolve against the index URL.
   Duplicate URLs keep the first occurrence.
 - The note after `:` becomes the page `description` (shown on stubs).
@@ -99,9 +102,10 @@ directory: strip the leading `/`, then `.md`, `.mdx`, `.html`, `.htm`; a
 trailing `/` becomes `/index`, e.g. `https://opencode.ai/docs/build.md` ->
 `docs/build`. The **main host** is the host of the SOURCE URL; for a local
 `.txt` SOURCE, the host most page links use (ties: first seen). Pages on
-other hosts: `<host>/<path>`. The key is a pure function of the URL, so
-collisions only come from the same path with different extensions; on one,
-the later URL in listing order gets `-2`, `-3` (rare; warn). Store `uri` =
+other hosts: `<host>/<path>`. The key is a pure function of the URL; pages
+whose keys are equal (same path, different extension) are the same page: the
+first listed wins (URL, title, section, description) and later ones are
+dropped silently (changed after the live trial). Store `uri` =
 the absolute URL as listed.
 
 ### Plan

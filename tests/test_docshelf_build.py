@@ -1131,12 +1131,28 @@ class LlmsIndexTests(unittest.TestCase):
         self.assertEqual([p.key for p in tree.pages], ["a", "other.io/o", "b"])
         self.assertEqual(tree.indexes[0]["url"], f)
 
-    def test_tree_key_collision(self):
-        text = "# T\n- [A](https://x.io/docs/build.md)\n- [B](https://x.io/docs/build.mdx)\n"
+    def test_tree_same_key_is_same_page(self):
+        text = ("# T\n- [A](https://x.io/docs/build.md)\n"
+                "- [B](https://x.io/docs/build.mdx)\n- [C](https://x.io/docs/build)\n")
         with contextlib.redirect_stderr(io.StringIO()) as err:
             tree = read_tree("https://x.io/llms.txt", {"https://x.io/llms.txt": text}.__getitem__)
-        self.assertEqual([p.key for p in tree.pages], ["docs/build", "docs/build-2"])
-        self.assertIn("docs/build", err.getvalue())
+        self.assertEqual([p.key for p in tree.pages], ["docs/build"])
+        self.assertEqual(tree.pages[0].url, "https://x.io/docs/build.md")
+        self.assertEqual(tree.pages[0].title, "A")
+        self.assertEqual(err.getvalue(), "")
+        self.assertEqual(tree.indexes[0]["pages"], 1)
+
+    def test_tree_skips_full_text_index(self):
+        root = ("# T\n- [Full site](https://x.io/llms-full.txt)\n"
+                "- [Docs](https://x.io/docs/llms.txt)\n")
+        docs = "# Docs\n- [A](https://x.io/docs/a.md)\n"
+        texts = {"https://x.io/llms.txt": root, "https://x.io/docs/llms.txt": docs}
+        tree = read_tree("https://x.io/llms.txt", texts.__getitem__)
+        self.assertEqual([p.key for p in tree.pages], ["docs/a"])
+        full = [i for i in tree.indexes if i["url"] == "https://x.io/llms-full.txt"][0]
+        self.assertEqual(full, {"url": "https://x.io/llms-full.txt", "title": "Full site",
+                                "pages": None, "parent": "https://x.io/llms.txt",
+                                "note": "full text, not followed"})
 
     def test_tree_subindex_failure_not_fatal(self):
         root = "# T\n- [A](https://x.io/a.md)\n- [Sub](https://x.io/sub/llms.txt)\n"
