@@ -2,6 +2,7 @@
 by make_inv() and sites are folders or fake openers. Run from the repo root:
 python3 -m unittest discover -s tests -v
 """
+import json
 import os
 import sys
 import tempfile
@@ -27,6 +28,7 @@ from build_plan import load_plan, make_plan, save_plan, summarize  # noqa: E402
 import build_fetch  # noqa: E402
 from build_fetch import fetch_pages, normalize_source, open_source  # noqa: E402
 from build_html import main_content, rewrite_links, stub_html  # noqa: E402
+from build_docvol import check_name, derive_name, role_label, write_docvol  # noqa: E402
 
 
 def make_inv(entries: List[Tuple[str, str, str, str, str]], project: str = "Demo",
@@ -371,6 +373,123 @@ class HtmlTests(unittest.TestCase):
         h = stub_html("B", None, None, "https://x.io/b.html", "HTTP 404")
         self.assertIn("Not stored (HTTP 404); read it at", h)
         self.assertIn("&lt;", stub_html("<x>", None, None, None, "n"))
+
+
+DOCVOL_HTML = {"cmd/opt.html": "<html><body><nav>N</nav><div role='main'><h1 id='opt'>opt</h1>"
+                               "<a href='../guide/a.html#sec'>guide</a></div></body></html>",
+               "index.html": "<div role='main'><p>Home</p></div>"}
+
+
+def load(folder, name):
+    with open(os.path.join(folder, name), encoding="utf-8") as f:
+        return json.load(f)
+
+
+class DocvolTests(unittest.TestCase):
+    def setUp(self):
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        self.cache = os.path.realpath(tmp.name)
+        self.plan = make_plan(SRC, "abc", HDR, ENTRIES, [("full", "index")])
+        self.folder = os.path.join(self.cache, "built", "demo")
+
+    def write(self, html=None, errors=None, now=1800000000):
+        return write_docvol(self.cache, "demo", self.plan, ENTRIES,
+                            DOCVOL_HTML if html is None else html, errors or {}, now=now)
+
+    def test_derive_name(self):
+        self.assertEqual(derive_name({"project": "YosysHQ Yosys", "version": ""}), "yosyshq-yosys")
+        self.assertEqual(derive_name({"project": "SpinalHDL", "version": "master"}),
+                         "spinalhdl~master")
+        self.assertEqual(derive_name({"project": "", "version": ""}), "docs")
+
+    def test_check_name(self):
+        make_manifest = os.path.join(self.cache, "devdocs")
+        os.makedirs(make_manifest)
+        with open(os.path.join(make_manifest, "docs.json"), "w") as f:
+            json.dump([{"slug": "python~3.12"}], f)
+        with self.assertRaises(CLIError) as c:
+            check_name(self.cache, "python~3.12")
+        self.assertEqual(c.exception.code, 2)
+        self.assertIn("docshelf install python~3.12", str(c.exception))
+        os.makedirs(os.path.join(make_manifest, "lua~5.4"))
+        with self.assertRaises(CLIError):
+            check_name(self.cache, "lua~5.4")
+        for bad in ("../x", "a/b", "", "-x"):
+            with self.assertRaises(CLIError):
+                check_name(self.cache, bad)
+        check_name(self.cache, "yosys")
+
+    def test_role_labels(self):
+        self.assertEqual([role_label(r) for r in ("py:function", "cmd:cmd", "std:doc",
+                                                  "std:label", "std:term")],
+                         ["function", "cmd", "Page", "Section", "Term"])
+
+    def test_write_docvol_shape(self):
+        meta = self.write()
+        idx, db = load(self.folder, "index.json"), load(self.folder, "db.json")
+        self.assertIn({"name": "opt", "type": "cmd", "path": "cmd/opt#opt"}, idx["entries"])
+        self.assertIn({"name": "opt - optimize", "type": "Page", "path": "cmd/opt"},
+                      idx["entries"])
+        self.assertIn({"name": "Guide A", "type": "Guide", "path": "guide/a"}, idx["entries"])
+        self.assertFalse(any(e["path"].startswith("guide/a#") for e in idx["entries"]))
+        self.assertIn({"name": "cmd", "count": 1, "slug": "cmd"}, idx["types"])
+        self.assertIn("Not stored; read it at", db["guide/a"])
+        self.assertIn('href="https://x.io/docs/guide/a.html"', db["guide/a"])
+        self.assertIn('href="../guide/a#sec"', db["cmd/opt"])
+        self.assertNotIn("<nav", db["cmd/opt"])
+        self.assertEqual(meta, load(self.folder, "meta.json"))
+        self.assertEqual(meta["mtime"], 1800000000)
+        self.assertEqual(meta["origin"], "docshelf-build")
+        self.assertEqual(meta["slug"], "demo")
+        self.assertEqual(meta["source"], SRC)
+        self.assertEqual(meta["inventory_sha256"], "abc")
+        self.assertEqual(meta["entry_count"], len(idx["entries"]))
+        self.assertEqual(sorted(os.listdir(self.folder)), ["db.json", "index.json", "meta.json"])
+
+    def test_std_label_with_dash_dispname_skipped(self):
+        entries = ENTRIES + inv(("anon", "std:label", "cmd/opt.html#anon", "-"))
+        write_docvol(self.cache, "demo", self.plan, entries, DOCVOL_HTML, {}, now=1)
+        self.assertFalse(any(e["name"] == "anon" for e in load(self.folder, "index.json")["entries"]))
+
+    def test_local_source_without_base_url_stub(self):
+        with tempfile.TemporaryDirectory() as d:
+            self.plan = make_plan(d, "abc", HDR, ENTRIES, [("full", "index")])
+            self.write()
+        self.assertIn("left out of the build (source: guide/a.html)",
+                      load(self.folder, "db.json")["guide/a"])
+
+    def test_failed_page_becomes_stub(self):
+        self.write(html={"index.html": "<p>i</p>"}, errors={"cmd/opt.html": "HTTP 404"})
+        db = load(self.folder, "db.json")
+        self.assertIn("Not stored (HTTP 404); read it at", db["cmd/opt"])
+        names = [e["name"] for e in load(self.folder, "index.json")["entries"]]
+        self.assertIn("opt", names)
+
+    def test_failed_write_keeps_previous(self):
+        self.write(now=1)
+        before = {n: load(self.folder, n) for n in ("index.json", "db.json", "meta.json")}
+        real = os.replace
+        calls = []
+
+        def flaky(a, b):
+            calls.append(b)
+            if len(calls) == 2:
+                raise OSError("disk full")
+            return real(a, b)
+        with mock.patch("os.replace", flaky):
+            with self.assertRaises(CLIError):
+                self.write(html={"cmd/opt.html": "<p>new</p>", "index.html": "<p>new</p>"},
+                           now=2)
+        for n, data in before.items():
+            self.assertEqual(load(self.folder, n), data, n)
+        self.assertEqual(sorted(os.listdir(self.folder)), ["db.json", "index.json", "meta.json"])
+
+    def test_failed_first_write_leaves_nothing(self):
+        with mock.patch("os.replace", side_effect=OSError("disk full")):
+            with self.assertRaises(CLIError):
+                self.write()
+        self.assertFalse(os.path.exists(self.folder))
 
 
 if __name__ == "__main__":
