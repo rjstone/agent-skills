@@ -41,5 +41,9 @@ def built_dir(cache: str) -> str:
     return os.path.join(cache, "built")
 
 
+def src_dir(cache: str) -> str:
+    return os.path.join(cache, "built-src")
+
+
 def plans_dir(cache: str) -> str:
     return os.path.join(cache, "built-plans")

@@ -31,7 +31,9 @@ from build_core import CLIError  # noqa: E402
 from build_inventory import InvEntry, parse_inventory, page_key, split_uri  # noqa: E402
 from build_plan import load_plan, make_plan, save_plan, summarize  # noqa: E402
 import build_fetch  # noqa: E402
-from build_fetch import fetch_pages, normalize_source, open_source  # noqa: E402
+from build_fetch import (FetchError, PageCache, fetch_llms, fetch_llms_page, fetch_pages,  # noqa: E402
+                         index_getter, looks_html, normalize_source, open_source,
+                         open_url_source)
 from build_html import main_content, rewrite_links, stub_html  # noqa: E402
 from build_docvol import check_name, derive_name, role_label, write_docvol  # noqa: E402
 import docshelf_build  # noqa: E402
@@ -815,6 +817,113 @@ class LlmsIndexTests(unittest.TestCase):
         with self.assertRaises(CLIError) as cm:
             read_tree("https://x.io/llms.txt", lambda u: "<!doctype html><html><body>Not found</body></html>")
         self.assertEqual(cm.exception.code, 3)
+
+
+class LlmsFetchTests(unittest.TestCase):
+    def setUp(self):
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        self.cache = PageCache(os.path.join(tmp.name, "built-src", "demo"))
+
+    def test_md_retry_when_html(self):
+        op = fake_opener([(200, b"<!DOCTYPE html><html>x</html>"), (200, b"# Real")])
+        src = open_url_source(opener=op, sleep=lambda s: None)
+        self.assertEqual(fetch_llms_page(src, "https://x.io/docs/a"), ("# Real", "md"))
+        self.assertEqual(op.urls[-1], "https://x.io/docs/a.md")
+
+    def test_md_retry_fails_keeps_html(self):
+        op = fake_opener([(200, b"  <html><main><p>x</p></main></html>"), (404, b"")])
+        text, kind = fetch_llms_page(open_url_source(opener=op, sleep=lambda s: None),
+                                     "https://x.io/docs/a/")
+        self.assertEqual(kind, "html")
+        self.assertEqual(op.urls[-1], "https://x.io/docs/a.md")
+
+    def test_no_retry_for_md_url(self):
+        op = fake_opener([(200, b"<html>odd</html>")])
+        self.assertEqual(fetch_llms_page(open_url_source(opener=op, sleep=lambda s: None),
+                                         "https://x.io/a.md")[1], "html")
+        self.assertEqual(len([u for u in op.urls if not u.endswith("robots.txt")]), 1)
+
+    def test_looks_html(self):
+        self.assertTrue(looks_html("\n  <!DocType html>"))
+        self.assertTrue(looks_html("<HTML>"))
+        self.assertFalse(looks_html("# Title\n<html> later"))
+
+    def test_robots_per_host(self):
+        seen = []
+
+        def opener(url):
+            seen.append(url)
+            if url == "https://x.io/robots.txt":
+                return 200, b"User-agent: *\nDisallow: /private\n"
+            if url.endswith("/robots.txt"):
+                return 404, b""
+            return 200, b"# ok"
+        src = open_url_source(opener=opener, sleep=lambda s: None)
+        with self.assertRaises(FetchError) as cm:
+            src.get_url("https://x.io/private/a.md")
+        self.assertEqual(cm.exception.reason, "blocked by robots.txt")
+        self.assertEqual(src.get_url("https://other.io/private/a.md"), b"# ok")
+        self.assertEqual(src.get_url("https://x.io/public/a.md"), b"# ok")
+        self.assertEqual(sorted(u for u in seen if u.endswith("/robots.txt")),
+                         ["https://other.io/robots.txt", "https://x.io/robots.txt"])
+
+    def test_index_getter(self):
+        op = fake_opener([(200, "# Caf\u00e9".encode()), (404, b"")])
+        get = index_getter(open_url_source(opener=op, sleep=lambda s: None))
+        self.assertEqual(get("https://x.io/llms.txt"), "# Caf\u00e9")
+        with self.assertRaises(CLIError) as cm:
+            get("https://x.io/gone.txt")
+        self.assertEqual(cm.exception.code, 4)
+        self.assertIn("cannot fetch https://x.io/gone.txt: HTTP 404", str(cm.exception))
+
+    def test_cache_put_get_manifest(self):
+        self.cache.put("docs/a", "https://x.io/docs/a.md", "# A", "md", now=0)
+        self.assertEqual(self.cache.get("docs/a"), ("# A", "md"))
+        m = self.cache.manifest()["docs/a"]
+        self.assertEqual((m["url"], m["type"], m["fetched"]),
+                         ("https://x.io/docs/a.md", "md", "1970-01-01T00:00:00Z"))
+        self.assertEqual(m["sha256"], hashlib.sha256(b"# A").hexdigest())
+        self.assertTrue(os.path.isfile(os.path.join(self.cache.root, "docs", "a.md")))
+
+    def test_cache_type_change_removes_old_file(self):
+        self.cache.put("a", "https://x.io/a", "<html>", "html", now=0)
+        self.cache.put("a", "https://x.io/a.md", "# A", "md", now=1)
+        self.assertFalse(os.path.exists(os.path.join(self.cache.root, "a.html")))
+        self.assertEqual(self.cache.get("a"), ("# A", "md"))
+
+    def test_cache_refuses_escape(self):
+        with self.assertRaises(ValueError):
+            self.cache.put("../evil", "https://x.io/e.md", "x", "md", now=0)
+
+    def test_fetch_llms_uses_cache_and_refetch(self):
+        self.cache.put("a", "https://x.io/a.md", "# old", "md", now=0)
+        op = fake_opener([(200, b"# B")])
+        raw, errors, fetched = fetch_llms(open_url_source(opener=op, sleep=lambda s: None),
+                                          [("a", "https://x.io/a.md"), ("b", "https://x.io/b.md")],
+                                          self.cache, refetch=False, now=60)
+        self.assertEqual(raw, {"a": ("# old", "md"), "b": ("# B", "md")})
+        self.assertEqual([u for u in op.urls if not u.endswith("robots.txt")],
+                         ["https://x.io/b.md"])
+        self.assertEqual((errors, list(fetched)), ({}, ["b"]))
+        op2 = fake_opener([(200, b"# new")])
+        raw, _, _ = fetch_llms(open_url_source(opener=op2, sleep=lambda s: None),
+                               [("a", "https://x.io/a.md")], self.cache, refetch=True, now=120)
+        self.assertEqual(raw["a"], ("# new", "md"))
+
+    def test_fetch_llms_failure_keeps_cached_copy(self):
+        self.cache.put("a", "https://x.io/a.md", "# old", "md", now=0)
+        op = fake_opener([(404, b"")])
+        raw, errors, _ = fetch_llms(open_url_source(opener=op, sleep=lambda s: None),
+                                    [("a", "https://x.io/a.md")], self.cache, refetch=True, now=1)
+        self.assertEqual((raw["a"], errors["a"]), (("# old", "md"), "HTTP 404"))
+
+    def test_fetch_llms_failure_without_cache(self):
+        op = fake_opener([(404, b"")])
+        raw, errors, fetched = fetch_llms(open_url_source(opener=op, sleep=lambda s: None),
+                                          [("a", "https://x.io/a.md")], self.cache,
+                                          refetch=False, now=1)
+        self.assertEqual((raw, errors, fetched), ({}, {"a": "HTTP 404"}, {}))
 
 
 class MarkdownTests(unittest.TestCase):
