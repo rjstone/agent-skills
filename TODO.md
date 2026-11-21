@@ -99,6 +99,53 @@ items are done.
 `docs/trials/2026-11-18-haiku-node-zig-pony/` and
 `docs/trials/2026-11-18-opencode-docshelf-sandboxed/`)
 
+#### 8. Import formats (the user, 2026-11-21)
+
+Goal: import more documentation formats into docshelf's own docvol format
+(no need to write Dash docsets). Source: Kapeli's docset generation guide,
+https://kapeli.com/docsets (read 2026-11-21). Most of its entries are doc
+*generators* whose HTML a converter (doc2dash, javadocset, ...) scrapes
+into a docset; most generators also write a machine-readable search index
+beside the HTML, which is the better import source. The "Index to read"
+column is from memory: verify each against real output before building.
+
+| # | Generator | Dash's converter | Index to read instead | Value |
+|---|---|---|---|---|
+| 1 | Swift DocC | built into Dash | `.doccarchive`: `index/index.json` + RenderNode JSON (needs brotli, see Reference below) | low (no stdlib brotli) |
+| 2 | Sphinx / PyDoctor | doc2dash | `objects.inv` (Intersphinx inventory, zlib, stdlib-readable) | high |
+| 3 | Javadoc | javadocset | `*-search-index.js` (members, types, packages; JDK 9+) | high |
+| 4 | RDoc / YARD | built into Dash | RDoc `search_index.js`; YARD `class_list.html` / `method_list.html` | low-medium |
+| 5 | Scaladoc | sbt-dash, mkscaladocset | `searchData.js` (Scala 3) | low-medium |
+| 6 | GoDoc | godocdash | none static; scrape HTML or `go doc` | low |
+| 7 | ExDoc (Hex) | built into Dash | `search_data-*.js`, `sidebar_items-*.js` | medium |
+| 8 | dartdoc | built into Dash | `index.json` | medium |
+| 9 | Haddock | built into Dash | Hoogle text database (`--hoogle`) | medium |
+| 10 | rustdoc / Cargo | cargo-docset, rsdocs-dashing | `search-index.js` (format changes often; JSON output nightly-only) | medium, fragile |
+| 11 | JSDoc | jsdoc-dash-template | `jsdoc -X` JSON (TypeDoc: `--json`) | medium-high |
+| 12 | Doxygen | doxygen2docset | tagfile (XML, `GENERATE_TAGFILE`) or XML output | high |
+| 13 | any HTML | Dashing, dash-docset-builder | CSS selector -> entry type config (Dashing's `dashing.json`) | high (fallback) |
+
+- [ ] 8.1 `objects.inv` importer (Sphinx, PyDoctor, MkDocs +
+      mkdocstrings all write it). Spec in progress on `update/docshelf`.
+- [ ] 8.2 Generic HTML importer driven by CSS selectors, Dashing-style;
+      maybe read existing `dashing.json` files.
+- [ ] 8.3 Javadoc search indexes.
+- [ ] 8.4 Doxygen tagfile.
+- [ ] 8.5 MkDocs `search/search_index.json` (not on Kapeli's list; common
+      on current project sites; full text and headings, no API types).
+- [ ] 8.6 The rest of the table, by value.
+- [ ] 8.7 Map every importer onto Dash's entry types (guide section
+      13.5.1) so `types` means the same thing across sources.
+- [ ] 8.8 Look at Crawl4AI (https://github.com/unclecode/crawl4ai,
+      v0.9.6, 2026-11-20) for fetching docs that have no downloadable
+      archive: `pip install -U crawl4ai`, `crawl4ai-setup` (browser),
+      `crwl <url> -o markdown`, `crwl <url> --deep-crawl bfs --max-pages N`.
+      A heavy, optional dependency (Playwright + Chromium) against the
+      stdlib-only policy: keep it outside docshelf's core (a separate
+      fetch step whose output docshelf imports) (the user, 2026-11-21).
+- Ignore Dash-only extras: `dashtoc`, playground URLs, docset feeds
+  (`dash-feed://`), per-docset JavaScript and full-text-search switches.
+
 #### Reference: other docset and DevDocs readers (skimmed 2026-11-17)
 
 Read Zeal's folder, no network:
