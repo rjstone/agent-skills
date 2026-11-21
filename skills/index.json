@@ -106,6 +106,38 @@
       ]
     },
     {
+      "name": "opencode-console",
+      "version": "0.1.0",
+      "files": [
+        "API.md",
+        "CLI.md",
+        "SKILL.md",
+        "references/api-inference.md",
+        "references/api-models.md",
+        "references/api-providers.md",
+        "references/api.md",
+        "references/billing.md",
+        "references/budgets.md",
+        "references/go.md",
+        "references/harnesses-claude-code.md",
+        "references/harnesses-codex.md",
+        "references/harnesses-hermes.md",
+        "references/harnesses-pi.md",
+        "references/harnesses-raycast.md",
+        "references/harnesses.md",
+        "references/intro.md",
+        "references/manifest.json",
+        "references/members.md",
+        "references/models.md",
+        "references/providers.md",
+        "references/scim.md",
+        "references/sso.md",
+        "references/websearch.md",
+        "references/workspaces.md",
+        "scripts/refresh_references.py"
+      ]
+    },
+    {
       "name": "provider-onboarding",
       "version": "0.6.0",
       "files": [
