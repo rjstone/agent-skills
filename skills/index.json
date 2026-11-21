@@ -54,7 +54,7 @@
     },
     {
       "name": "opencode-build",
-      "version": "0.3.0",
+      "version": "0.3.1",
       "files": [
         "ERRATA.md",
         "MAINTAINING.md",
