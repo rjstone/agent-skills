@@ -1,4 +1,4 @@
-# Effect
+# Effect SDK
 
 `@opencode/sdk/effect` is the Effect-native embedded SDK. Operations return typed Effects and Streams, and closing
 the owning Scope releases the router, Location services, fibers, and plugin registrations.

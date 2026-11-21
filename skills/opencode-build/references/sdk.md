@@ -1,4 +1,4 @@
-# Overview
+# SDK overview
 
 `@opencode/sdk` hosts OpenCode directly inside your application. Unlike the
 [network client](/build/client), it assembles the OpenCode server and routes API
