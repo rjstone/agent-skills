@@ -91,9 +91,10 @@ from memory.
 
 ## Part 2: acting for the user
 
-First run `npx @opencode/console status`: if the harness is already
-connected, skip setup, and check whether the Console MCP tools are already
-available before adding the server.
+Before connecting a harness, run `npx @opencode/console status`: if it is
+already connected, skip setup, and check whether the Console MCP tools are
+already available before adding the server. Tasks that only use MCP tools
+don't need it.
 
 Three ways in, best first:
 
@@ -142,6 +143,8 @@ in **`API.md`**. Members and usage have no documented REST endpoints.
 - Old "Zen" URLs or a made-up base path: use the base URLs above.
 - Go key on the pay-as-you-go URL (or the reverse): match the URL to the plan.
 - Pasting an API key into an MCP config: the Console MCP uses browser OAuth.
+- Calling a free-tier model from your own script or another harness: free
+  chat models answer only inside OpenCode; other clients get HTTP 403.
 - Quoting a cached or remembered price: look it up live (above).
 
 ## Maintaining
