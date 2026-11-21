@@ -7,6 +7,7 @@ import sys
 import tempfile
 import unittest
 import zlib
+from unittest import mock
 from typing import List, Tuple
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
@@ -23,6 +24,8 @@ import build_core  # noqa: E402
 from build_core import CLIError  # noqa: E402
 from build_inventory import InvEntry, parse_inventory, page_key, split_uri  # noqa: E402
 from build_plan import load_plan, make_plan, save_plan, summarize  # noqa: E402
+import build_fetch  # noqa: E402
+from build_fetch import fetch_pages, normalize_source, open_source  # noqa: E402
 
 
 def make_inv(entries: List[Tuple[str, str, str, str, str]], project: str = "Demo",
@@ -176,6 +179,123 @@ class PlanTests(unittest.TestCase):
             save_plan(path, p)
             self.assertEqual(load_plan(path), p)
             self.assertEqual(os.listdir(os.path.dirname(path)), ["demo.json"])
+
+
+URL = "https://x.io/docs/"
+
+
+def fake_opener(responses, robots=None):
+    """An opener (url) -> (status, bytes): robots.txt gets robots (None: 404),
+    every other URL takes the next of responses; .urls records requests."""
+    queue = list(responses)
+
+    def opener(url):
+        opener.urls.append(url)
+        if url.endswith("/robots.txt"):
+            return (404, b"") if robots is None else (200, robots.encode())
+        return queue.pop(0)
+    opener.urls = []
+    return opener
+
+
+def write(root, rel, text):
+    path = os.path.join(root, *rel.split("/"))
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    with open(path, "w", encoding="utf-8") as f:
+        f.write(text)
+    return path
+
+
+class FetchTests(unittest.TestCase):
+    def setUp(self):
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        self.tmp = os.path.realpath(tmp.name)
+
+    def test_normalize_source(self):
+        for s in ("https://x.io/docs", "https://x.io/docs/", "https://x.io/docs/index.html"):
+            self.assertEqual(normalize_source(s), ("https://x.io/docs/", True))
+        self.assertEqual(normalize_source(self.tmp), (self.tmp, False))
+        self.assertEqual(normalize_source(os.path.join(self.tmp, "index.html")),
+                         (self.tmp, False))
+
+    def test_local_folder_reads_pages_and_dir_uris(self):
+        write(self.tmp, "api/foo/index.html", "<p>dir page</p>")
+        write(self.tmp, "a.html", "<p>file page</p>")
+        write(self.tmp, "objects.inv", "inv")
+        src = open_source(self.tmp)
+        self.assertIn("dir page", src.page("api/foo/"))
+        self.assertIn("file page", src.page("a.html"))
+        self.assertEqual(src.inventory(), b"inv")
+        self.assertIsNone(src.live_url("a.html"))
+
+    def test_local_folder_refuses_escape(self):
+        write(os.path.dirname(self.tmp), "secret.html", "s")
+        src = open_source(self.tmp)
+        with self.assertRaises(build_fetch.FetchError):
+            src.page("../secret.html")
+
+    def test_local_base_url_gives_live_urls(self):
+        src = open_source(self.tmp, base_url="https://y.org/docs")
+        self.assertEqual(src.live_url("a.html"), "https://y.org/docs/a.html")
+
+    def test_retries_then_succeeds(self):
+        op = fake_opener([(503, b""), (503, b""), (200, b"<p>ok</p>")])
+        sleeps = []
+        src = open_source(URL, opener=op, delay=0, sleep=sleeps.append)
+        html, errs = fetch_pages(src, ["a.html"])
+        self.assertEqual((html, errs), ({"a.html": "<p>ok</p>"}, {}))
+        self.assertEqual(sleeps, [1, 2])
+
+    def test_404_becomes_error_not_exception(self):
+        src = open_source(URL, opener=fake_opener([(404, b"")]), delay=0, sleep=lambda s: None)
+        self.assertEqual(fetch_pages(src, ["a.html"]), ({}, {"a.html": "HTTP 404"}))
+
+    def test_gives_up_after_three_retries(self):
+        src = open_source(URL, opener=fake_opener([(500, b"")] * 4), delay=0,
+                          sleep=lambda s: None)
+        self.assertEqual(fetch_pages(src, ["a.html"])[1], {"a.html": "HTTP 500"})
+
+    def test_robots_disallow(self):
+        op = fake_opener([(200, b"<p>b</p>")], robots="User-agent: *\nDisallow: /docs/private/\n")
+        src = open_source(URL, opener=op, delay=0)
+        html, errs = fetch_pages(src, ["private/a.html", "b.html"])
+        self.assertEqual(errs, {"private/a.html": "blocked by robots.txt"})
+        self.assertEqual(list(html), ["b.html"])
+        self.assertIn("https://x.io/robots.txt", op.urls)
+
+    def test_robots_missing_allows_all(self):
+        src = open_source(URL, opener=fake_opener([(200, b"<p>a</p>")]), delay=0)
+        self.assertEqual(fetch_pages(src, ["private/a.html"])[1], {})
+
+    def test_inventory_from_url(self):
+        op = fake_opener([(200, b"INV")])
+        self.assertEqual(open_source(URL, opener=op).inventory(), b"INV")
+        self.assertIn("https://x.io/docs/objects.inv", op.urls)
+        op = fake_opener([(404, b"")])
+        with self.assertRaises(CLIError) as c:
+            open_source(URL, opener=op).inventory()
+        self.assertEqual(c.exception.code, 4)
+
+    def test_default_opener_sends_user_agent(self):
+        seen = {}
+
+        class Resp:
+            status = 200
+            def read(self): return b"x"
+            def __enter__(self): return self
+            def __exit__(self, *a): return False
+
+        def fake_urlopen(req, timeout=None):
+            seen["ua"] = req.get_header("User-agent")
+            return Resp()
+        with mock.patch("urllib.request.urlopen", fake_urlopen):
+            self.assertEqual(build_fetch.default_opener("https://x.io/a.html"), (200, b"x"))
+        self.assertEqual(seen["ua"], "docshelf-build/" + build_core.VERSION)
+
+    def test_default_opener_refuses_other_schemes(self):
+        with self.assertRaises(ValueError):
+            build_fetch.default_opener("file:///etc/passwd")
 
 
 if __name__ == "__main__":
