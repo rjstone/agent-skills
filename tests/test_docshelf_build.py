@@ -67,6 +67,20 @@ class InventoryTests(unittest.TestCase):
         _, es = parse_inventory(make_inv([(name, "std:label", "-1", "cmd/x.html#alm", "Intel ALM")]))
         self.assertEqual([(e.name, e.role) for e in es], [(name, "std:label")])
 
+    def test_uri_with_unescaped_spaces(self):
+        # real Yosys line: the anchor "opt_clean.opt_clean [options] [selection]" was
+        # written unescaped, so its tail spills into the display name
+        line = ("opt_clean::opt_clean [options] [selection] cmd:cmdusage 1 "
+                "cmd/index_passes_opt.html#opt_clean.opt_clean [options] [selection] "
+                "opt_clean [options] [selection]\n")
+        data = make_inv([]).split(b"\n", 4)
+        data[4] = zlib.compress(line.encode())
+        _, es = parse_inventory(b"\n".join(data))
+        self.assertEqual(es[0].name, "opt_clean::opt_clean [options] [selection]")
+        self.assertEqual(es[0].uri,
+                         "cmd/index_passes_opt.html#opt_clean.opt_clean [options] [selection]")
+        self.assertEqual(es[0].dispname, "opt_clean [options] [selection]")
+
     def test_split_uri(self):
         self.assertEqual(split_uri("cmd/opt.html#opt"), ("cmd/opt.html", "opt"))
         self.assertEqual(split_uri("guide/a.html"), ("guide/a.html", None))
@@ -174,6 +188,16 @@ class PlanTests(unittest.TestCase):
     def test_no_warning_once_something_is_full(self):
         lines = summarize(make_plan(SRC, "h", HDR, STD_ONLY_ENTRIES, [("full", "guide/*")]), None)
         self.assertFalse(any("no page has a domain role" in l for l in lines), lines)
+
+    def test_sphinx_generated_pages_left_out(self):
+        extra = inv(("genindex", "std:label", "genindex.html", "Index"),
+                    ("py-modindex", "std:label", "py-modindex.html", "Module Index"),
+                    ("modindex", "std:label", "py-modindex.html", "Module Index"),
+                    ("search", "std:label", "search.html", "Search Page"))
+        p = make_plan(SRC, "h", HDR, ENTRIES + extra, [("full", "*")])
+        for key in ("genindex", "py-modindex", "search"):
+            self.assertNotIn(key, p["pages"])
+        self.assertIn("index", p["pages"])
 
     def test_base_url(self):
         self.assertEqual(make_plan(SRC, "h", HDR, ENTRIES, [])["base_url"], SRC)
@@ -370,6 +394,16 @@ class HtmlTests(unittest.TestCase):
         out = rewrite_links('<a href="../missing.html">m</a>', "cmd/opt", "cmd/opt.html", {}, None)
         self.assertIn('href="../missing.html"', out)
 
+    def test_ids_and_fragments_with_spaces(self):
+        # real Yosys: <dt id="opt_clean.opt_clean [options] [selection]">
+        out = main_content('<main><dt id="a.b [options]">x</dt><a href="#a.b [options]">l</a></main>')
+        self.assertIn('id="a.b_[options]"', out)
+        out = rewrite_links(out, "cmd/opt", "cmd/opt.html", {}, None)
+        self.assertIn('href="#a.b_[options]"', out)
+        keys = {"cmd/x.html": "cmd/x"}
+        out = rewrite_links('<a href="x.html#p q">x</a>', "cmd/opt", "cmd/opt.html", keys, None)
+        self.assertIn('href="x#p_q"', out)
+
     def test_stub_html(self):
         h = stub_html("Install", "Getting started", None, "https://x.io/docs/i.html", None)
         self.assertIn("<h1>Install</h1>", h)
@@ -458,6 +492,13 @@ class DocvolTests(unittest.TestCase):
         self.assertEqual(meta["inventory_sha256"], "abc")
         self.assertEqual(meta["entry_count"], len(idx["entries"]))
         self.assertEqual(sorted(os.listdir(self.folder)), ["db.json", "index.json", "meta.json"])
+
+    def test_entry_anchor_with_spaces(self):
+        entries = ENTRIES + inv(("opt.opt [options]", "cmd:cmdusage", "cmd/opt.html#opt.opt [options]",
+                                 "[options]"))
+        write_docvol(self.cache, "demo", self.plan, entries, DOCVOL_HTML, {}, now=1)
+        paths = [e["path"] for e in load(self.folder, "index.json")["entries"]]
+        self.assertIn("cmd/opt#opt.opt_[options]", paths)
 
     def test_std_label_with_dash_dispname_skipped(self):
         entries = ENTRIES + inv(("anon", "std:label", "cmd/opt.html#anon", "-"))

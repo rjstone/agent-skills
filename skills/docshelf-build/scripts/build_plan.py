@@ -23,6 +23,13 @@ def _group(key: str) -> str:
     return key.split("/", 1)[0]
 
 
+def _generated(key: str) -> bool:
+    """Sphinx's generated pages (general index, module indexes, search): the
+    inventory lists them, the site may not have them, and they hold nothing
+    a lookup needs."""
+    return key in ("genindex", "search") or ("/" not in key and key.endswith("modindex"))
+
+
 def make_plan(source: str, inv_sha256: str, header: dict, entries: List[InvEntry],
               overrides: List[Tuple[str, str]], old: Optional[dict] = None,
               reset: bool = False, base_url: Optional[str] = None) -> dict:
@@ -50,6 +57,8 @@ def make_plan(source: str, inv_sha256: str, header: dict, entries: List[InvEntry
     old_pages = (old or {}).get("pages", {})
     pages = {}
     for key in sorted(roles):
+        if _generated(key):
+            continue
         domain = sorted(r for r in roles[key] if not r.startswith("std:"))
         keep, why = ("full", "roles: " + ", ".join(domain)) if domain \
             else ("stub", "roles: std only")

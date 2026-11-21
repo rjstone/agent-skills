@@ -11,7 +11,7 @@ from typing import Dict, List
 
 from build_core import DOCVOL_FORMAT, NAME_RE, CLIError, built_dir
 from build_html import STUB_CLASS, main_content, rewrite_links, stub_html
-from build_inventory import InvEntry, page_key, split_uri
+from build_inventory import InvEntry, anchor_id, page_key, split_uri
 
 FILES = ("index.json", "db.json", "meta.json")  # meta.json last: docshelf keys on it
 _STD_LABELS = {"doc": "Page", "label": "Section", "term": "Term"}
@@ -75,7 +75,7 @@ def _index(plan: dict, entries: List[InvEntry]) -> dict:
             continue
         if e.role == "std:label" and e.dispname == "-":
             continue  # an anonymous label: noise
-        add(_entry_name(e), role_label(e.role), key + ("#" + anchor if anchor else ""))
+        add(_entry_name(e), role_label(e.role), key + ("#" + anchor_id(anchor) if anchor else ""))
     counts: Dict[str, int] = {}
     for x in out:
         counts[x["type"]] = counts.get(x["type"], 0) + 1

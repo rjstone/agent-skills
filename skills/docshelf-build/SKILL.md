@@ -47,7 +47,10 @@ as SOURCE, a site URL or a local HTML build (`_build/html`).
    becomes a stub with the error; the build still finishes.
 4. Look things up with docshelf: `search WORDS -d NAME`, `show NAME:PAGE`.
 
-`build SOURCE --name NAME [plan options]` does 1 and 3 in one step. A
+`build SOURCE --name NAME [plan options]` does 1 and 3 in one step. Plan
+options (`--full`, `--stub`, `--all`, `--reset`, `--base-url`) go with
+`plan` or with a SOURCE, never with `build NAME`: to change a built
+docvol, run `plan SOURCE --name NAME ...` again, then `build NAME`. A
 rebuild (`build NAME`) reuses the plan; if the inventory changed, new pages
 get the rule and overrides and gone pages are dropped.
 

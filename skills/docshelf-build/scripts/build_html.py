@@ -6,6 +6,8 @@ import urllib.parse
 from html.parser import HTMLParser
 from typing import Callable, Dict, List, Optional, Tuple
 
+from build_inventory import anchor_id
+
 VOID = {"area", "base", "br", "col", "embed", "hr", "img", "input", "link", "meta",
         "param", "source", "track", "wbr"}
 STUB_CLASS = "docshelf-build-stub"  # marks pages that hold no stored content
@@ -103,6 +105,8 @@ def _serialize(tokens: List[Token], href: Optional[Callable[[str], str]] = None)
             for k, v in attrs:
                 if k == "href" and v is not None and href is not None:
                     v = href(v)
+                elif k == "id" and v is not None:
+                    v = anchor_id(v)
                 parts.append(k if v is None else '%s="%s"' % (k, htmllib.escape(v)))
             out.append("<%s>" % " ".join(parts))
         else:  # end
@@ -143,7 +147,7 @@ def rewrite_links(content: str, page_key: str, page_uri: str, keys_by_uri: Dict[
 
     def href(value: str) -> str:
         if value.startswith("#"):
-            return value
+            return "#" + anchor_id(urllib.parse.unquote(value[1:]))
         target = urllib.parse.urljoin(fake + page_uri, value)
         parts = urllib.parse.urlsplit(target)
         if parts.scheme + "://" + parts.netloc + "/" != fake:
@@ -152,7 +156,8 @@ def rewrite_links(content: str, page_key: str, page_uri: str, keys_by_uri: Dict[
         frag = "#" + parts.fragment if parts.fragment else ""
         key = _key_for(path, keys_by_uri)
         if key is not None:
-            return posixpath.relpath(key, here) + frag
+            local = "#" + anchor_id(urllib.parse.unquote(parts.fragment)) if parts.fragment else ""
+            return posixpath.relpath(key, here) + local
         if live_base:
             return urllib.parse.urljoin(live_base, parts.path[1:]) + frag
         return value

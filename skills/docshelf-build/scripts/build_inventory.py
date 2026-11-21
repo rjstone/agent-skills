@@ -51,14 +51,34 @@ def parse_inventory(data: bytes) -> Tuple[dict, List[InvEntry]]:
             continue
         if uri.endswith("$"):
             uri = uri[:-1] + name
+        uri, disp = _respill(name, uri, disp)
         entries.append(InvEntry(name, role, int(prio), uri, disp))
     return header, entries
+
+
+def _respill(name: str, uri: str, disp: str) -> Tuple[str, str]:
+    """Undo a spill: some domains write an anchor holding spaces unescaped
+    ("...#opt_clean.opt_clean [options] [selection]"), so the anchor's tail
+    lands at the start of the display name. The tail is the part of the name
+    after its first space; move it back when disp starts with it."""
+    if "#" not in uri or not re.search(r"\s", name):
+        return uri, disp
+    tail = re.split(r"\s+", name, maxsplit=1)[1]
+    if disp.startswith(tail + " ") or disp == tail:
+        return uri + " " + tail, disp[len(tail):].lstrip() or "-"
+    return uri, disp
 
 
 def split_uri(uri: str) -> Tuple[str, Optional[str]]:
     """("page uri", anchor or None)."""
     page, sep, anchor = uri.partition("#")
     return page, (anchor if sep and anchor else None)
+
+
+def anchor_id(anchor: str) -> str:
+    """An anchor without whitespace: some Sphinx domains write ids like
+    "opt_clean.opt_clean [options]", which a reference cannot carry."""
+    return re.sub(r"\s+", "_", anchor.strip())
 
 
 def page_key(page_uri: str) -> str:
