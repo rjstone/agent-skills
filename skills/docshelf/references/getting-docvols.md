@@ -91,6 +91,8 @@ site's `objects.inv`) as `built`. They live in `<cache>/built/`; `install`
 and `update` refuse them and say to rebuild with `docshelf-build`, and
 `remove` deletes the docvol but keeps its build plan. A built docvol hides a
 DevDocs one of the same name, with a warning.
+docshelf reads built docvols up to `format` 1 (in their `meta.json`); a
+higher one is skipped with a warning to update docshelf.
 
 ## Where files go
 

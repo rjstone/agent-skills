@@ -250,11 +250,20 @@ class DevDocsDocvol(Docvol):
         return _repair(self.name)
 
 
+# the built-docvol format docshelf-build writes in meta.json ("format"); the
+# compatibility contract between the two skills, versioned apart from both
+BUILT_FORMAT = 1
+
+
 class BuiltDocvol(DevDocsDocvol):
     """A docvol the docshelf-build skill made; rebuilt there, never from
     DevDocs."""
 
     def __init__(self, folder: str):
+        fmt = _load(os.path.join(folder, "meta.json")).get("format", 1)
+        if not isinstance(fmt, int) or fmt > BUILT_FORMAT:
+            raise ValueError("built by a newer docshelf-build (format %s; this docshelf "
+                             "reads format %d): update docshelf" % (fmt, BUILT_FORMAT))
         super().__init__(folder)
         self.source = "built"
 

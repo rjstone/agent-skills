@@ -8214,7 +8214,8 @@ class DamagedDocvolTests(unittest.TestCase):
 
 
 def make_built(cache: str, name: str, entries: List[Tuple[str, str, str]],
-               pages: Dict[str, str], mtime: int = 1800000000) -> str:
+               pages: Dict[str, str], mtime: int = 1800000000,
+               fmt: Optional[int] = 1) -> str:
     """Write <cache>/built/<name>/ the way docshelf-build does: a DevDocs-
     shaped docvol whose meta.json says "origin": "docshelf-build"."""
     folder = os.path.join(cache, "built", name)
@@ -8227,6 +8228,8 @@ def make_built(cache: str, name: str, entries: List[Tuple[str, str, str]],
             "mtime": mtime, "installedAt": "2026-11-21T00:00:00Z", "alias": None,
             "entry_count": len(entries), "origin": "docshelf-build",
             "source": "https://docs.example.org/", "inventory_sha256": "0" * 64}
+    if fmt is not None:
+        meta["format"] = fmt
     for fname, data in (("index.json", index), ("db.json", pages), ("meta.json", meta)):
         with open(os.path.join(folder, fname), "w", encoding="utf-8") as f:
             json.dump(data, f, ensure_ascii=False)
@@ -8313,6 +8316,18 @@ class BuiltDocvolTests(unittest.TestCase):
         self.assertEqual(r.returncode, 0, r.stderr)
         self.assertFalse(os.path.exists(folder))
         self.assertTrue(os.path.isfile(os.path.join(plans, "yosys.json")))
+
+    def test_newer_format_is_skipped_with_a_warning(self):
+        make_built(self.cache, "future", [("x", "cmd", "x")], {"x": "<p>x</p>"}, fmt=2)
+        r = self.cli("list")
+        self.assertNotIn("future ", r.stdout)
+        self.assertIn("format 2", r.stderr)
+        self.assertIn("update docshelf", r.stderr)
+
+    def test_missing_format_reads_as_format_1(self):
+        make_built(self.cache, "old", [("x", "cmd", "x")], {"x": "<p>x</p>"}, fmt=None)
+        r = self.cli("list")
+        self.assertIn("old ", r.stdout)
 
     def test_damaged_built_hint_names_docshelf_build(self):
         folder = self.add_built()
