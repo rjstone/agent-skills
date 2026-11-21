@@ -26,6 +26,7 @@ from build_inventory import InvEntry, parse_inventory, page_key, split_uri  # no
 from build_plan import load_plan, make_plan, save_plan, summarize  # noqa: E402
 import build_fetch  # noqa: E402
 from build_fetch import fetch_pages, normalize_source, open_source  # noqa: E402
+from build_html import main_content, rewrite_links, stub_html  # noqa: E402
 
 
 def make_inv(entries: List[Tuple[str, str, str, str, str]], project: str = "Demo",
@@ -296,6 +297,80 @@ class FetchTests(unittest.TestCase):
     def test_default_opener_refuses_other_schemes(self):
         with self.assertRaises(ValueError):
             build_fetch.default_opener("file:///etc/passwd")
+
+
+SPHINX_PAGE = """<!DOCTYPE html><html><head><title>opt</title>
+<style>body{color:red}</style><script>var x = "<p>Script text</p>";</script></head>
+<body><nav class="wy-nav-side"><p>Sidebar</p><a href="index.html">Home</a></nav>
+<div class="wy-nav-content"><div role="main" class="document">
+<section id="opt"><h1>opt<a class="headerlink" href="#opt" title="Link">\u00b6</a></h1>
+<p>Real text &amp; more, <code>a&lt;b</code>.</p><img src="x.png" alt="A diagram"><br>
+</section></div><footer><p>Footer</p></footer></div></body></html>"""
+
+HTML_WITH_LINKS = """<p><a href="../using/x.html#sec">x</a> <a href="../api/foo/">foo</a>
+<a href="#local">here</a> <a href="https://other.org/p">other</a>
+<a href="../missing.html">missing</a> <a href="opt.html#flag">self</a>
+<a href="mailto:a@example.org">mail</a></p>"""
+
+
+class HtmlTests(unittest.TestCase):
+    def test_main_content_drops_chrome(self):
+        out = main_content(SPHINX_PAGE)
+        for gone in ("Sidebar", "Footer", "<script", "<style", "Script text", "headerlink",
+                     "\u00b6", "<nav"):
+            self.assertNotIn(gone, out)
+        self.assertIn("Real text &amp; more", out)
+        self.assertIn("<code>a&lt;b</code>", out)
+        self.assertIn('<section id="opt">', out)
+
+    def test_img_becomes_alt_text(self):
+        out = main_content(SPHINX_PAGE)
+        self.assertNotIn("<img", out)
+        self.assertIn("A diagram", out)
+
+    def test_main_content_fallbacks(self):
+        self.assertIn("T", main_content("<html><body><nav>N</nav><main><p>T</p></main></body></html>"))
+        self.assertNotIn("N", main_content("<html><body><nav>N</nav><main><p>T</p></main></body></html>"))
+        self.assertIn("B", main_content('<div class="sphinxsidebar">S</div><div class="body">B</div>'))
+        self.assertIn("Only", main_content("<html><body><p>Only</p></body></html>"))
+
+    def test_rewrite_links(self):
+        keys = {"cmd/opt.html": "cmd/opt", "using/x.html": "using/x", "api/foo/": "api/foo"}
+        out = rewrite_links(HTML_WITH_LINKS, "cmd/opt", "cmd/opt.html", keys, "https://x.io/docs/")
+        self.assertIn('href="../using/x#sec"', out)
+        self.assertIn('href="../api/foo"', out)
+        self.assertIn('href="#local"', out)
+        self.assertIn('href="https://other.org/p"', out)
+        self.assertIn('href="https://x.io/docs/missing.html"', out)
+        self.assertIn('href="opt#flag"', out)
+        self.assertIn('href="mailto:a@example.org"', out)
+
+    def test_rewrite_links_from_dir_style_and_top_pages(self):
+        keys = {"api/foo/": "api/foo", "api/bar/": "api/bar", "index.html": "index"}
+        out = rewrite_links('<a href="../bar/#b">b</a><a href="../../">home</a>',
+                            "api/foo", "api/foo/", keys, None)
+        self.assertIn('href="bar#b"', out)
+        self.assertIn('href="../index"', out)
+        out = rewrite_links('<a href="api/foo/">f</a>', "index", "index.html", keys, None)
+        self.assertIn('href="api/foo"', out)
+
+    def test_rewrite_links_no_live_base_keeps_unknown(self):
+        out = rewrite_links('<a href="../missing.html">m</a>', "cmd/opt", "cmd/opt.html", {}, None)
+        self.assertIn('href="../missing.html"', out)
+
+    def test_stub_html(self):
+        h = stub_html("Install", "Getting started", None, "https://x.io/docs/i.html", None)
+        self.assertIn("<h1>Install</h1>", h)
+        self.assertIn("Getting started", h)
+        self.assertIn("Not stored; read it at", h)
+        self.assertIn('href="https://x.io/docs/i.html"', h)
+        h = stub_html("A", None, "Tutorial about A.", None,
+                      "left out of the build (source: guide/a.html)")
+        self.assertIn("left out of the build", h)
+        self.assertIn("Tutorial about A.", h)
+        h = stub_html("B", None, None, "https://x.io/b.html", "HTTP 404")
+        self.assertIn("Not stored (HTTP 404); read it at", h)
+        self.assertIn("&lt;", stub_html("<x>", None, None, None, "n"))
 
 
 if __name__ == "__main__":
