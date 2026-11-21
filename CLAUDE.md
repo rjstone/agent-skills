@@ -58,6 +58,10 @@ with a cloud container: archive it to `docs/plans/` before the session ends.
   then `git push -u origin <branch>`. Already pushed: add the same line,
   `git fetch origin <branch>`, `git branch -u origin/<branch>`.
 
+- Auto mode refuses `git reset --hard` (as destructive), even to drop an
+  unpushed duplicate commit. To catch up with a remote branch that moved,
+  `git fetch` and `git merge` it instead (2026-11-21).
+
 ## Delegating to subagents
 
 - Hand long, mechanical runs (batch jobs, long waits, log sweeps) to a cheap

@@ -125,12 +125,14 @@ column is from memory: verify each against real output before building.
 | 12 | Doxygen | doxygen2docset | tagfile (XML, `GENERATE_TAGFILE`) or XML output | high |
 | 13 | any HTML | Dashing, dash-docset-builder | CSS selector -> entry type config (Dashing's `dashing.json`) | high (fallback) |
 
-- [ ] 8.1 `objects.inv` importer (Sphinx, PyDoctor, MkDocs +
-      mkdocstrings all write it). New skill `docshelf-build`: design
-      approved (the user, 2026-11-21) in
-      `docs/superpowers/specs/2026-11-21-docshelf-build-design.md` on
-      `skill/docshelf-build` (draft PR #29); plus an `update/docshelf`
-      change so docshelf lists built docvols.
+- [x] 8.1 `objects.inv` importer: done 2026-11-21 as the `docshelf-build`
+      skill 0.1.0 (#29) plus docshelf 0.9.0 (#30). Deferred minors from
+      its final review: robots.txt 5xx/network counts as allow-all and
+      `objects.inv` is not checked against robots.txt; the final file
+      swap is not Ctrl-C-safe; `build docs` in a folder with `docs/` is
+      taken as a SOURCE; docshelf `remove` cannot remove a damaged built
+      docvol; `install` of a built name from the project list prints the
+      "installed" note.
 - [ ] 8.2 Generic HTML importer driven by CSS selectors, Dashing-style;
       maybe read existing `dashing.json` files.
 - [ ] 8.3 Javadoc search indexes.
