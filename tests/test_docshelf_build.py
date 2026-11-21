@@ -21,7 +21,8 @@ sys.path.insert(0, os.path.join(SKILL, "scripts"))
 
 import build_core  # noqa: E402
 from build_core import CLIError  # noqa: E402
-from build_inventory import parse_inventory, page_key, split_uri  # noqa: E402
+from build_inventory import InvEntry, parse_inventory, page_key, split_uri  # noqa: E402
+from build_plan import load_plan, make_plan, save_plan, summarize  # noqa: E402
 
 
 def make_inv(entries: List[Tuple[str, str, str, str, str]], project: str = "Demo",
@@ -73,6 +74,108 @@ class InventoryTests(unittest.TestCase):
 
     def test_version_constant(self):
         self.assertRegex(build_core.VERSION, r"^\d+\.\d+\.\d+$")
+
+
+SRC = "https://x.io/docs/"
+HDR = {"project": "Demo", "version": "1.0"}
+
+
+def inv(*rows):
+    """InvEntry list from (name, role, uri, dispname) rows."""
+    return [InvEntry(n, r, 1, u, d) for n, r, u, d in rows]
+
+
+ENTRIES = inv(("index", "std:doc", "index.html", "Demo"),
+              ("opt", "cmd:cmd", "cmd/opt.html#opt", "-"),
+              ("cmd/opt", "std:doc", "cmd/opt.html", "opt - optimize"),
+              ("guide/index", "std:doc", "guide/index.html", "Guides"),
+              ("guide/a", "std:doc", "guide/a.html", "Guide A"),
+              ("guide-a-sec", "std:label", "guide/a.html#sec", "A section"),
+              ("guide/b", "std:doc", "guide/b.html", "Guide B"))
+STD_ONLY_ENTRIES = [e for e in ENTRIES if e.role.startswith("std:")]
+
+
+class PlanTests(unittest.TestCase):
+    def test_role_rule(self):
+        p = make_plan(SRC, "h", HDR, ENTRIES, [])
+        self.assertEqual(p["format"], 1)
+        self.assertEqual(p["pages"]["cmd/opt"]["keep"], "full")
+        self.assertEqual(p["pages"]["cmd/opt"]["why"], "roles: cmd:cmd")
+        self.assertEqual(p["pages"]["cmd/opt"]["uri"], "cmd/opt.html")
+        self.assertEqual(p["pages"]["guide/a"]["keep"], "stub")
+        self.assertEqual(p["pages"]["guide/a"]["why"], "roles: std only")
+        self.assertIsNone(p["pages"]["guide/a"]["description"])
+
+    def test_overrides_last_wins_and_append(self):
+        p = make_plan(SRC, "h", HDR, ENTRIES, [("full", "guide/*")])
+        p = make_plan(SRC, "h", HDR, ENTRIES, [("stub", "guide/a")], old=p)
+        self.assertEqual(p["overrides"], [["full", "guide/*"], ["stub", "guide/a"]])
+        self.assertEqual(p["pages"]["guide/a"]["keep"], "stub")
+        self.assertEqual(p["pages"]["guide/b"]["keep"], "full")
+        self.assertEqual(p["pages"]["guide/b"]["why"], "override: guide/*")
+
+    def test_all_and_reset(self):
+        p = make_plan(SRC, "h", HDR, ENTRIES, [("full", "*")])
+        self.assertTrue(all(v["keep"] == "full" for v in p["pages"].values()))
+        p = make_plan(SRC, "h", HDR, ENTRIES, [], old=p, reset=True)
+        self.assertEqual(p["overrides"], [])
+        self.assertEqual(p["pages"]["guide/a"]["keep"], "stub")
+
+    def test_manual_beats_override_and_survives(self):
+        p = make_plan(SRC, "h", HDR, ENTRIES, [])
+        p["pages"]["guide/a"].update(keep="full", why="manual")
+        p = make_plan(SRC, "h2", HDR, ENTRIES, [("stub", "guide/*")], old=p)
+        self.assertEqual(p["pages"]["guide/a"]["keep"], "full")
+        self.assertEqual(p["pages"]["guide/a"]["why"], "manual")
+        self.assertEqual(p["inventory_sha256"], "h2")
+
+    def test_inventory_change_adds_and_drops(self):
+        old = make_plan(SRC, "h", HDR, ENTRIES, [])
+        old["pages"]["guide/a"].update(keep="full", why="manual")
+        new_entries = [e for e in ENTRIES if not e.uri.startswith("guide/a")] + \
+            inv(("c", "cmd:cmd", "cmd/c.html#c", "-"))
+        p = make_plan(SRC, "h2", HDR, new_entries, [], old=old)
+        self.assertNotIn("guide/a", p["pages"])
+        self.assertEqual(p["pages"]["cmd/c"]["keep"], "full")
+        lines = summarize(p, old)
+        self.assertTrue(any("added 1" in l and "cmd/c" in l for l in lines), lines)
+        self.assertTrue(any("dropped 1" in l and "guide/a" in l for l in lines), lines)
+
+    def test_titles_and_sections(self):
+        p = make_plan(SRC, "h", HDR, ENTRIES, [])
+        self.assertEqual(p["pages"]["guide/a"]["title"], "Guide A")
+        self.assertEqual(p["pages"]["guide/a"]["section"], "Guides")
+        self.assertEqual(p["pages"]["cmd/opt"]["section"], "cmd")
+        self.assertIsNone(p["pages"]["index"]["section"])
+
+    def test_summary_counts(self):
+        p = make_plan(SRC, "h", HDR, ENTRIES, [])
+        text = "\n".join(summarize(p, None))
+        self.assertIn("1 full, 4 stub", text)
+        self.assertIn("7 entries", text)
+
+    def test_all_stub_warning(self):
+        lines = summarize(make_plan(SRC, "h", HDR, STD_ONLY_ENTRIES, []), None)
+        self.assertTrue(any("no page has a domain role" in l and "--full 'guide/*'" in l
+                            for l in lines), lines)
+
+    def test_base_url(self):
+        self.assertEqual(make_plan(SRC, "h", HDR, ENTRIES, [])["base_url"], SRC)
+        with tempfile.TemporaryDirectory() as d:
+            p = make_plan(d, "h", HDR, ENTRIES, [])
+            self.assertIsNone(p["base_url"])
+            p = make_plan(d, "h", HDR, ENTRIES, [], old=p, base_url="https://y.org/")
+            self.assertEqual(p["base_url"], "https://y.org/")
+            p = make_plan(d, "h", HDR, ENTRIES, [], old=p)
+            self.assertEqual(p["base_url"], "https://y.org/")
+
+    def test_save_and_load(self):
+        p = make_plan(SRC, "h", HDR, ENTRIES, [("full", "guide/*")])
+        with tempfile.TemporaryDirectory() as d:
+            path = os.path.join(d, "sub", "demo.json")
+            save_plan(path, p)
+            self.assertEqual(load_plan(path), p)
+            self.assertEqual(os.listdir(os.path.dirname(path)), ["demo.json"])
 
 
 if __name__ == "__main__":
