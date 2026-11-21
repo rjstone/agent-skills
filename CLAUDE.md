@@ -75,3 +75,10 @@ with a cloud container: archive it to `docs/plans/` before the session ends.
 - On the web, when the egress proxy injects a host's real credentials, set
   the key variables a client needs to a placeholder (e.g. `proxy-injected`);
   never ask for or write in a real value.
+
+## Claude Code on the web: injected credentials
+
+- The egress proxy adds stored credentials to every request to an injected
+  host (e.g. opencode.ai), so a "no key" curl from the container runs as the
+  user's account. Don't use it to test anonymous access, and don't print or
+  commit the responses: they can hold workspace ids (2026-11-21).

@@ -255,6 +255,23 @@ metadata:
   tools (the user, 2026-11-18). Bind sources must be readable by the
   sandbox user (a root-only scratch folder is not).
 
+## Testing skills with small models
+
+- Run each model as `opencode run --standalone --archived --auto --format json`
+  in the `sandboxing` skill's sandbox, with a copy of the skill in
+  `/work/.claude/skills/<name>/` (opencode v2 finds it there) and placeholder
+  keys. Grade from the tool calls in the JSON events, not from the model's own
+  list of files it opened, which is often wrong (2026-11-21).
+- A provider that isn't built in goes in `/work/.config/opencode/opencode.json`
+  under `providers`: `{"name", "package": "aisdk:@ai-sdk/openai-compatible",
+  "env": ["<KEY_VAR>"], "settings": {"baseURL"}, "models": {"<id>": {}}}`
+  (schema: https://opencode.ai/config.json).
+- OpenRouter `:free` models hit HTTP 429 under parallel runs; use a paid route
+  for the same model (e.g. Nous) before counting a failure (2026-11-21).
+- Bandit's code-scanning check flags findings in new files as new alerts even
+  when a copy elsewhere already has them (e.g. `hashlib.md5`, `urlopen`):
+  fix them in the new file rather than relying on the old copy (2026-11-21).
+
 ## Decisions (the user, 2026-11-08)
 
 - **Formats:** ship for skills.sh (`npx skills add rjstone/agent-skills`) first.
