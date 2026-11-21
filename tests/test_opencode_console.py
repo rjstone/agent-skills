@@ -51,7 +51,7 @@ def fake(url, etag):
     if url == rr.INDEX_URL:
         return 200, INDEX, None
     body = PAGES[url]
-    tag = '"%s"' % hashlib.md5(body.encode()).hexdigest()
+    tag = '"%s"' % hashlib.sha256(body.encode()).hexdigest()
     return (304, None, etag) if etag == tag else (200, body, tag)
 
 

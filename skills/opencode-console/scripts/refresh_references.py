@@ -65,14 +65,14 @@ def normalize(text):
     return text.replace("\r\n", "\n").replace("\r", "\n")
 
 
-PRICE_TOKEN = "[check-api]"
+PRICE_PLACEHOLDER = "[check-api]"
 # "$2.50", "$1,000", "$0.042": a "$" right before a digit. A bare "$0" is a
 # setting (a $0 budget blocks spend), not a price, so it stays; "$0.10" goes.
 PRICE_RE = re.compile(r"\$(?!0(?![.,]?\d))\d[\d,]*(?:\.\d+)?")
 
 
 def redact_prices(text):
-    return PRICE_RE.sub(PRICE_TOKEN, text)
+    return PRICE_RE.sub(PRICE_PLACEHOLDER, text)
 
 
 def sha256(text):
@@ -100,11 +100,13 @@ def errata_ids(errata_text):
 
 def http_fetch(url, etag):
     """(status, body, etag) for a GET; status is 200 or 304."""
+    if not url.startswith("https://"):
+        raise FetchError(url, "only https:// URLs are fetched")
     headers = {"User-Agent": USER_AGENT}
     if etag:
         headers["If-None-Match"] = etag
     try:
-        with urllib.request.urlopen(urllib.request.Request(url, headers=headers), timeout=30) as r:
+        with urllib.request.urlopen(urllib.request.Request(url, headers=headers), timeout=30) as r:  # nosec B310 - https only, checked above
             return r.status, r.read().decode("utf-8"), r.headers.get("ETag")
     except urllib.error.HTTPError as e:
         if e.code == 304:
