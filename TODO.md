@@ -149,10 +149,27 @@ column is from memory: verify each against real output before building.
       A heavy, optional dependency (Playwright + Chromium) against the
       stdlib-only policy: keep it outside docshelf's core (a separate
       fetch step whose output docshelf imports) (the user, 2026-11-21).
-- [ ] 8.9 llms.txt sites (Mintlify, Astro Starlight, ...): page list plus
-      Markdown pages, no crawling. Seen 2026-11-21: opencode.ai has
-      `llms.txt`, `llms-full.txt` and a `.md` per page; docs.langchain.com
-      has an `llms.txt` tree of `/_llms/*.txt` indexes (about 1,800 pages).
+- [x] 8.9 llms.txt sites: docshelf-build 0.2.0 (every listed page kept in
+      full, page cache, per-page `signals`). Live trial 2026-11-21:
+      opencode.ai 90 pages (88 built, 2 social links on other hosts
+      failed), docs.langchain.com 1,407 pages in a 4-level tree, its
+      `build/python.txt` sub-index 240/240 built.
+- [ ] 8.11 Reference-vs-guide classifier for built docvols (both kinds): a
+      separate step that reads `pages.<key>.signals` (and the cached raw
+      pages) and writes `keep` and `why: "model:<id>"` into the plan, which
+      re-planning keeps. Options: cheap thresholds, an embedding classifier
+      trained on Sphinx-built role labels, or a decision model. Signal
+      spread from the 0.2.0 trial (min / median / max): opencode `words`
+      138 / 676 / 22480, `code_ratio` 0 / 0.26 / 0.72, `you_per_1k`
+      0 / 7.1 / 57.5; LangChain Python `words` 157 / 1274 / 16478,
+      `code_ratio` 0 / 0.33 / 0.90, `you_per_1k` 0.5 / 8.5 / 45.2,
+      `signature_lines` 0 / 9 / 236 (the user, 2026-11-21).
+- [ ] 8.12 docshelf-build llms.txt follow-ups (0.2.0 reviews and trial):
+      links to other hosts (discord.gg, x.com) are planned as pages and
+      fail; `humans.txt` is followed as a sub-index (0 pages); `.md` retry
+      URL ignores a query string; blockquote lazy continuation and a few
+      MDX tag heuristics (prefix match on `</Name`, list-continuation
+      indented code); duplicated meta/types code in `build_docvol.py`.
 - [ ] 8.10 Finding Sphinx docs for a library: the best way to search for
       a project's `objects.inv` site. Ideas: hosting domains with a search
       API (Read the Docs), or a list of docs-hosting domains to restrict a
