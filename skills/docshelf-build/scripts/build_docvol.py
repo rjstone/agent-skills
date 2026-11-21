@@ -9,7 +9,7 @@ import time
 import urllib.parse
 from typing import Dict, List
 
-from build_core import NAME_RE, CLIError, built_dir
+from build_core import DOCVOL_FORMAT, NAME_RE, CLIError, built_dir
 from build_html import STUB_CLASS, main_content, rewrite_links, stub_html
 from build_inventory import InvEntry, page_key, split_uri
 
@@ -133,7 +133,7 @@ def write_docvol(cache: str, name: str, plan: dict, entries: List[InvEntry],
             "mtime": int(now),
             "installedAt": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(now)),
             "alias": None, "entry_count": len(index["entries"]),
-            "origin": "docshelf-build", "source": plan["source"],
+            "origin": "docshelf-build", "format": DOCVOL_FORMAT, "source": plan["source"],
             "inventory_sha256": plan["inventory_sha256"], "reused": sorted(reused)}
     data = {"index.json": index, "db.json": db, "meta.json": meta}
     created = not os.path.isdir(folder)

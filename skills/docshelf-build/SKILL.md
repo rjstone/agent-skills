@@ -58,8 +58,10 @@ the groups you need with `--full`, or the docvol is stubs only.
 
 Under docshelf's cache (`DOCSHELF_CACHE_DIR`, else `~/.cache/docshelf`, on
 Windows `%LOCALAPPDATA%\docshelf\cache`): the docvol in `built/NAME/`, the
-plan in `built-plans/NAME.json`. In the plan, setting a page's `"keep"` and
-`"why": "manual"` pins it across re-plans. `list` shows built and planned
+plan in `built-plans/NAME.json`. The docvol's `meta.json` carries
+`"format": 1`, the version of this layout that docshelf checks. In the
+plan, setting a page's `"keep"` and `"why": "manual"` pins it across
+re-plans. `list` shows built and planned
 docvols; `remove NAME` deletes a docvol and keeps its plan (`--plan` too).
 
 Exit codes: 2 usage or name, 3 not a Sphinx inventory, 4 network.

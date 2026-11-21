@@ -451,6 +451,8 @@ class DocvolTests(unittest.TestCase):
         self.assertEqual(meta, load(self.folder, "meta.json"))
         self.assertEqual(meta["mtime"], 1800000000)
         self.assertEqual(meta["origin"], "docshelf-build")
+        self.assertEqual(meta["format"], build_core.DOCVOL_FORMAT)
+        self.assertEqual(build_core.DOCVOL_FORMAT, 1)
         self.assertEqual(meta["slug"], "demo")
         self.assertEqual(meta["source"], SRC)
         self.assertEqual(meta["inventory_sha256"], "abc")

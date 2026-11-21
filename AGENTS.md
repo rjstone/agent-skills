@@ -253,9 +253,13 @@ metadata:
   DevDocs-shaped files to `<cache>/built/<name>/`, plan in
   `<cache>/built-plans/`; docshelf 0.9.0+ lists them as `built`. A separate
   skill so lookups can ignore it; the on-disk format is the contract with
-  docshelf (it cannot import docshelf). Agents want dense reference, not
-  tutorials (the user, 2026-11-21; spec and plan under
-  `docs/superpowers/`).
+  docshelf (it cannot import docshelf). The two skills are versioned apart
+  (no lockstep); the contract is `"format"` in a built docvol's `meta.json`
+  (`build_core.DOCVOL_FORMAT`, docshelf's `BUILT_FORMAT`), bumped only for
+  a change older docshelf cannot read, together with docshelf's reader
+  and docshelf-build's stated minimum docshelf (the user, 2026-11-21).
+  Agents want dense reference, not tutorials (the user, 2026-11-21; spec
+  and plan under `docs/superpowers/`).
 - `sandboxing` - run a nested agent CLI or test harness in a bubblewrap
   sandbox (Linux) that hides the caller's environment, processes and files:
   `scripts/sandbox.py` (`env -i` + bwrap `--clearenv`, `/work` as `HOME`,

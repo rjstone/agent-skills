@@ -4,6 +4,9 @@ import re
 import sys
 
 VERSION = "0.1.0"
+# the built-docvol format written to meta.json; docshelf reads formats up to
+# the one it knows. Bump it only for a change older docshelf cannot read.
+DOCVOL_FORMAT = 1
 # docshelf's own rule for docvol names (shelf_devdocs.SLUG_RE)
 NAME_RE = re.compile(r"^[a-z0-9][a-z0-9._~+-]*$", re.IGNORECASE)
 
