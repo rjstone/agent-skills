@@ -91,6 +91,10 @@ from memory.
 
 ## Part 2: acting for the user
 
+First run `npx @opencode/console status`: if the harness is already
+connected, skip setup, and check whether the Console MCP tools are already
+available before adding the server.
+
 Three ways in, best first:
 
 ### Console MCP server (manage the workspace)
@@ -114,6 +118,9 @@ Tools act on one workspace as the signed-in member; call `get_context` first.
 
 Model and provider changes reach every member within about a minute: confirm
 with the user before enabling, disabling or adding.
+
+The MCP has no tools for API keys, service accounts, budgets, billing,
+policies, or workspace skills and instructions: those need the Console UI.
 
 ### Console CLI (connect a harness, share files)
 
