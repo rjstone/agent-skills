@@ -9,10 +9,10 @@
       "url": "https://opencode.ai/docs/cli/acp/"
     },
     "commands.md": {
-      "etag": "\"25c7f5467fd4dd713e674154c2d74634\"",
-      "fetched": "2026-11-09",
+      "etag": "\"511207d5d5dcff78b7ae8349a93315db\"",
+      "fetched": "2026-11-21",
       "md_url": "https://opencode.ai/docs/cli/commands.md",
-      "sha256": "cdc54954aa6cd48a86fabce48209c6836dbf8f242111bd012348df26a236a6c8",
+      "sha256": "89892f15b1e7a6ad872858f91351fcc6a670189df9598779ed5b81dccfcd5d32",
       "url": "https://opencode.ai/docs/cli/commands/"
     },
     "config.md": {
@@ -23,10 +23,10 @@
       "url": "https://opencode.ai/docs/cli/config/"
     },
     "intro.md": {
-      "etag": "\"821c83cac9a384e74fff4c60028ad42e\"",
-      "fetched": "2026-11-09",
+      "etag": "\"44019e7e31d1f3600f569205ee46a10c\"",
+      "fetched": "2026-11-21",
       "md_url": "https://opencode.ai/docs/cli.md",
-      "sha256": "21eb6f9805f5f3c4e9f6b1a21e848c6dc134cc1de1b5826275a11248903aa58b",
+      "sha256": "7316377f3d5e50bf512bfa04b0788c5884dfdc73955de50eaef8ad34ab5aea48",
       "url": "https://opencode.ai/docs/cli/"
     },
     "keybinds.md": {
@@ -37,24 +37,24 @@
       "url": "https://opencode.ai/docs/cli/keybinds/"
     },
     "plugins.md": {
-      "etag": "\"419d0007ed4e919c104cfe91b39c6f19\"",
-      "fetched": "2026-11-09",
+      "etag": "\"f145bf06e77b75ce919e32e8a0e3604b\"",
+      "fetched": "2026-11-21",
       "md_url": "https://opencode.ai/docs/cli/plugins.md",
-      "sha256": "5a79f8dc7591f0862e1c1e6b6956f7e70a29577d008e4d02e88c3af88cd6df9f",
+      "sha256": "eac54ed4429d6dc78e35c38dde852246af8953df3487a468eafb95190f1352c5",
       "url": "https://opencode.ai/docs/cli/plugins/"
     },
     "providers.md": {
-      "etag": "\"f1f209bb89600f1d086549cc2964c860\"",
-      "fetched": "2026-11-09",
+      "etag": "\"442b94ecddcafdf857d6496a3fa39f84\"",
+      "fetched": "2026-11-21",
       "md_url": "https://opencode.ai/docs/cli/providers.md",
-      "sha256": "e8dd9e28796d78f03381c89c4dbf28a6a12863064781b77dbd93c32163a8b8f6",
+      "sha256": "707f85538e8a4961af8e481e1d6bc4f4d9d2b7d84a20b349d95c81c1d855bafd",
       "url": "https://opencode.ai/docs/cli/providers/"
     },
     "theme.md": {
-      "etag": "\"e9d08bc1f2ba7a43e8202aa63dd24185\"",
-      "fetched": "2026-11-09",
+      "etag": "\"c3879518de6aa70341c11866e546b277\"",
+      "fetched": "2026-11-21",
       "md_url": "https://opencode.ai/docs/cli/theme.md",
-      "sha256": "8c5b1b0b057d0e72af2b7b823bd5571d895f26ec1ef0e4171f3f2d979572c540",
+      "sha256": "41644e7e605f7bb64011ab9caed2d14179f15f08f009aea418c2f7a1ba6bb626",
       "url": "https://opencode.ai/docs/cli/theme/"
     },
     "tui.md": {

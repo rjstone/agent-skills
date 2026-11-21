@@ -1,4 +1,4 @@
-# Commands
+# CLI commands
 
 Every command accepts `--help` for its full flag list, for example `opencode run --help`. Some server-backed commands accept `--standalone` to run a private server or `--server <url>` to target a specific one; check the command's help for its supported flags.
 
