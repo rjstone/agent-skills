@@ -1,4 +1,4 @@
-# Intro
+# CLI intro
 
 Run the CLI in a project to open the full-screen terminal interface:
 

@@ -1,4 +1,4 @@
-# Theme
+# CLI theme
 
 OpenCode comes with many built-in themes for light and dark modes. Choose one in settings, or mix your own colors.
 
