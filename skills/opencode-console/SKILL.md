@@ -1,6 +1,6 @@
 ---
 name: opencode-console
-description: Use when setting up or administering an OpenCode Console workspace (members, roles, SSO, SCIM, budgets, billing, policies), connecting Claude Code, Codex, Hermes, Pi or another harness to Console models with npx @opencode/console, adding the Console MCP server, calling Console inference or model-list endpoints with an oc_sk_ API key, using OpenCode Go or OpenCode Models, or looking up a Console model's current price.
+description: Use when setting up or administering an OpenCode Console workspace (members, roles, SSO, SCIM, budgets, billing, policies, providers, models), connecting Claude Code, Codex, Hermes, Pi or another harness to Console with npx @opencode/console, using the Console MCP server or its tools, calling Console inference or model-list endpoints with an oc_sk_ API key, using OpenCode Go or OpenCode Models, or looking up a Console model's current price.
 compatibility: Refreshing references/ (scripts/refresh_references.py) and live price lookups need network access to opencode.ai; the cached docs work offline.
 license: MIT
 metadata:
@@ -14,26 +14,21 @@ metadata:
 ## Overview
 
 The OpenCode Console (https://opencode.ai/console) is opencode's hosted
-service: workspaces for teams, pay-as-you-go inference (OpenCode Models),
-the Go subscriptions, provider connections, budgets and policies. It is not
-the opencode CLI (see the `opencode-cli` skill) or the local server API
-(`opencode-api`). **Don't give Console URLs, commands or menu paths from
-memory:** older names (such as "Zen" URLs) are wrong now. Check
-`references/` first.
+service: workspaces for teams, pay-as-you-go inference (OpenCode Models), the
+Go subscriptions, provider connections, budgets and policies. It is not the
+opencode CLI (`opencode-cli` skill) or the local server API (`opencode-api`).
+**Don't give Console URLs, commands or menu paths from memory:** older names
+(such as "Zen" URLs) are wrong now.
 
-## Essentials
+Two kinds of request:
 
-- **Console CLI** (Node.js 22+): `npx @opencode/console setup <harness>`,
-  where `<harness>` is `claude-code`, `codex`, `hermes`, `pi` or
-  `deepseek-harness`. It opens the browser to sign in and pick the workspace,
-  then gives the harness the workspace's models, policies, MCP servers,
-  skills and instructions, and keeps them in sync. Add `--keep-provider`
-  to keep the harness's own sign-in and models (Claude Code, Codex, Hermes).
-- **Console MCP server:** `https://opencode.ai/console/mcp` (HTTP, OAuth with
-  dynamic client registration: sign in from the browser, no key). Claude Code:
-  `claude mcp add --transport http --scope user opencode-console https://opencode.ai/console/mcp`,
-  then `/mcp`, select it, sign in. Other harnesses: `references/harnesses-*.md`.
-  OpenCode itself adds it as `opencode_console` when the workspace enables it.
+- **The user wants to configure something themselves** (settings, keys,
+  endpoints, prices): Part 1.
+- **The user asks you to do something in the Console** (connect a harness,
+  read usage, enable models): Part 2.
+
+## Part 1: helping a user configure it
+
 - **Inference base URLs:** pay-as-you-go `https://opencode.ai/inference`,
   Go `https://opencode.ai/inference/go`. Append the API path:
   `/openai/v1/responses`, `/openai/v1/chat/completions`,
@@ -49,7 +44,7 @@ memory:** older names (such as "Zen" URLs) are wrong now. Check
   (OpenAI list shape; the public catalog without a key).
 - **OpenCode itself:** run `/connect` and choose the workspace.
 
-## Prices: `[check-api]`
+### Prices: `[check-api]`
 
 The refresh script replaces every dollar amount in `references/` (except a
 `$0` setting) with `[check-api]`, because prices change faster than the
@@ -73,7 +68,7 @@ cache. When you need one:
 Quote prices with the date you fetched them. Never fill in `[check-api]`
 from memory.
 
-## Which reference
+### Which reference
 
 | Task | Read |
 | --- | --- |
@@ -91,8 +86,49 @@ from memory.
 | Model list API, `cost` fields | `references/api-models.md` |
 | Inference requests, cost reporting | `references/api-inference.md` |
 | Calling connected providers (`/inference/custom/...`) | `references/api-providers.md` |
-| Console CLI, base URLs, Console MCP for any harness | `references/harnesses.md` |
+| Base URLs and setup for any harness | `references/harnesses.md` |
 | One harness by hand | `references/harnesses-claude-code.md`, `references/harnesses-codex.md`, `references/harnesses-hermes.md`, `references/harnesses-pi.md`, `references/harnesses-raycast.md` |
+
+## Part 2: acting for the user
+
+Three ways in, best first:
+
+### Console MCP server (manage the workspace)
+
+`https://opencode.ai/console/mcp`, HTTP, OAuth with dynamic client
+registration: the user signs in from the browser; API keys are refused.
+Claude Code:
+`claude mcp add --transport http --scope user opencode-console https://opencode.ai/console/mcp`,
+then `/mcp`, select it, sign in. Other harnesses: `references/harnesses.md`.
+OpenCode adds it as `opencode_console` when the workspace enables it.
+
+Tools act on one workspace as the signed-in member; call `get_context` first.
+
+| Area | Tools |
+| --- | --- |
+| Who and where | `get_context` |
+| Usage and spend | `get_usage` (yours, plus your spend limits), `get_member_usage` (`user_id`, range `24h`/`7d`/`30d`/`all`) |
+| Members | `list_members` (search, 100 per page) |
+| Providers | `list_providers`, `create_provider` (custom HTTP provider: `oa-compat`, `openai`, `anthropic`, `google`) |
+| Models | `list_models`, `set_model_enabled`, `set_models_enabled` (bulk), `create_model`, `update_model` (name, limits, capabilities, `cost_tiers`) |
+
+Model and provider changes reach every member within about a minute: confirm
+with the user before enabling, disabling or adding.
+
+### Console CLI (connect a harness, share files)
+
+`npx @opencode/console setup <claude-code|codex|pi|deepseek-harness|hermes>`
+(browser sign-in, Node.js 22+; `--keep-provider` keeps the harness's own
+models) gives that harness the workspace's models, policies, MCP servers,
+skills and instructions. Also: `status`, `--remove`, `artifact
+share|list|pull|delete`, `update`, event watches, `OPENCODE_API_KEY` for CI.
+Commands, flags, files written and no-Node installers: **`CLI.md`**.
+
+### HTTP API with a key (no MCP available)
+
+For headless or CI use with a service account key: the documented endpoints
+and the CLI's undocumented wire contract (`@opencode/console/contract`) are
+in **`API.md`**. Members and usage have no documented REST endpoints.
 
 ## Common mistakes
 
@@ -106,4 +142,6 @@ from memory.
 `python scripts/refresh_references.py` re-downloads changed pages from the
 "## Console" section of https://opencode.ai/docs/llms.txt (`--check`,
 `--force`, `--prune`). Never hand-edit `references/`: a test compares each
-file with its hash in `references/manifest.json`.
+file with its hash in `references/manifest.json`. `CLI.md` (from the npm
+package README) and `API.md` (from the package's `types/`) are ours: re-check
+them when `@opencode/console` changes.

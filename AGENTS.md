@@ -228,7 +228,12 @@ metadata:
   API keys, inference endpoints, the `npx @opencode/console` CLI, the Console
   MCP server, harness setup) cached like `opencode-cli`, with every dollar
   amount except `$0` replaced by `[check-api]` at download; `SKILL.md` says
-  how to look prices up live (the user, 2026-11-21).
+  how to look prices up live (the user, 2026-11-21). `SKILL.md` has two
+  parts: configuring it yourself, and acting for the user (Console MCP tools,
+  CLI, API). Our own `CLI.md` (from the `@opencode/console` npm README) and
+  `API.md` (from its `types/`) sit beside `SKILL.md`, not in `references/`
+  (the user, 2026-11-21). The safety scan allows `help@anoma.ly` (vendor
+  support address in those docs).
 - `docshelf` - DevDocs documentation and read-only Dash/Zeal docsets
   offline: `search`, `show`, `toc`, `types`, `fts`, `suggest`, per-docvol
   notes, and `sources` / `install` / `update` fetching from devdocs.io
