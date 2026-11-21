@@ -126,7 +126,11 @@ column is from memory: verify each against real output before building.
 | 13 | any HTML | Dashing, dash-docset-builder | CSS selector -> entry type config (Dashing's `dashing.json`) | high (fallback) |
 
 - [ ] 8.1 `objects.inv` importer (Sphinx, PyDoctor, MkDocs +
-      mkdocstrings all write it). Spec in progress on `update/docshelf`.
+      mkdocstrings all write it). New skill `docshelf-build`: design
+      approved (the user, 2026-11-21) in
+      `docs/superpowers/specs/2026-11-21-docshelf-build-design.md` on
+      `skill/docshelf-build` (draft PR #29); plus an `update/docshelf`
+      change so docshelf lists built docvols.
 - [ ] 8.2 Generic HTML importer driven by CSS selectors, Dashing-style;
       maybe read existing `dashing.json` files.
 - [ ] 8.3 Javadoc search indexes.
@@ -143,6 +147,16 @@ column is from memory: verify each against real output before building.
       A heavy, optional dependency (Playwright + Chromium) against the
       stdlib-only policy: keep it outside docshelf's core (a separate
       fetch step whose output docshelf imports) (the user, 2026-11-21).
+- [ ] 8.9 llms.txt sites (Mintlify, Astro Starlight, ...): page list plus
+      Markdown pages, no crawling. Seen 2026-11-21: opencode.ai has
+      `llms.txt`, `llms-full.txt` and a `.md` per page; docs.langchain.com
+      has an `llms.txt` tree of `/_llms/*.txt` indexes (about 1,800 pages).
+- [ ] 8.10 Finding Sphinx docs for a library: the best way to search for
+      a project's `objects.inv` site. Ideas: hosting domains with a search
+      API (Read the Docs), or a list of docs-hosting domains to restrict a
+      general web search to (`readthedocs.io`, `github.io`, ...); maybe
+      PyPI `project_urls` "Documentation" (the user, 2026-11-21, PR #29
+      review).
 - Ignore Dash-only extras: `dashtoc`, playground URLs, docset feeds
   (`dash-feed://`), per-docset JavaScript and full-text-search switches.
 
