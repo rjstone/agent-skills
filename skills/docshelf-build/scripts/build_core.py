@@ -3,7 +3,7 @@ import os
 import re
 import sys
 
-VERSION = "0.1.0"
+VERSION = "0.2.0"
 # the built-docvol format written to meta.json; docshelf reads formats up to
 # the one it knows. Bump it only for a change older docshelf cannot read.
 DOCVOL_FORMAT = 1

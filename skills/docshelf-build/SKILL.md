@@ -1,12 +1,12 @@
 ---
 name: docshelf-build
-description: Use when documentation you need offline is not on DevDocs or in Dash/Zeal but its site publishes a Sphinx objects.inv (Sphinx, PyDoctor, MkDocs with mkdocstrings), to build a trimmed docshelf docvol from it.
+description: Use when documentation you need offline is not on DevDocs or in Dash/Zeal but its site publishes a Sphinx objects.inv (Sphinx, PyDoctor, MkDocs with mkdocstrings) or an llms.txt page list (Mintlify, Starlight and others), to build a trimmed docshelf docvol from it.
 compatibility: Network access to fetch from a docs site; pairs with the docshelf skill.
 license: MIT
 metadata:
   author: Robert Stone
   source: https://github.com/rjstone/agent-skills
-  version: "0.1.0"
+  version: "0.2.0"
 ---
 
 # docshelf-build
@@ -56,6 +56,28 @@ get the rule and overrides and gone pages are dropped.
 
 A warning that no page has a domain role means the site is all prose: keep
 the groups you need with `--full`, or the docvol is stubs only.
+
+## llms.txt sites
+
+For a site that publishes `llms.txt` (a Markdown list of page links; Mintlify,
+Starlight and others), SOURCE is the `llms.txt` URL (a sub-index URL, or a
+local `.txt` file, also works). Every listed page is kept in full; nothing
+becomes a stub unless you ask (`--stub PAT`). Sub-indexes on the same host
+are followed three levels deep.
+
+- `plan` prints the index tree and page counts. For a large site (over 300
+  full pages warns) narrow before building: plan a sub-index as SOURCE
+  with its own `--name`, or add `--stub 'group/*'`. `--base-url` is for
+  Sphinx only.
+- `build` downloads pages into a page cache (`built-src/NAME` in the docshelf
+  cache) and reuses it; `build NAME --refetch` downloads them again. A page
+  that fails keeps its cached copy and records `fetch_error` in the plan.
+  `remove NAME` deletes the cache too.
+- If the index changed, `build` re-plans and prints what was added and dropped.
+- Each page's plan entry holds `signals` (counts such as code and signature
+  lines) for a later reference-vs-tutorial classifier; a choice written as
+  `"why": "model:<id>"` (with its `keep` and `description`) survives
+  re-planning.
 
 ## Files
 

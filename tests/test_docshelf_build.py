@@ -901,6 +901,158 @@ FLAT_INDEX = """\ufeff# OpenCode\r
 """
 
 
+OC_INDEX = ("# OpenCode\n## Docs\n- [Build](https://x.io/docs/build.md): build agents\n"
+            "- [Run](https://x.io/docs/run)\n## Optional\n- [Pricing](https://x.io/pricing.md)\n")
+BUILD_MD = ("---\ntitle: Build\n---\nimport X from 'x'\n# Build\n\n<Note>Read [run](/docs/run).</Note>"
+            "\n\n## Options\n\n```bash\nopencode run\n--model NAME\n```\n")
+# signature_lines == 1 (the "--model" line)
+
+
+class LlmsCliTests(unittest.TestCase):
+    def setUp(self):
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        self.tmp = os.path.realpath(tmp.name)
+        self.cache = os.path.join(self.tmp, "cache")
+        self.env = {"HOME": self.tmp, "DOCSHELF_CACHE_DIR": self.cache}
+        self.site = {
+            "https://x.io/llms.txt": (200, OC_INDEX.encode()),
+            "https://x.io/docs/build.md": (200, BUILD_MD.encode()),
+            "https://x.io/docs/run": (200, b"<!doctype html><html><body>shell</body></html>"),
+            "https://x.io/docs/run.md": (200, b"# Run\n\nRun it.\n"),
+            "https://x.io/pricing.md": (200, b"# Pricing\n\nFree.\n"),
+        }
+        self.urls = []
+        self.plan_path = os.path.join(self.cache, "built-plans", "opencode.json")
+        self.docvol = os.path.join(self.cache, "built", "opencode")
+
+    def opener(self, url):
+        self.urls.append(url)
+        if url.endswith("/robots.txt"):
+            return 404, b""
+        return self.site.get(url, (404, b""))
+
+    def run_main(self, *argv):
+        out, err = io.StringIO(), io.StringIO()
+        with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
+            code = docshelf_build.main(list(argv), env=self.env, opener=self.opener,
+                                       sleep=lambda s: None)
+        return code, out.getvalue(), err.getvalue()
+
+    def fetched_urls(self):
+        return [u for u in self.urls if not u.endswith("robots.txt")]
+
+    def test_plan_then_build_then_warm_rebuild(self):
+        code, out, _ = self.run_main("plan", "https://x.io/llms.txt")
+        self.assertEqual(code, 0)
+        self.assertIn("OpenCode: 3 pages: 3 full, 0 stub", out)
+        self.assertIn("  llms.txt (3)", out)
+        code, out, _ = self.run_main("build", "opencode")
+        self.assertEqual(code, 0, out)
+        self.assertIn("built opencode: 3 full, 0 stub, 0 failed", out)
+        plan = load_plan(self.plan_path)
+        self.assertEqual(plan["pages"]["docs/build"]["signals"]["signature_lines"], 1)
+        self.assertIn("fetched", plan["pages"]["docs/run"])
+        self.assertTrue(os.path.isfile(os.path.join(self.cache, "built-src", "opencode",
+                                                    "docs", "run.md")))
+        self.urls.clear()
+        self.assertEqual(self.run_main("build", "opencode")[0], 0)
+        self.assertEqual(self.fetched_urls(), ["https://x.io/llms.txt"])
+
+    def test_build_from_source_in_one_step(self):
+        code, out, _ = self.run_main("build", "https://x.io/llms.txt")
+        self.assertEqual(code, 0, out)
+        self.assertTrue(os.path.isfile(os.path.join(self.docvol, "db.json")))
+
+    def test_front_matter_fills_empty_description(self):
+        self.run_main("build", "https://x.io/llms.txt")
+        plan = load_plan(self.plan_path)
+        self.assertEqual(plan["pages"]["docs/build"]["description"], "build agents")
+        self.site["https://x.io/llms.txt"] = (
+            200, b"# OpenCode\n## Docs\n- [Build](https://x.io/docs/build.md)\n")
+        self.site["https://x.io/docs/build.md"] = (
+            200, b"---\ntitle: Build\ndescription: from front matter\n---\n# Build\n")
+        self.run_main("plan", "https://x.io/llms.txt", "--reset")
+        self.run_main("build", "opencode", "--refetch")
+        self.assertEqual(load_plan(self.plan_path)["pages"]["docs/build"]["description"],
+                         "from front matter")
+
+    def test_md_retry_through_cli(self):
+        self.run_main("build", "https://x.io/llms.txt")
+        self.assertIn("https://x.io/docs/run.md", self.urls)
+        cached = os.path.join(self.cache, "built-src", "opencode", "docs", "run.md")
+        with open(cached, encoding="utf-8") as f:
+            self.assertIn("Run it.", f.read())
+        self.assertFalse(os.path.exists(cached[:-3] + ".html"))
+
+    def test_index_change_replans(self):
+        self.run_main("build", "https://x.io/llms.txt")
+        self.site["https://x.io/llms.txt"] = (
+            200, (OC_INDEX + "- [New](https://x.io/docs/new.md)\n").encode())
+        self.site["https://x.io/docs/new.md"] = (200, b"# New\n\nNew page.\n")
+        code, out, _ = self.run_main("build", "opencode")
+        self.assertEqual(code, 0, out)
+        self.assertIn("the index changed", out)
+        self.assertIn("added 1 page: docs/new", out)
+        self.assertIn("docs/new", load_plan(self.plan_path)["pages"])
+
+    def test_subindex_source_same_keys(self):
+        self.site["https://x.io/llms.txt"] = (
+            200, b"# OpenCode\n## Docs\n- [Build](https://x.io/docs/build.md)\n"
+                 b"- [Python](https://x.io/_llms/py.txt)\n")
+        self.site["https://x.io/_llms/py.txt"] = (
+            200, b"# Python\n## API\n- [Build](https://x.io/docs/build.md)\n"
+                 b"- [Client](https://x.io/py/client.md)\n")
+        self.assertEqual(self.run_main("plan", "https://x.io/llms.txt")[0], 0)
+        code, _, err = self.run_main("plan", "https://x.io/_llms/py.txt", "--name", "py")
+        self.assertEqual(code, 0, err)
+        root = load_plan(self.plan_path)["pages"]
+        sub = load_plan(os.path.join(self.cache, "built-plans", "py.json"))["pages"]
+        self.assertEqual(set(root), {"docs/build", "py/client"})
+        self.assertEqual(set(sub), {"docs/build", "py/client"})
+
+    def test_failed_page_records_error_keeps_copy(self):
+        self.run_main("build", "https://x.io/llms.txt")
+        self.site["https://x.io/docs/run.md"] = (500, b"")
+        self.site["https://x.io/docs/run"] = (500, b"")
+        code, out, _ = self.run_main("build", "opencode", "--refetch")
+        self.assertEqual(code, 0, out)
+        self.assertEqual(load_plan(self.plan_path)["pages"]["docs/run"]["fetch_error"], "HTTP 500")
+        self.assertIn("1 failed", out)
+        self.assertIn("Run it.", load(self.docvol, "db.json")["docs/run"])
+
+    def test_base_url_rejected(self):
+        code, _, err = self.run_main("plan", "https://x.io/llms.txt", "--base-url", "https://x.io/")
+        self.assertEqual(code, 2)
+        self.assertIn("--base-url", err)
+
+    def test_not_an_index(self):
+        self.site["https://x.io/llms.txt"] = (200, b"<!doctype html><html><body>nope</body></html>")
+        code, _, err = self.run_main("plan", "https://x.io/llms.txt")
+        self.assertEqual(code, 3, err)
+        self.assertFalse(os.path.exists(self.plan_path))
+
+    def test_remove_deletes_page_cache(self):
+        self.run_main("build", "https://x.io/llms.txt")
+        pages = os.path.join(self.cache, "built-src", "opencode")
+        self.assertTrue(os.path.isdir(pages))
+        code, out, _ = self.run_main("remove", "opencode")
+        self.assertEqual(code, 0)
+        self.assertIn("page cache", out)
+        self.assertFalse(os.path.exists(pages))
+        self.assertFalse(os.path.exists(self.docvol))
+        self.assertTrue(os.path.isfile(self.plan_path))
+
+    def test_version(self):
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out):
+            self.assertEqual(docshelf_build.main(["--version"]), 0)
+        self.assertIn(build_core.VERSION, out.getvalue())
+        skill = os.path.join(SKILL, "SKILL.md")
+        with open(skill, encoding="utf-8") as f:
+            self.assertIn('version: "%s"' % build_core.VERSION, f.read())
+
+
 class LlmsIndexTests(unittest.TestCase):
     def test_parse_flat_index(self):
         title, links = parse_index(FLAT_INDEX, "https://x.io/llms.txt")
