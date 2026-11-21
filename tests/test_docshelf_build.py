@@ -6,7 +6,7 @@ import contextlib
 import io
 import json
 import os
-import subprocess
+import subprocess  # nosec B404 - runs this repo's own scripts, fixed argv, no shell
 import sys
 import tempfile
 import unittest
