@@ -33,6 +33,12 @@ What setup writes:
 | DeepSeek Harness | plugin in `~/.dsh/cordis.patch.yml` (or `DSH_HOME`); workspace models replace your providers | restart running `dsh` |
 | Hermes Agent (0.22.6+) | `~/.hermes/config.yaml` (or `HERMES_HOME`, `--profile <name>`), `plugins/opencode-console`, instructions in `SOUL.md` | `hermes gateway restart` |
 
+`--keep-provider` leaves the harness's own sign-in, models and default
+provider alone: setup still writes the files above, but only to add the
+workspace's policies, MCP servers, skills and instructions. (The by-hand
+steps in `references/harnesses-codex.md` and the other harness pages are the
+opposite: they make Console the default provider.)
+
 With `--keep-provider`, Claude Code and Codex report token counts and model
 (never prompts or code) so the workspace counts the usage at $0; Hermes reports
 nothing.

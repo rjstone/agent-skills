@@ -41,7 +41,9 @@ Two kinds of request:
 - **Model lists:** `GET https://opencode.ai/console/api/v1/models` (key
   required; everything the workspace can use, connected providers included),
   `https://opencode.ai/inference/v1/models` and `.../inference/go/v1/models`
-  (OpenAI list shape; the public catalog without a key).
+  (OpenAI list shape; the public catalog without a key). Only the Console
+  list shows what the workspace has enabled: it leaves out disabled models
+  (there is no `enabled` field). The public lists are the whole catalog.
 - **OpenCode itself:** run `/connect` and choose the workspace.
 
 ### Prices: `[check-api]`
@@ -51,7 +53,8 @@ The refresh script replaces every dollar amount in `references/` (except a
 cache. When you need one:
 
 - **Per-token model prices:** read `cost` from the live model list (US
-  dollars per 1M tokens; `0` = free). No key needed:
+  dollars per 1M tokens; `0` = free). **No key needed; don't ask the user
+  for one** - run this yourself:
 
   ```bash
   curl -s https://opencode.ai/inference/v1/models \
@@ -127,10 +130,13 @@ policies, or workspace skills and instructions: those need the Console UI.
 
 `npx @opencode/console setup <claude-code|codex|pi|deepseek-harness|hermes>`
 (browser sign-in, Node.js 22+; `--keep-provider` keeps the harness's own
-models) gives that harness the workspace's models, policies, MCP servers,
+sign-in, models and default provider) gives that harness the workspace's models, policies, MCP servers,
 skills and instructions. Also: `status`, `--remove`, `artifact
 share|list|pull|delete`, `update`, event watches, `OPENCODE_API_KEY` for CI.
-Commands, flags, files written and no-Node installers: **`CLI.md`**.
+Commands, flags, files written and no-Node installers: **`CLI.md`**. The
+by-hand steps in `references/harnesses-*.md` are a different route: they
+make Console the harness's default provider, the opposite of
+`--keep-provider`.
 
 ### HTTP API with a key (no MCP available)
 
