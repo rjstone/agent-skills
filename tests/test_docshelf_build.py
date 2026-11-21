@@ -29,7 +29,7 @@ sys.path.insert(0, os.path.join(SKILL, "scripts"))
 import build_core  # noqa: E402
 from build_core import CLIError  # noqa: E402
 from build_inventory import InvEntry, parse_inventory, page_key, split_uri  # noqa: E402
-from build_plan import load_plan, make_plan, save_plan, summarize  # noqa: E402
+from build_plan import load_plan, make_llms_plan, make_plan, save_plan, summarize, summarize_llms  # noqa: E402
 import build_fetch  # noqa: E402
 from build_fetch import (FetchError, PageCache, fetch_llms, fetch_llms_page, fetch_pages,  # noqa: E402
                          index_getter, looks_html, normalize_source, open_source,
@@ -37,7 +37,7 @@ from build_fetch import (FetchError, PageCache, fetch_llms, fetch_llms_page, fet
 from build_html import main_content, rewrite_links, stub_html  # noqa: E402
 from build_docvol import check_name, derive_name, role_label, write_docvol  # noqa: E402
 import docshelf_build  # noqa: E402
-from build_llms import is_llms_source, parse_index, read_tree, url_key  # noqa: E402
+from build_llms import LlmsPage, Tree, is_llms_source, parse_index, read_tree, url_key  # noqa: E402
 from build_markdown import front_matter, md_to_html, page_signals, slugify  # noqa: E402
 
 DOCSHELF = os.path.join(REPO_ROOT, "skills", "docshelf", "scripts", "docshelf.py")
@@ -222,6 +222,88 @@ class PlanTests(unittest.TestCase):
             save_plan(path, p)
             self.assertEqual(load_plan(path), p)
             self.assertEqual(os.listdir(os.path.dirname(path)), ["demo.json"])
+
+    def test_kind_sphinx(self):
+        self.assertEqual(make_plan(SRC, "h", HDR, ENTRIES, [])["kind"], "sphinx")
+
+    def test_sphinx_model_choice_kept(self):
+        old = make_plan(SRC, "h", HDR, ENTRIES, [])
+        old["pages"]["guide/a"].update(keep="full", why="model:x", description="d", signals={"words": 9})
+        p = make_plan(SRC, "h2", HDR, ENTRIES, [], old=old)
+        a = p["pages"]["guide/a"]
+        self.assertEqual((a["keep"], a["why"], a["description"]), ("full", "model:x", "d"))
+        p = make_plan(SRC, "h2", HDR, ENTRIES, [("stub", "guide/*")], old=old)
+        self.assertEqual(p["pages"]["guide/a"]["why"], "override: guide/*")
+        p = make_plan(SRC, "h2", HDR, ENTRIES, [], old=old, reset=True)
+        self.assertEqual(p["pages"]["guide/a"]["why"], "roles: std only")
+
+
+SRC_LLMS = "https://x.io/llms.txt"
+
+
+def llms_tree(pages, indexes=None, sha="s1", title="OpenCode"):
+    return Tree(title, "x.io",
+                [LlmsPage(k, "https://x.io/%s.md" % k, k.upper(), sec, None) for k, sec in pages],
+                indexes or [{"url": SRC_LLMS, "title": title, "pages": len(pages),
+                             "parent": None, "note": None}], sha)
+
+
+class LlmsPlanTests(unittest.TestCase):
+    def test_all_full(self):
+        plan = make_llms_plan(SRC_LLMS, llms_tree([("docs/a", "Docs"), ("pricing", "Optional")]), [])
+        self.assertEqual((plan["kind"], plan["rule"], plan["project"], plan["version"]),
+                         ("llms", "llms-all", "OpenCode", ""))
+        self.assertEqual({k: (p["keep"], p["why"]) for k, p in plan["pages"].items()},
+                         {"docs/a": ("full", "llms: all"), "pricing": ("full", "llms: all")})
+        self.assertEqual(plan["pages"]["docs/a"]["uri"], "https://x.io/docs/a.md")
+        self.assertEqual((plan["entry_count"], plan["index_sha256"], plan["base_url"]), (2, "s1", None))
+
+    def test_model_choice_survives_replan_but_not_cli_override_or_reset(self):
+        old = make_llms_plan(SRC_LLMS, llms_tree([("docs/a", "Docs"), ("docs/b", "Docs")]), [])
+        old["pages"]["docs/a"].update(keep="stub", why="model:emb-1", description="guide",
+                                      signals={"words": 9})
+        again = make_llms_plan(SRC_LLMS, llms_tree([("docs/a", "Docs"), ("docs/b", "Docs")], sha="s2"),
+                               [], old=old)
+        self.assertEqual((again["pages"]["docs/a"]["keep"], again["pages"]["docs/a"]["why"],
+                          again["pages"]["docs/a"]["signals"]), ("stub", "model:emb-1", {"words": 9}))
+        cli = make_llms_plan(SRC_LLMS, llms_tree([("docs/a", "Docs")]), [("full", "docs/*")], old=old)
+        self.assertEqual(cli["pages"]["docs/a"]["why"], "override: docs/*")
+        reset = make_llms_plan(SRC_LLMS, llms_tree([("docs/a", "Docs")]), [], old=old, reset=True)
+        self.assertEqual(reset["pages"]["docs/a"]["why"], "llms: all")
+
+    def test_manual_beats_cli_and_reset(self):
+        old = make_llms_plan(SRC_LLMS, llms_tree([("a", "Docs")]), [])
+        old["pages"]["a"].update(keep="stub", why="manual")
+        p = make_llms_plan(SRC_LLMS, llms_tree([("a", "Docs")]), [("full", "*")], old=old, reset=True)
+        self.assertEqual((p["pages"]["a"]["keep"], p["pages"]["a"]["why"]), ("stub", "manual"))
+
+    def test_summary(self):
+        tree = llms_tree([("a", "Docs"), ("b", "Docs"), ("c", "Optional")],
+                         indexes=[{"url": "https://x.io/llms.txt", "title": "R", "pages": 1,
+                                   "parent": None, "note": None},
+                                  {"url": "https://x.io/_llms/python.txt", "title": "P", "pages": 2,
+                                   "parent": "https://x.io/llms.txt", "note": None},
+                                  {"url": "https://other.io/llms.txt", "title": "E", "pages": None,
+                                   "parent": "https://x.io/llms.txt", "note": "other host, not followed"}])
+        lines = summarize_llms(make_llms_plan(SRC_LLMS, tree, []), None)
+        self.assertEqual(lines[:5], ["OpenCode: 3 pages: 3 full, 0 stub",
+                                     "  Docs: 2   Optional: 1",
+                                     "index tree:",
+                                     "  llms.txt (1)",
+                                     "    _llms/python.txt (2)"])
+        self.assertIn("    https://other.io/llms.txt (other host, not followed)", lines)
+
+    def test_summary_added_dropped(self):
+        old = make_llms_plan(SRC_LLMS, llms_tree([("a", "Docs"), ("b", "Docs")]), [])
+        new = make_llms_plan(SRC_LLMS, llms_tree([("a", "Docs"), ("c", "Docs")]), [], old=old)
+        lines = summarize_llms(new, old)
+        self.assertTrue(any("added 1" in l and "c" in l for l in lines), lines)
+        self.assertTrue(any("dropped 1" in l and "b" in l for l in lines), lines)
+
+    def test_summary_warns_over_300(self):
+        tree = llms_tree([("p%d" % i, "Docs") for i in range(301)])
+        self.assertTrue(any(l.startswith("warning: 301 full pages") for l in
+                            summarize_llms(make_llms_plan(SRC_LLMS, tree, []), None)))
 
 
 URL = "https://x.io/docs/"
