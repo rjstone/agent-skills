@@ -1,4 +1,4 @@
-# RPC
+# Plugin RPC
 
 Plugins can expose custom methods and events that run on the server and can be
 called by other plugins or clients.

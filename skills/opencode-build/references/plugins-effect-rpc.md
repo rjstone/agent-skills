@@ -1,4 +1,4 @@
-# RPC
+# Effect plugin RPC
 
 Effect plugins can expose methods and events that return typed Effects and
 Streams.

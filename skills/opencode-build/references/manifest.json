@@ -2,10 +2,10 @@
   "index": "https://opencode.ai/docs/llms.txt",
   "pages": {
     "client-effect.md": {
-      "etag": "\"68e53d13fd65823b0749231c9219fdb1\"",
-      "fetched": "2026-11-09",
+      "etag": "\"3f49bafad3a69a6ffa5a1dacd3a28699\"",
+      "fetched": "2026-11-21",
       "md_url": "https://opencode.ai/docs/build/client/effect.md",
-      "sha256": "f3b4b1acfe4fbd2bc010dadbfb06843ba9b5998ebf02ef7f60393757c52858e2",
+      "sha256": "458f03780b79c0c3d5cd139248ef9e1ff9e2cb68dd7be30418314dcf6f72a09e",
       "url": "https://opencode.ai/docs/build/client/effect/"
     },
     "client.md": {
@@ -16,38 +16,38 @@
       "url": "https://opencode.ai/docs/build/client/"
     },
     "intro.md": {
-      "etag": "\"7945dc37d57b5d3b940627b359ab5ffd\"",
-      "fetched": "2026-11-09",
+      "etag": "\"0acf21878218830e7b36c631d9b02bc4\"",
+      "fetched": "2026-11-21",
       "md_url": "https://opencode.ai/docs/build.md",
-      "sha256": "55baa17d4b4efee03d0569ee65d1cbcd712bb6ed9e898bd57c28edf8480c68cd",
+      "sha256": "984ac01dbdc67dfd27edc7c999613bcf4368362416e7baf59c1b95d3e49efa3b",
       "url": "https://opencode.ai/docs/build/"
     },
     "plugins-cli.md": {
-      "etag": "\"4f61dbf246f0fde9861b3790b14114a2\"",
-      "fetched": "2026-11-09",
+      "etag": "\"53f60e435b27ca35f210e761f84c36ba\"",
+      "fetched": "2026-11-21",
       "md_url": "https://opencode.ai/docs/build/plugins/cli.md",
-      "sha256": "6f09bda16d3a528b24a3cb67ea9b67044739b8d6b136a2f54852226d87bd5150",
+      "sha256": "1b248424be54bc44d6ae17de7f393e9615c4562de3c404dfb3c574a043b29992",
       "url": "https://opencode.ai/docs/build/plugins/cli/"
     },
     "plugins-effect-rpc.md": {
-      "etag": "\"4a3e039151e40cc448c7f981b8acf86e\"",
-      "fetched": "2026-11-09",
+      "etag": "\"ec3dd84f34dd709c8cf3ff9ffc5aef9e\"",
+      "fetched": "2026-11-21",
       "md_url": "https://opencode.ai/docs/build/plugins/effect/rpc.md",
-      "sha256": "cdd01d7ddc952f3e9391920c53458601ab33850001123f39ce7132c2b3d7974f",
+      "sha256": "f1641ded97c7bf6b3e9cf3132cbfb503083ffb80bca55c5bf4c37eec8739a8fe",
       "url": "https://opencode.ai/docs/build/plugins/effect/rpc/"
     },
     "plugins-effect.md": {
-      "etag": "\"f98d0021e7b0e2d36f265163b6004e27\"",
-      "fetched": "2026-11-09",
+      "etag": "\"8495f92cf89cbd71b9730aa415a91171\"",
+      "fetched": "2026-11-21",
       "md_url": "https://opencode.ai/docs/build/plugins/effect.md",
-      "sha256": "70fa56635c4d470b28c9dd4ce4f1533627f8505c5d4de600b0e4e369672fa898",
+      "sha256": "10552167c4651ef8075b60224ab53c2b483a2c4b6619825a7bbbe44f02961d43",
       "url": "https://opencode.ai/docs/build/plugins/effect/"
     },
     "plugins-gui.md": {
-      "etag": "\"1c3b7259990c05d4a866abd64f9797c6\"",
-      "fetched": "2026-11-09",
+      "etag": "\"d58ccb0e000e3ce74c7bc3561c52eabe\"",
+      "fetched": "2026-11-21",
       "md_url": "https://opencode.ai/docs/build/plugins/gui.md",
-      "sha256": "6fb6dcaec22faac9ce3af97b92966721e347dd2f6acc2ed58e1c8840fa670a38",
+      "sha256": "42be90cde8e99ac6a3277741ba3bab50ee0ee8d1aea54305a70620246bee2dca",
       "url": "https://opencode.ai/docs/build/plugins/gui/"
     },
     "plugins-migrate-v1.md": {
@@ -58,24 +58,24 @@
       "url": "https://opencode.ai/docs/build/plugins/migrate-v1/"
     },
     "plugins-rpc.md": {
-      "etag": "\"2e5c57bfdcdf5212fb6007575e6e8e11\"",
-      "fetched": "2026-11-09",
+      "etag": "\"81e38b2211012cdbd1aa58f774845ae3\"",
+      "fetched": "2026-11-21",
       "md_url": "https://opencode.ai/docs/build/plugins/rpc.md",
-      "sha256": "dab4e31acc16ea76081ba5c1ad3a6356e861062b5952c6f4f13d2244ac4ba5a5",
+      "sha256": "460ee13b302d54ae0f1b1e16cae3e0e80fb29c21a536801c029878f6635fce6c",
       "url": "https://opencode.ai/docs/build/plugins/rpc/"
     },
     "plugins-server.md": {
-      "etag": "\"04ff48afcbaaa03ae6272de9724c437b\"",
-      "fetched": "2026-11-09",
+      "etag": "\"b81bfecaf453d1ca389dc5c153ec9423\"",
+      "fetched": "2026-11-21",
       "md_url": "https://opencode.ai/docs/build/plugins/server.md",
-      "sha256": "9a236089d96a88ac2624a6bd093794c0eee55a4cec5c64d779104d660664041d",
+      "sha256": "0750ebdab9ad876774096c1d637366b6cf7c90cfebdc2b7df0a10021d42577a4",
       "url": "https://opencode.ai/docs/build/plugins/server/"
     },
     "plugins.md": {
-      "etag": "\"68b3374b018c26f64175739add1fa87e\"",
-      "fetched": "2026-11-09",
+      "etag": "\"6726d06a0de0a4f364d4432f3f6936ec\"",
+      "fetched": "2026-11-21",
       "md_url": "https://opencode.ai/docs/build/plugins.md",
-      "sha256": "681ef8c90bae67c43b00d13d840588fbb7e9226128e3e85fb098838342893f28",
+      "sha256": "a8b1de8374a5e74f0bec9def731292bf5ca858ea9f8f30f5a49a33c262ff1a4b",
       "url": "https://opencode.ai/docs/build/plugins/"
     },
     "sdk-cloudflare.md": {
@@ -86,17 +86,17 @@
       "url": "https://opencode.ai/docs/build/sdk/cloudflare/"
     },
     "sdk-effect.md": {
-      "etag": "\"76f96dc7402745943581c317c4cb8a4b\"",
-      "fetched": "2026-11-09",
+      "etag": "\"8e6a766307bd6faaede2e4207bffc89a\"",
+      "fetched": "2026-11-21",
       "md_url": "https://opencode.ai/docs/build/sdk/effect.md",
-      "sha256": "243dab2ea2277a8ea90d78aadb5ee94ae80fcba4e281fe49486c9b732e5963af",
+      "sha256": "937aba8b0df9f6b228ebac0605f3a554820efb3b2c678f0d0be35a5828109466",
       "url": "https://opencode.ai/docs/build/sdk/effect/"
     },
     "sdk.md": {
-      "etag": "\"160871ad97db8e557a722c7da2b610a5\"",
-      "fetched": "2026-11-09",
+      "etag": "\"6422a4556050e54fa3623b2966f2988a\"",
+      "fetched": "2026-11-21",
       "md_url": "https://opencode.ai/docs/build/sdk.md",
-      "sha256": "f07ef149e9fbe8571544d6761aa15581e208e44c8c082b2596cb51d9043194fc",
+      "sha256": "8db681218086895e8906cb3c0fb282f7a7439721a4f941417d61caf1bd52c705",
       "url": "https://opencode.ai/docs/build/sdk/"
     }
   },
