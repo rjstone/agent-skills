@@ -8,6 +8,7 @@ import io
 import json
 import os
 import re
+import shutil
 import subprocess  # nosec B404 - runs this repo's own scripts, fixed argv, no shell
 import sys
 import tempfile
@@ -34,8 +35,8 @@ import build_fetch  # noqa: E402
 from build_fetch import (FetchError, PageCache, fetch_llms, fetch_llms_page, fetch_pages,  # noqa: E402
                          index_getter, looks_html, normalize_source, open_source,
                          open_url_source)
-from build_html import main_content, rewrite_links, stub_html  # noqa: E402
-from build_docvol import check_name, derive_name, role_label, write_docvol  # noqa: E402
+from build_html import headings, main_content, rewrite_links, rewrite_url_links, stub_html  # noqa: E402
+from build_docvol import check_name, derive_name, role_label, write_docvol, write_llms_docvol  # noqa: E402
 import docshelf_build  # noqa: E402
 from build_llms import LlmsPage, Tree, is_llms_source, parse_index, read_tree, url_key  # noqa: E402
 from build_markdown import front_matter, md_to_html, page_signals, slugify  # noqa: E402
@@ -646,6 +647,72 @@ class DocvolTests(unittest.TestCase):
             with self.assertRaises(CLIError):
                 self.write()
         self.assertFalse(os.path.exists(self.folder))
+
+
+class LlmsDocvolTests(unittest.TestCase):
+    def setUp(self):
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        self.tmp = os.path.realpath(tmp.name)
+        self.cache = os.path.join(self.tmp, "cache")
+        self.plan = make_llms_plan(
+            SRC_LLMS, llms_tree([("docs/a", "Docs"), ("docs/b", "Docs"), ("pricing", None)]), [])
+        self.plan["pages"]["pricing"]["keep"] = "stub"
+        self.folder = os.path.join(self.cache, "built", "demo")
+        self.raw = {"docs/a": ("# A\n\n## Usage\n\nSee [b](b.md).\n", "md"),
+                    "docs/b": ("<html><nav>n</nav><main><h2 id='k'>K</h2></main></html>", "html")}
+
+    def test_links_rewritten(self):
+        keys = {"https://x.io/docs/a.md": "docs/a", "https://x.io/docs/b.md": "docs/b"}
+        html = ('<a href="b.md#x y">b</a><a href="/docs/b">b2</a><a href="/blog/">blog</a>'
+                '<a href="https://e.x/">e</a><a href="#Top">t</a>')
+        self.assertEqual(rewrite_url_links(html, "docs/a", "https://x.io/docs/a.md", keys, "x.io"),
+                         '<a href="b#x_y">b</a><a href="b">b2</a><a href="https://x.io/blog/">blog</a>'
+                         '<a href="https://e.x/">e</a><a href="#Top">t</a>')
+
+    def test_headings(self):
+        self.assertEqual(headings('<h1 id="t">T</h1><h2 id="a">A <code>x</code></h2>'
+                                  '<h3>no id</h3><h3 id="b">B</h3>'),
+                         [(2, "a", "A x"), (3, "b", "B")])
+
+    def test_write_llms_docvol(self):
+        write_llms_docvol(self.cache, "demo", self.plan, self.raw, {}, now=0)
+        index, db, meta = (load(self.folder, f) for f in ("index.json", "db.json", "meta.json"))
+        self.assertEqual(meta["source_kind"], "llms")
+        self.assertEqual(meta["format"], 1)
+        self.assertEqual(meta["index_sha256"], "s1")
+        self.assertNotIn("inventory_sha256", meta)
+        self.assertIn({"name": "Usage", "type": "Docs", "path": "docs/a#usage"}, index["entries"])
+        self.assertIn({"name": "K", "type": "Docs", "path": "docs/b#k"}, index["entries"])
+        self.assertIn({"name": "PRICING", "type": "Pages", "path": "pricing"}, index["entries"])
+        self.assertIn('href="b"', db["docs/a"])
+        self.assertNotIn("<nav>", db["docs/b"])
+        self.assertIn("https://x.io/pricing.md", db["pricing"])
+
+    def test_failed_page_keeps_previous_copy(self):
+        write_llms_docvol(self.cache, "demo", self.plan, self.raw, {}, now=0)
+        before = load(self.folder, "db.json")["docs/a"]
+        raw = {k: v for k, v in self.raw.items() if k != "docs/a"}
+        meta = write_llms_docvol(self.cache, "demo", self.plan, raw, {"docs/a": "HTTP 500"}, now=1)
+        self.assertEqual(load(self.folder, "db.json")["docs/a"], before)
+        self.assertEqual(meta["reused"], ["docs/a"])
+        shutil.rmtree(self.folder)
+        meta = write_llms_docvol(self.cache, "demo", self.plan, raw, {"docs/a": "HTTP 500"}, now=2)
+        stub = load(self.folder, "db.json")["docs/a"]
+        self.assertIn("HTTP 500", stub)
+        self.assertIn("https://x.io/docs/a.md", stub)
+        self.assertEqual(meta["reused"], [])
+
+    def test_docshelf_reads_llms_docvol(self):
+        if not docshelf_reads_built():
+            self.skipTest("docshelf without BuiltDocvol")
+        write_llms_docvol(self.cache, "demo", self.plan, self.raw, {}, now=0)
+        env = dict(os.environ, HOME=self.tmp, DOCSHELF_CACHE_DIR=self.cache,
+                   DOCSHELF_NOTES_DIR=os.path.join(self.tmp, "notes"))
+        r = subprocess.run([sys.executable, DOCSHELF, "search", "Usage", "-d", "demo"],
+                           capture_output=True, text=True, env=env, cwd=self.tmp)
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertIn("docs/a#usage", r.stdout)
 
 
 def docshelf_reads_built() -> bool:

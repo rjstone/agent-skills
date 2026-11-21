@@ -165,6 +165,89 @@ def rewrite_links(content: str, page_key: str, page_uri: str, keys_by_uri: Dict[
     return _serialize(_tokens(content), href=href)
 
 
+class _Headings(HTMLParser):
+    def __init__(self):
+        super().__init__(convert_charrefs=True)
+        self.out: List[Tuple[int, str, str]] = []
+        self._cur: Optional[Tuple[int, str, List[str]]] = None
+
+    def handle_starttag(self, tag, attrs):
+        if tag in ("h2", "h3") and self._cur is None:
+            hid = _attr(attrs, "id")
+            if hid:
+                self._cur = (int(tag[1]), hid, [])
+
+    def handle_data(self, data):
+        if self._cur is not None:
+            self._cur[2].append(data)
+
+    def handle_endtag(self, tag):
+        if self._cur is not None and tag == "h%d" % self._cur[0]:
+            level, hid, parts = self._cur
+            self.out.append((level, hid, " ".join("".join(parts).split())))
+            self._cur = None
+
+
+def headings(content: str) -> List[Tuple[int, str, str]]:
+    """(level, id, text) of the h2 and h3 headings that have an id, in
+    document order."""
+    p = _Headings()
+    p.feed(content)
+    p.close()
+    return p.out
+
+
+def _url_candidates(url: str) -> List[str]:
+    """Spellings under which a page URL may be stored: with or without
+    .md/.mdx, and a trailing "/" or "/index"."""
+    seen: List[str] = []
+
+    def add(u: str) -> None:
+        if u not in seen:
+            seen.append(u)
+
+    add(url)
+    base = url
+    for ext in (".mdx", ".md"):
+        if base.endswith(ext):
+            base = base[:-len(ext)]
+            add(base)
+            break
+    add(base + ".md")
+    for u in list(seen):
+        if u.endswith("/"):
+            add(u + "index")
+            add(u + "index.md")
+        if u.endswith("/index"):
+            add(u[:-5])
+    return seen
+
+
+def rewrite_url_links(content: str, page_key: str, page_url: str,
+                      keys_by_url: Dict[str, str], main_host: str) -> str:
+    """Links to pages in the docvol become paths relative to page_key's
+    folder; every other link becomes an absolute URL (so a relative link to
+    a page that is not stored is live), external ones unchanged. main_host
+    is the site's host (kept for callers; resolution needs only page_url)."""
+    here = posixpath.dirname(page_key) or "."
+
+    def href(value: str) -> str:
+        if value.startswith("#"):
+            return "#" + anchor_id(urllib.parse.unquote(value[1:]))
+        if urllib.parse.urlsplit(value).scheme not in ("", "http", "https"):
+            return value  # mailto:, tel: ...
+        target = urllib.parse.urljoin(page_url, value)
+        parts = urllib.parse.urlsplit(target)
+        bare = urllib.parse.urlunsplit(parts._replace(fragment=""))
+        for cand in _url_candidates(bare):
+            if cand in keys_by_url:
+                frag = anchor_id(urllib.parse.unquote(parts.fragment))
+                return posixpath.relpath(keys_by_url[cand], here) + ("#" + frag if frag else "")
+        return value if urllib.parse.urlsplit(value).scheme else target
+
+    return _serialize(_tokens(content), href=href)
+
+
 def stub_html(title: str, section: Optional[str], description: Optional[str],
               url: Optional[str], note: Optional[str]) -> str:
     """A page that is not stored: its title, section, description and where

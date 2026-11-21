@@ -7,10 +7,12 @@ import shutil
 import tempfile
 import time
 import urllib.parse
-from typing import Dict, List
+from typing import Dict, List, Tuple
 
 from build_core import DOCVOL_FORMAT, NAME_RE, CLIError, built_dir
-from build_html import STUB_CLASS, main_content, rewrite_links, stub_html
+from build_html import (STUB_CLASS, headings, main_content, rewrite_links,
+                        rewrite_url_links, stub_html)
+from build_markdown import md_to_html
 from build_inventory import InvEntry, anchor_id, page_key, split_uri
 
 FILES = ("index.json", "db.json", "meta.json")  # meta.json last: docshelf keys on it
@@ -135,7 +137,14 @@ def write_docvol(cache: str, name: str, plan: dict, entries: List[InvEntry],
             "alias": None, "entry_count": len(index["entries"]),
             "origin": "docshelf-build", "format": DOCVOL_FORMAT, "source": plan["source"],
             "inventory_sha256": plan["inventory_sha256"], "reused": sorted(reused)}
-    data = {"index.json": index, "db.json": db, "meta.json": meta}
+    _write_files(cache, name, {"index.json": index, "db.json": db, "meta.json": meta})
+    return meta
+
+
+def _write_files(cache: str, name: str, data: Dict[str, object]) -> None:
+    """Write the three docvol files atomically: all or none. A failure
+    restores the previous files and raises CLIError(code 2)."""
+    folder = os.path.join(built_dir(cache), name)
     created = not os.path.isdir(folder)
     tmps: Dict[str, str] = {}
     baks: Dict[str, str] = {}
@@ -168,6 +177,62 @@ def write_docvol(cache: str, name: str, plan: dict, entries: List[InvEntry],
     finally:
         for b in baks.values():
             _unlink(b)
+
+
+def _llms_index(plan: dict, html_by_key: Dict[str, str]) -> dict:
+    """Entries: every page, plus the h2/h3 headings of each full page."""
+    out: List[dict] = []
+    for key, p in plan["pages"].items():
+        kind = (p.get("section") or "").split(" / ")[0] or "Pages"
+        out.append({"name": p["title"], "type": kind, "path": key})
+        if p["keep"] == "full" and key in html_by_key:
+            for _, hid, text in headings(html_by_key[key]):
+                out.append({"name": text, "type": kind, "path": key + "#" + hid})
+    counts: Dict[str, int] = {}
+    for x in out:
+        counts[x["type"]] = counts.get(x["type"], 0) + 1
+    return {"entries": out, "types": [{"name": t, "count": counts[t], "slug": t.lower().replace(" ", "_")}
+                                      for t in sorted(counts)]}
+
+
+def write_llms_docvol(cache: str, name: str, plan: dict, raw: Dict[str, Tuple[str, str]],
+                      errors: Dict[str, str], now: float) -> dict:
+    """Write an llms.txt docvol and return its meta. raw maps page key to
+    (text, "md" | "html"); errors maps key to a failure note. A full page
+    missing from raw keeps its previous stored copy (its key goes in
+    "reused") unless that was a stub."""
+    pages = plan["pages"]
+    folder = os.path.join(built_dir(cache), name)
+    previous = _previous_db(folder)
+    keys_by_url = {p["uri"]: key for key, p in pages.items()}
+    host = urllib.parse.urlsplit(plan["source"]).netloc
+    db: Dict[str, str] = {}
+    reused: List[str] = []
+    for key, p in pages.items():
+        if p["keep"] == "full" and key in raw:
+            text, kind = raw[key]
+            content = md_to_html(text) if kind == "md" else main_content(text)
+            db[key] = rewrite_url_links(content, key, p["uri"], keys_by_url, host)
+            continue
+        old = previous.get(key)
+        if p["keep"] == "full" and isinstance(old, str) and STUB_CLASS not in old:
+            db[key] = old
+            reused.append(key)
+        elif p["keep"] == "full":
+            db[key] = stub_html(p["title"], p.get("section"), p.get("description"),
+                                p["uri"], errors.get(key, "not fetched"))
+        else:
+            db[key] = stub_html(p["title"], p.get("section"), p.get("description"), p["uri"], None)
+    index = _llms_index(plan, db)
+    meta = {"slug": name, "name": plan.get("project") or name,
+            "release": plan.get("version", ""), "version": plan.get("version", ""),
+            "mtime": int(now),
+            "installedAt": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(now)),
+            "alias": None, "entry_count": len(index["entries"]),
+            "origin": "docshelf-build", "format": DOCVOL_FORMAT, "source": plan["source"],
+            "source_kind": "llms", "index_sha256": plan["index_sha256"],
+            "reused": sorted(reused)}
+    _write_files(cache, name, {"index.json": index, "db.json": db, "meta.json": meta})
     return meta
 
 
