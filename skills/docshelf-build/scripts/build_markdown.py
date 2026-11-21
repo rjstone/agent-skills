@@ -6,7 +6,7 @@ import html as htmllib
 import re
 from typing import Dict, List, Optional, Set, Tuple
 
-from build_html import _serialize, _tokens
+from build_html import _serialize, _tokens, main_content
 
 # ---- front matter ------------------------------------------------------
 
@@ -442,3 +442,156 @@ def md_to_html(text: str) -> str:
     body = body.replace("\x00", "")
     html = _blocks(_mdx(body.split("\n")), set())
     return _serialize(_tokens(html))
+
+
+# ---- signals -----------------------------------------------------------
+
+_WORD = re.compile(r"[A-Za-z][A-Za-z']*")
+_YOU = {"you", "your", "let's", "we'll"}
+_SIG = [re.compile(r"\b[A-Za-z_][\w.]*\(.*\)"),
+        re.compile(r"^\s*(def|class|function|interface)\s"),
+        re.compile(r"^\s*type\s+\w+\s*="),
+        re.compile(r"^\s*--?[A-Za-z]")]
+_ORDERED = re.compile(r"^\s*\d{1,9}[.)]\s")
+# one line: (text, "text" | "code" | "heading" | "fence" | "delim")
+_Line = Tuple[str, str]
+
+
+def _score(lines: List[_Line], headings: int, tables: int, steps: int) -> Dict[str, object]:
+    nonblank = [ln for ln in lines if ln[0].strip()]
+    code = sum(1 for _, k in nonblank if k == "code")
+    words = n_you = 0
+    for text, kind in nonblank:
+        if kind in ("code", "fence", "delim"):
+            continue
+        found = _WORD.findall(text)
+        words += len(found)
+        n_you += sum(1 for w in found if w.lower() in _YOU)
+    sigs = sum(1 for text, kind in nonblank if kind in ("code", "heading")
+               and any(p.search(text) for p in _SIG))
+    return {"words": words,
+            "code_ratio": round(code / len(nonblank), 3) if nonblank else 0.0,
+            "you_per_1k": round(n_you * 1000 / words, 1) if words else 0.0,
+            "steps": steps, "signature_lines": sigs, "headings": headings,
+            "tables": tables}
+
+
+def _md_signals(text: str) -> Dict[str, object]:
+    _, body = front_matter(text)
+    src = body.split("\n")
+    lines: List[_Line] = []
+    headings = tables = steps = 0
+    fence = ""
+    prev, in_list = "", False  # prev: kind of the previous line
+    for i, raw in enumerate(src):
+        m = _FENCE.match(raw)
+        if fence:
+            if m and m.group(1)[0] == fence[0] and len(m.group(1)) >= len(fence) \
+                    and not raw.strip().strip(fence[0]):
+                fence = ""
+                lines.append((raw, "fence"))
+                prev = "fence"
+            else:
+                lines.append((raw, "code"))
+                prev = "code"
+            continue
+        if m:
+            fence = m.group(1)
+            lines.append((raw, "fence"))
+            prev, in_list = "fence", False
+            continue
+        if not raw.strip():
+            prev = "blank"
+            continue
+        line = raw.replace("\t", "    ")
+        if line.startswith("    ") and prev in ("blank", "icode") and not in_list:
+            lines.append((line, "code"))
+            prev = "icode"
+            continue
+        if line.startswith("    ") and prev == "icode":
+            lines.append((line, "code"))
+            continue
+        kind = "text"
+        a = _ATX.match(line)
+        if a and len(a.group(1)) in (2, 3):
+            headings += 1
+        if a:
+            kind = "heading"
+            if (a.group(2) or "").startswith("Step"):
+                steps += 1
+        elif _SETEXT.match(line) and prev == "text":
+            if line.strip()[0] == "-":
+                headings += 1
+            kind = "delim"
+        elif _is_table(src, i):
+            tables += 1
+            kind = "tablerow"
+        elif prev == "tablerow" and _DELIM.match(line) and "|" in line:
+            kind = "delim"
+        elif _HR.match(line):
+            kind = "delim"
+        if _ORDERED.match(line):
+            steps += 1
+        if kind == "tablerow":
+            kind = "text"
+            prev = "tablerow"
+        else:
+            prev = "text"
+        in_list = bool(_LIST.match(line)) or (in_list and line.startswith(" "))
+        lines.append((line, kind))
+    return _score(lines, headings, tables, steps)
+
+
+_BLOCKS = {"p", "li", "h1", "h2", "h3", "h4", "h5", "h6", "td", "th", "dt", "dd",
+           "blockquote", "figcaption", "summary", "div", "tr", "ul", "ol", "table",
+           "section", "article", "main", "details"}
+
+
+def _html_signals(text: str) -> Dict[str, object]:
+    lines: List[_Line] = []
+    headings = tables = steps = 0
+    lists: List[str] = []
+    pre, head = 0, False
+    buf: List[str] = []
+
+    def flush() -> None:
+        s = " ".join("".join(buf).split())
+        buf.clear()
+        if s:
+            lines.append((s, "heading" if head else "text"))
+
+    for kind, name, _ in _tokens(main_content(text)):
+        if kind == "text":
+            if pre:
+                lines.extend((ln, "code") for ln in name.split("\n"))
+            else:
+                buf.append(name)
+        elif name == "pre":
+            flush()
+            pre += 1 if kind == "start" else -1
+            pre = max(pre, 0)
+        elif name in _BLOCKS:
+            flush()
+            if kind == "start":
+                if name in ("ul", "ol"):
+                    lists.append(name)
+                elif name == "li" and lists and lists[-1] == "ol":
+                    steps += 1
+                elif name == "table":
+                    tables += 1
+                if len(name) == 2 and name[0] == "h" and name[1].isdigit():
+                    head = True
+                    headings += name in ("h2", "h3")
+            else:
+                if name in ("ul", "ol") and lists:
+                    lists.pop()
+                head = False
+    flush()
+    steps += sum(1 for ln, k in lines if k == "heading" and ln.startswith("Step"))
+    return _score(lines, headings, tables, steps)
+
+
+def page_signals(text: str, kind: str) -> Dict[str, object]:
+    """Per-page counts for a later reference-vs-tutorial classifier. `kind` is
+    "md" (Markdown/MDX source) or "html"."""
+    return _html_signals(text) if kind == "html" else _md_signals(text)

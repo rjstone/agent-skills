@@ -36,7 +36,7 @@ from build_html import main_content, rewrite_links, stub_html  # noqa: E402
 from build_docvol import check_name, derive_name, role_label, write_docvol  # noqa: E402
 import docshelf_build  # noqa: E402
 from build_llms import is_llms_source, parse_index, read_tree, url_key  # noqa: E402
-from build_markdown import front_matter, md_to_html, slugify  # noqa: E402
+from build_markdown import front_matter, md_to_html, page_signals, slugify  # noqa: E402
 
 DOCSHELF = os.path.join(REPO_ROOT, "skills", "docshelf", "scripts", "docshelf.py")
 
@@ -900,6 +900,47 @@ class MarkdownTests(unittest.TestCase):
     def test_jsx_in_code_kept(self):
         self.check('```jsx\n<Card title="x" />\n```',
                    '<pre><code class="language-jsx">&lt;Card title="x" /&gt;</code></pre>')
+
+
+SIGNALS_MD = """---
+title: T
+---
+# Install
+
+You can install it. Let's go, your way.
+
+## Step 1: get it
+
+1. Download
+2. Run
+
+```bash
+tool --flag
+def f(x):
+```
+
+| a | b |
+|---|---|
+| 1 | 2 |
+"""
+
+
+class SignalsTests(unittest.TestCase):
+    def test_markdown_signals(self):
+        self.assertEqual(page_signals(SIGNALS_MD, "md"), {
+            "words": 16, "code_ratio": 0.167, "you_per_1k": 187.5, "steps": 3,
+            "signature_lines": 1, "headings": 1, "tables": 1})
+
+    def test_html_signals(self):
+        html = ("<main><h2>Step one</h2><p>You run it.</p><pre>--verbose\nx = 1</pre>"
+                "<ol><li>a</li></ol><table><tr><td>z</td></tr></table></main>")
+        s = page_signals(html, "html")
+        self.assertEqual((s["headings"], s["tables"], s["steps"], s["signature_lines"]),
+                         (1, 1, 2, 1))
+        self.assertGreater(s["code_ratio"], 0)
+
+    def test_empty_page(self):
+        self.assertEqual(page_signals("", "md")["you_per_1k"], 0.0)
 
 
 if __name__ == "__main__":
