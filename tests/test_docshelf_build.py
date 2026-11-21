@@ -813,6 +813,33 @@ class LlmsIndexTests(unittest.TestCase):
         self.assertEqual([p.key for p in tree.pages], ["docs/build", "docs/build-2"])
         self.assertIn("docs/build", err.getvalue())
 
+    def test_tree_subindex_failure_not_fatal(self):
+        root = "# T\n- [A](https://x.io/a.md)\n- [Sub](https://x.io/sub/llms.txt)\n"
+
+        def get(url):
+            if url == "https://x.io/llms.txt":
+                return root
+            raise CLIError("cannot fetch %s: HTTP 404" % url, 4)
+        with contextlib.redirect_stderr(io.StringIO()) as err:
+            tree = read_tree("https://x.io/llms.txt", get)
+        self.assertEqual([p.key for p in tree.pages], ["a"])
+        sub = [i for i in tree.indexes if i["url"] == "https://x.io/sub/llms.txt"][0]
+        self.assertIsNone(sub["pages"])
+        self.assertIn("fetch failed", sub["note"])
+        self.assertIn("HTTP 404", sub["note"])
+        self.assertIn("sub/llms.txt", err.getvalue())
+
+    def test_tree_root_failure_still_raises(self):
+        def get(url):
+            raise CLIError("cannot fetch " + url, 4)
+        with self.assertRaises(CLIError):
+            read_tree("https://x.io/llms.txt", get)
+
+    def test_tree_dedup_ignores_fragment(self):
+        text = "# T\n- [A](https://x.io/a.md#one)\n- [A2](https://x.io/a.md#two)\n"
+        tree = read_tree("https://x.io/llms.txt", {"https://x.io/llms.txt": text}.__getitem__)
+        self.assertEqual([p.url for p in tree.pages], ["https://x.io/a.md#one"])
+
     def test_tree_without_links_is_error(self):
         with self.assertRaises(CLIError) as cm:
             read_tree("https://x.io/llms.txt", lambda u: "<!doctype html><html><body>Not found</body></html>")

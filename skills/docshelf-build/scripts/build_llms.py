@@ -10,6 +10,7 @@ from typing import Callable, Dict, List, NamedTuple, Optional, Set, Tuple
 from urllib.parse import unquote, urljoin, urlsplit
 
 from build_core import CLIError, warn
+from build_fetch import FetchError
 
 MAX_DEPTH = 3  # sub-index levels below the root (root = depth 0)
 PAGE_SUFFIXES = (".md", ".mdx", ".html", ".htm")
@@ -75,7 +76,7 @@ def _parse_link_line(line: str) -> Optional[Tuple[str, str, Optional[str]]]:
 
 def parse_index(text: str, index_url: str) -> Tuple[str, List[Link]]:
     """(H1 title or "", links) of an llms.txt; URLs made absolute."""
-    text = text.lstrip("﻿").replace("\r", "")
+    text = text.lstrip("\ufeff").replace("\r", "")
     title = ""
     section: Optional[str] = None
     links: List[Link] = []
@@ -184,16 +185,24 @@ def read_tree(source: str, get_text: Callable[[str], str],
                     sub["note"] = "depth limit"
                     indexes.append(sub)
                 else:
-                    text = get_text(lk.url)
+                    try:
+                        text = get_text(lk.url)
+                    except (CLIError, FetchError) as e:
+                        reason = e.reason if isinstance(e, FetchError) else str(e)
+                        warn("sub-index %s skipped: %s" % (lk.url, reason))
+                        sub["note"] = "fetch failed: " + reason
+                        indexes.append(sub)
+                        continue
                     raw.append(text)
                     sub_title, sub_links = parse_index(text, lk.url)
                     name = sub_title or lk.title
                     sub_section = _join(section, lk.section, name)
                     walk(lk.url, name, sub_links, url, sub_section, depth + 1)
                 continue
-            if lk.url in seen_pages:
+            page_id = lk.url.split("#", 1)[0]
+            if page_id in seen_pages:
                 continue
-            seen_pages.add(lk.url)
+            seen_pages.add(page_id)
             pages.append((lk.url, lk.title, _join(section, lk.section), lk.note))
             entry["pages"] += 1
 
