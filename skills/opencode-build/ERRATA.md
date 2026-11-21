@@ -55,7 +55,8 @@ Entry format (the script reads the `## E..` heading and the `- Page:` line):
   `tools.<ns>.<tool>(...)`. Seen in practice: a tool added without the option
   showed up as `tools.enter()`. The direct-list filter and the hook names
   come from the server's tool snapshot and `Tool.execute` code.
-- Checked: 2026-11-08 against @opencode/plugin 2.2.5 (opencode v2.2.5)
+- Checked: 2026-11-08 against @opencode/plugin 2.2.5 (opencode v2.2.5); id
+  rule re-checked 2026-11-21 in the opencode v2.3.2 binary (same expression)
 
 ## E02: session hook reference uses made-up type names (`SessionContextHook` vs `SessionHookContext`)
 - Page: `plugins-server.md` (section "Sessions", "Session reference")
@@ -80,11 +81,15 @@ Entry format (the script reads the `## E..` heading and the `- Page:` line):
     `experimental.idle` (the docs say only `prompt`).
   - Import the real names when typing a hook callback; usually
     `ctx.session.hook("context", (event) => ...)` infers them.
+  - The same pattern in the newer `experimental.model.resolve` section: the
+    docs say `SessionModelResolveHook`, the package exports
+    `SessionModelResolve`.
 - Evidence: `@opencode/plugin` 2.2.5 `dist/promise/session.d.ts`
   (`SessionHooks`, `SessionDomain`) and `dist/promise/registration.d.ts`
   (`ModelHooks`, `ModelHookOptions`); no `SessionContextHook` or
   `SessionHookContext` anywhere in the package.
-- Checked: 2026-11-08 against @opencode/plugin 2.2.5
+- Checked: 2026-11-21 against @opencode/plugin 2.3.2 (names still absent,
+  `experimental.idle` still missing from the docs)
 
 ## E03: tool results - `content` vs `output`, and what the model gets in Code Mode
 - Page: `plugins-server.md` (sections "Tools" and the `execute.after` tool hook)
@@ -107,7 +112,9 @@ Entry format (the script reads the `## E..` heading and the `- Page:` line):
   returns `output` when defined, else the joined text content; the direct path
   sends `content`, falling back to stringified `output`; the MCP bridge
   returns `{ output: structured ?? text ?? null, content }`.
-- Checked: 2026-11-08 against opencode v2.2.5 (@opencode/plugin 2.2.5)
+- Checked: 2026-11-08 against opencode v2.2.5 (@opencode/plugin 2.2.5).
+  2026-11-21: docs still say nothing about `content` vs `output`; behavior
+  not re-probed on v2.3.2
 
 ## E04: RPC methods need both `input` and `output`; a contract needs `events`
 - Page: `plugins-rpc.md` (sections "Input and output" and "Events")
@@ -125,7 +132,8 @@ Entry format (the script reads the `## E..` heading and the `- Page:` line):
 - Evidence: `@opencode/schema/dist/rpc.d.ts` (`interface Method`,
   `interface Definition`); `tsc --noEmit` on a contract without `input` and
   `events` reports exactly these errors, and passes once both are added.
-- Checked: 2026-11-10 against @opencode/plugin 2.2.6
+- Checked: 2026-11-21 against @opencode/plugin 2.3.2 (`@opencode/schema`
+  `Method`, `Definition` unchanged)
 
 ## E05: plugin-added references: the editor type has no `description` or `hidden`
 - Page: `plugins-server.md` (section "References")
@@ -149,4 +157,4 @@ Entry format (the script reads the `## E..` heading and the `- Page:` line):
   that adds a local reference with `description` this way, loaded by
   `opencode serve` (v2.2.6): `GET /api/reference` returns it with that
   `description`. `hidden` not checked.
-- Checked: 2026-11-10 against @opencode/plugin 2.2.6
+- Checked: 2026-11-21 against @opencode/plugin 2.3.2 (client type unchanged)

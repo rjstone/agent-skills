@@ -1,4 +1,4 @@
-# TUI
+# Building TUI plugins
 
 TUI plugins extend the terminal UI with commands, routes, slots, Markdown renderers, notifications, and local state. A
 TUI plugin is the `./tui` part of a [plugin package](/build/plugins), usually beside a [server
