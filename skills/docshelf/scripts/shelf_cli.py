@@ -215,7 +215,7 @@ DETAILS = {
     "notes": "After editing, --check lists which REFs show each section, "
              "then ok; --set writes a section, then prints that report. "
              "Format: references/notes.md in the skill folder.",
-    "list": "Version, size class, source (devdocs, zeal, dash) and \"also "
+    "list": "Version, size class, source (devdocs, built, zeal, dash) and \"also "
             "as\" when a DevDocs copy and a docset hold the same documentation.",
     "suggest": "Reads the project's build and version files (no network) "
                "and prints a \"docvols\" list to paste into .docshelf.json.",
