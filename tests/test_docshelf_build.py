@@ -7,6 +7,7 @@ import hashlib
 import io
 import json
 import os
+import re
 import subprocess  # nosec B404 - runs this repo's own scripts, fixed argv, no shell
 import sys
 import tempfile
@@ -35,6 +36,7 @@ from build_html import main_content, rewrite_links, stub_html  # noqa: E402
 from build_docvol import check_name, derive_name, role_label, write_docvol  # noqa: E402
 import docshelf_build  # noqa: E402
 from build_llms import is_llms_source, parse_index, read_tree, url_key  # noqa: E402
+from build_markdown import front_matter, md_to_html, slugify  # noqa: E402
 
 DOCSHELF = os.path.join(REPO_ROOT, "skills", "docshelf", "scripts", "docshelf.py")
 
@@ -813,6 +815,91 @@ class LlmsIndexTests(unittest.TestCase):
         with self.assertRaises(CLIError) as cm:
             read_tree("https://x.io/llms.txt", lambda u: "<!doctype html><html><body>Not found</body></html>")
         self.assertEqual(cm.exception.code, 3)
+
+
+class MarkdownTests(unittest.TestCase):
+    @staticmethod
+    def norm(html: str) -> str:
+        return re.sub(r">\s+<", "><", html)
+
+    def check(self, src: str, expected: str) -> None:
+        self.assertEqual(self.norm(md_to_html(src)), self.norm(expected))  # norm also folds the
+        # spaces between inline tags that some expected strings keep for readability
+
+    def test_headings_ids_unique(self):
+        self.check("# A b\n## A b\nSetext\n===\n### C?",
+                   '<h1 id="a-b">A b</h1><h2 id="a-b-1">A b</h2>'
+                   '<h1 id="setext">Setext</h1><h3 id="c">C?</h3>')
+        self.assertEqual(slugify("Hello, World_x 2"), "hello-world_x-2")
+
+    def test_fenced_code_not_parsed(self):
+        self.check("```py\nx = *a* <b>\n```\n~~~\n# no\n~~~",
+                   '<pre><code class="language-py">x = *a* &lt;b&gt;</code></pre>'
+                   "<pre><code># no</code></pre>")
+
+    def test_unterminated_fence_runs_to_end(self):
+        self.check("text\n```\ncode\n# not heading",
+                   "<p>text</p><pre><code>code\n# not heading</code></pre>")
+
+    def test_indented_code(self):
+        self.check("para\n\n    a < b\n", "<p>para</p><pre><code>a &lt; b</code></pre>")
+
+    def test_inline(self):
+        src = ('a `*x*` **b** _c_ [l](u "t") <https://e.x> ![alt](i.png) snake_case_name'
+               "  \nnext")
+        self.check(src, '<p>a <code>*x*</code> <strong>b</strong> <em>c</em> '
+                        '<a href="u" title="t">l</a> <a href="https://e.x">https://e.x</a> '
+                        "alt snake_case_name<br>next</p>")
+
+    def test_lists_nested(self):
+        self.check("- a\n- b\n  1. c\n  2. d\n- e",
+                   "<ul><li>a</li><li>b<ol><li>c</li><li>d</li></ol></li><li>e</li></ul>")
+
+    def test_blockquote_hr(self):
+        self.check("> q *x*\n\n---", "<blockquote><p>q <em>x</em></p></blockquote><hr>")
+
+    def test_table(self):
+        self.check("| a | b |\n|---|:-:|\n| 1 | x\\|y |",
+                   "<table><thead><tr><th>a</th><th>b</th></tr></thead>"
+                   "<tbody><tr><td>1</td><td>x|y</td></tr></tbody></table>")
+
+    def test_raw_html_passes_script_dropped(self):
+        out = self.norm(md_to_html("<details><summary>S</summary>\n\nbody\n</details>\n"
+                                   "<script>x()</script>"))
+        self.assertIn("<details><summary>S</summary>", out)
+        self.assertIn("<p>body</p>", out)
+        self.assertNotIn("x()", out)
+
+    def test_front_matter(self):
+        src = '---\ntitle: "T"\ndescription: D d\n---\n# H'
+        self.assertEqual(front_matter(src), ({"title": "T", "description": "D d"}, "# H"))
+        self.assertEqual(md_to_html(src), '<h1 id="h">H</h1>')
+
+    def test_mdx_imports_comments_dropped(self):
+        self.check("import X from './x'\nexport const y = 1\n{/* note */}\ntext", "<p>text</p>")
+
+    def test_mdx_components(self):
+        src = ('<CardGroup cols={2}>\n<Card title="Go" href="/go">\nGo docs\n</Card>\n'
+               "<Note title='Hi'>\nkeep me\n</Note>\n</CardGroup>")
+        self.check(src, '<p><a href="/go">Go</a></p><p>Go docs</p>'
+                        "<p><strong>Hi</strong></p><p>keep me</p>")
+
+    def test_mdx_multiline_tag_and_dedent(self):
+        src = ('<Tabs>\n  <Tab\n    title="npm"\n  >\n    ```bash\n    npm i x\n    ```\n'
+               "  </Tab>\n</Tabs>")
+        self.check(src, '<p><strong>npm</strong></p>'
+                        '<pre><code class="language-bash">npm i x</code></pre>')
+
+    def test_mdx_inline_component(self):
+        self.check("<Note>Read [run](/r).</Note>", '<p>Read <a href="/r">run</a>.</p>')
+
+    def test_mdx_unclosed_component_keeps_text(self):
+        self.check("<Note>\nstill here\n\n## After",
+                   '<p>still here</p><h2 id="after">After</h2>')
+
+    def test_jsx_in_code_kept(self):
+        self.check('```jsx\n<Card title="x" />\n```',
+                   '<pre><code class="language-jsx">&lt;Card title="x" /&gt;</code></pre>')
 
 
 if __name__ == "__main__":
