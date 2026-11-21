@@ -1,4 +1,4 @@
-# Plugins
+# CLI plugins
 
 Plugins configured in `opencode.json(c)` that expose a TUI component are loaded automatically by the CLI. To learn how
 to build plugins, see [Building plugins](/build/plugins). You do not need to add the same package to `cli.json`. The CLI

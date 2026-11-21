@@ -1,4 +1,4 @@
-# Providers
+# CLI providers
 
 Connect a provider in the TUI, then choose one of its models:
 

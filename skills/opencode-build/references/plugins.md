@@ -1,4 +1,4 @@
-# Overview
+# Building plugins
 
 Plugins modify OpenCode's behavior and add new features. A plugin is one package with a server part, a TUI part, a GUI
 part, or any combination.

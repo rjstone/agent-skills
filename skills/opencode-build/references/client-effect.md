@@ -1,4 +1,4 @@
-# Effect
+# Effect client
 
 `@opencode/client/effect` is the Effect-native client for the OpenCode HTTP API. It returns typed Effects and Streams
 and decodes responses into OpenCode schema values.
