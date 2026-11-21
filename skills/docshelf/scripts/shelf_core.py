@@ -11,7 +11,7 @@ from dataclasses import dataclass
 from typing import Callable, Dict, Iterator, List, Optional, Tuple
 from urllib.parse import unquote
 
-VERSION = "0.8.2"
+VERSION = "0.9.0"
 PROJECT_FILE = ".docshelf.json"
 
 
@@ -303,7 +303,7 @@ class Docvol(ABC):
     release: str
     aliases: Tuple[str, ...] = ()
     entry_count: int = 0
-    source: str = ""          # "devdocs", "dash", "zeal" or "folder"
+    source: str = ""          # "devdocs", "built", "dash", "zeal" or "folder"
     read_only: bool = False
     version: str = ""
     _href_known: Optional[set] = None

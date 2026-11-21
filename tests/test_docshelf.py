@@ -8213,6 +8213,129 @@ class DamagedDocvolTests(unittest.TestCase):
         self.assertEqual(err.count("skipping docvol Beta_3"), 1, err)
 
 
+def make_built(cache: str, name: str, entries: List[Tuple[str, str, str]],
+               pages: Dict[str, str], mtime: int = 1800000000,
+               fmt: Optional[int] = 1) -> str:
+    """Write <cache>/built/<name>/ the way docshelf-build does: a DevDocs-
+    shaped docvol whose meta.json says "origin": "docshelf-build"."""
+    folder = os.path.join(cache, "built", name)
+    os.makedirs(folder, exist_ok=True)
+    types = sorted({t for _, t, _ in entries})
+    index = {"entries": [{"name": n, "type": t, "path": p} for n, t, p in entries],
+             "types": [{"name": t, "count": sum(1 for e in entries if e[1] == t),
+                        "slug": t.lower()} for t in types]}
+    meta = {"slug": name, "name": name.capitalize(), "release": "", "version": "",
+            "mtime": mtime, "installedAt": "2026-11-21T00:00:00Z", "alias": None,
+            "entry_count": len(entries), "origin": "docshelf-build",
+            "source": "https://docs.example.org/", "inventory_sha256": "0" * 64}
+    if fmt is not None:
+        meta["format"] = fmt
+    for fname, data in (("index.json", index), ("db.json", pages), ("meta.json", meta)):
+        with open(os.path.join(folder, fname), "w", encoding="utf-8") as f:
+            json.dump(data, f, ensure_ascii=False)
+    return folder
+
+
+class BuiltDocvolTests(unittest.TestCase):
+    """Docvols written by the docshelf-build skill under <cache>/built/."""
+
+    def setUp(self):
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        self.tmp = os.path.realpath(tmp.name)
+        self.cache = os.path.join(self.tmp, "cache")
+        self.env = {"HOME": self.tmp, "USERPROFILE": self.tmp,
+                    "DOCSHELF_CACHE_DIR": self.cache,
+                    "DOCSHELF_NOTES_DIR": os.path.join(self.tmp, "notes")}
+
+    def cli(self, *args):
+        return run_cli(*args, env=self.env, cwd=self.tmp)
+
+    def add_built(self):
+        return make_built(self.cache, "yosys", [("opt", "cmd", "cmd/opt#opt")],
+                          {"cmd/opt": "<h1 id='opt'>opt</h1><p>Optimize.</p>"})
+
+    def add_manifest_row(self, slug):
+        make_devdocs(self.cache, "other", name="Other", release="1",
+                     entries=[("x", "Function", "x")], pages={"x": "<p>x</p>"})
+        path = os.path.join(self.cache, "devdocs", "docs.json")
+        with open(path, encoding="utf-8") as f:
+            rows = json.load(f)
+        rows.append(dict(rows[0], slug=slug, name=slug.capitalize(), type=slug))
+        with open(path, "w", encoding="utf-8") as f:
+            json.dump(rows, f)
+
+    def test_built_docvol_is_listed_and_searchable(self):
+        self.add_built()
+        r = self.cli("list")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        line = next(l for l in r.stdout.splitlines() if l.startswith("yosys "))
+        self.assertIn("built", line)
+        r = self.cli("search", "opt", "-d", "yosys")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertIn("yosys:cmd/opt#opt", r.stdout)
+
+    def test_install_refuses_built_name(self):
+        self.add_built()
+        self.add_manifest_row("yosys")
+        r = self.cli("install", "yosys")
+        self.assertEqual(r.returncode, 2, r.stdout + r.stderr)
+        self.assertIn("docshelf-build", r.stderr)
+        self.assertFalse(os.path.exists(os.path.join(self.cache, "devdocs", "yosys")))
+
+    def test_update_skips_built_silently(self):
+        self.add_built()
+        self.add_manifest_row("unrelated")
+        r = self.cli("update")
+        self.assertNotIn("yosys", r.stdout + r.stderr)
+
+    def test_update_by_name_refuses_built(self):
+        self.add_built()
+        r = self.cli("update", "yosys")
+        self.assertEqual(r.returncode, 2, r.stdout + r.stderr)
+        self.assertIn("docshelf-build", r.stderr)
+
+    def test_built_wins_name_clash_with_warning(self):
+        make_devdocs(self.cache, "yosys", name="Yosys", release="1",
+                     entries=[("x", "Function", "x")], pages={"x": "<p>x</p>"})
+        self.add_built()
+        r = self.cli("list")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        lines = [l for l in r.stdout.splitlines() if l.startswith("yosys ")]
+        self.assertEqual(len(lines), 1, r.stdout)
+        self.assertIn("built", lines[0])
+        self.assertIn("same name", r.stderr)
+
+    def test_remove_removes_built_and_keeps_plan(self):
+        folder = self.add_built()
+        plans = os.path.join(self.cache, "built-plans")
+        os.makedirs(plans)
+        with open(os.path.join(plans, "yosys.json"), "w") as f:
+            f.write("{}")
+        r = self.cli("remove", "yosys")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertFalse(os.path.exists(folder))
+        self.assertTrue(os.path.isfile(os.path.join(plans, "yosys.json")))
+
+    def test_newer_format_is_skipped_with_a_warning(self):
+        make_built(self.cache, "future", [("x", "cmd", "x")], {"x": "<p>x</p>"}, fmt=2)
+        r = self.cli("list")
+        self.assertNotIn("future ", r.stdout)
+        self.assertIn("format 2", r.stderr)
+        self.assertIn("update docshelf", r.stderr)
+
+    def test_missing_format_reads_as_format_1(self):
+        make_built(self.cache, "old", [("x", "cmd", "x")], {"x": "<p>x</p>"}, fmt=None)
+        r = self.cli("list")
+        self.assertIn("old ", r.stdout)
+
+    def test_damaged_built_hint_names_docshelf_build(self):
+        folder = self.add_built()
+        os.remove(os.path.join(folder, "index.json"))
+        r = self.cli("list")
+        self.assertIn("docshelf-build build yosys", r.stderr)
+
+
 class NoShadowedTestCaseNamesTests(unittest.TestCase):
     """A helper named like a TestCase method (e.g. `fail`) silently breaks
     every assertion that calls it."""
