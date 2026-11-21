@@ -170,6 +170,11 @@ column is from memory: verify each against real output before building.
       URL ignores a query string; blockquote lazy continuation and a few
       MDX tag heuristics (prefix match on `</Name`, list-continuation
       indented code); duplicated meta/types code in `build_docvol.py`.
+      Quadratic emphasis parsing on hostile paragraphs (`build_markdown`).
+      Deep nesting recursion is capped only by the per-page convert guard.
+      `on*=` attributes and `javascript:` hrefs pass through `_serialize`
+      (inert in docshelf's text renderer). A local root listing only
+      sub-indexes gives an empty `main_host`.
 - [ ] 8.10 Finding Sphinx docs for a library: the best way to search for
       a project's `objects.inv` site. Ideas: hosting domains with a search
       API (Read the Docs), or a list of docs-hosting domains to restrict a

@@ -89,8 +89,13 @@ def parse_index(text: str, index_url: str) -> Tuple[str, List[Link]]:
             got = _parse_link_line(line)
             if got:
                 t, href, note = got
-                url = urljoin(index_url, href)
-                if urlsplit(url).scheme in ("http", "https"):
+                try:
+                    url = urljoin(index_url, href)
+                    ok = urlsplit(url).scheme in ("http", "https")
+                except ValueError as e:
+                    warn("link skipped (%s): %s" % (e, href))
+                    continue
+                if ok:
                     links.append(Link(t, url, note, section))
     return title, links
 
@@ -139,7 +144,9 @@ def url_key(url: str, main_host: str) -> str:
             segs[-1] = "index"
     key = "/".join(segs)
     host = _host(url)
-    return key if host == main_host else host + "/" + key
+    if host == main_host:
+        return key
+    return ("_" if host in ("", ".", "..") else host) + "/" + key
 
 
 def _read_local(path: str) -> str:
@@ -157,7 +164,13 @@ def read_tree(source: str, get_text: Callable[[str], str],
     seen_keys: Set[str] = set()
     visited: Set[str] = {source}
 
-    root_text = read_file(source) if local else get_text(source)
+    if local:
+        try:
+            root_text = read_file(source)
+        except OSError as e:
+            raise CLIError("cannot read %s: %s" % (source, e.strerror or e), 2)
+    else:
+        root_text = get_text(source)
     raw.append(root_text)
     root_title, root_links = parse_index(root_text, source)
     if local:

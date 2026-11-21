@@ -211,9 +211,12 @@ def write_llms_docvol(cache: str, name: str, plan: dict, raw: Dict[str, Tuple[st
     for key, p in pages.items():
         if p["keep"] == "full" and key in raw:
             text, kind = raw[key]
-            content = md_to_html(text) if kind == "md" else main_content(text)
-            db[key] = rewrite_url_links(content, key, p["uri"], keys_by_url, host)
-            continue
+            try:
+                content = md_to_html(text) if kind == "md" else main_content(text)
+                db[key] = rewrite_url_links(content, key, p["uri"], keys_by_url, host)
+                continue
+            except (ValueError, RecursionError) as e:
+                errors[key] = "convert failed: " + type(e).__name__
         old = previous.get(key)
         if p["keep"] == "full" and isinstance(old, str) and STUB_CLASS not in old:
             db[key] = old

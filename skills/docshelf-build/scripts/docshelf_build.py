@@ -11,7 +11,7 @@ from typing import Callable, List, Optional
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
-from build_core import (VERSION, CLIError, built_dir, cache_dir, plans_dir, src_dir,  # noqa: E402
+from build_core import (NAME_RE, VERSION, CLIError, built_dir, cache_dir, plans_dir, src_dir,  # noqa: E402
                         warn)
 from build_docvol import check_name, derive_name, write_docvol, write_llms_docvol  # noqa: E402
 from build_fetch import (PageCache, fetch_llms, fetch_pages, index_getter,  # noqa: E402
@@ -60,12 +60,15 @@ def do_plan_llms(cache: str, args, opener, sleep) -> str:
     if args.base_url:
         raise CLIError("--base-url is only for Sphinx sources", 2)
     source = open_url_source(opener=opener, sleep=sleep)
-    tree = read_tree(args.source, index_getter(source))
+    src = args.source
+    if not src.startswith(("http://", "https://")):
+        src = os.path.abspath(src)
+    tree = read_tree(src, index_getter(source))
     name = args.name or derive_name({"project": tree.title})
     check_name(cache, name)
     path = _plan_path(cache, name)
     old = load_plan(path) if os.path.isfile(path) else None
-    plan = make_llms_plan(args.source, tree, list(args.overrides or []), old=old,
+    plan = make_llms_plan(src, tree, list(args.overrides or []), old=old,
                           reset=args.reset)
     save_plan(path, plan)
     _print(summarize_llms(plan, old))
@@ -73,8 +76,15 @@ def do_plan_llms(cache: str, args, opener, sleep) -> str:
     return name
 
 
+def _check_txt_exists(arg: str) -> None:
+    if arg.lower().endswith(".txt") and not arg.startswith(("http://", "https://")) \
+            and not os.path.isfile(arg):
+        raise CLIError("no such llms.txt file: %s" % arg, 2)
+
+
 def do_plan(cache: str, args, opener=None, sleep=None) -> str:
     """Write the plan; return the docvol name."""
+    _check_txt_exists(args.source)
     if is_llms_source(args.source):
         return do_plan_llms(cache, args, opener, sleep)
     source = open_source(args.source, base_url=args.base_url, opener=opener, sleep=sleep)
@@ -124,9 +134,15 @@ def do_build_llms(cache: str, name: str, plan: dict, path: str, workers: int, re
         first = sorted(errors)[0]
         raise CLIError("every page failed to download (e.g. %s: %s); nothing written, "
                        "the previous docvol (if any) is kept" % (first, errors[first]), 4)
-    for key, (text, kind) in raw.items():
+    for key, (text, kind) in list(raw.items()):
         page = pages[key]
-        page["signals"] = page_signals(text, kind)
+        try:
+            page["signals"] = page_signals(text, kind)
+        except (ValueError, RecursionError) as e:
+            errors[key] = "convert failed: " + type(e).__name__
+            page["fetch_error"] = errors[key]
+            del raw[key]
+            continue
         if key in fetched:
             page["fetched"] = fetched[key]
         if key in errors:
@@ -208,10 +224,12 @@ def do_list(cache: str) -> None:
 
 
 def do_remove(cache: str, name: str, with_plan: bool) -> None:
+    if not NAME_RE.match(name):
+        raise CLIError("not a docvol name: %r" % name, 2)
     folder = os.path.join(built_dir(cache), name)
     plan = _plan_path(cache, name)
     pages = os.path.join(src_dir(cache), name)
-    if os.path.basename(folder) != name or not name:
+    if os.path.basename(folder) != name:
         raise CLIError("not a docvol name: %r" % name, 2)
     did = []
     if os.path.isdir(folder):
@@ -278,6 +296,7 @@ def main(argv: Optional[List[str]] = None, env=None, opener=None,
         if args.command == "plan":
             do_plan(cache, args, opener, sleep)
         elif args.command == "build":
+            _check_txt_exists(args.source)
             if _is_source(args.source) or is_llms_source(args.source):
                 name = do_plan(cache, args, opener, sleep)
             else:

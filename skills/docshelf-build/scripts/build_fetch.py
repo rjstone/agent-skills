@@ -1,5 +1,6 @@
 """Where a build reads from: a docs site URL or a local Sphinx HTML folder."""
 import hashlib
+import http.client
 import json
 import os
 import tempfile
@@ -40,6 +41,8 @@ def default_opener(url: str) -> Tuple[int, bytes]:
             return getattr(r, "status", 200), r.read()
     except urllib.error.HTTPError as e:
         return e.code, b""
+    except http.client.InvalidURL as e:
+        raise ValueError(str(e))
     except (urllib.error.URLError, OSError):
         return 0, b""
 
@@ -106,20 +109,32 @@ class Source:
         except OSError as e:
             raise FetchError(uri, "missing in the source folder (%s)" % e.strerror)
 
+    def _open(self, url: str) -> Tuple[int, bytes]:
+        """One opener call; a malformed URL (ValueError, UnicodeError from
+        idna, http.client.InvalidURL) is a FetchError that is not retried."""
+        try:
+            return self.opener(url)
+        except (ValueError, UnicodeError, http.client.InvalidURL):
+            raise FetchError(url, "invalid URL")
+
     def _get(self, url: str) -> Tuple[int, bytes]:
         """GET with retries on 429, 5xx and network failures."""
-        status, body = self.opener(url)
+        status, body = self._open(url)
         for wait in RETRY_DELAYS:
             if not (status == 0 or status == 429 or status >= 500):
                 break
             self.sleep(wait)
-            status, body = self.opener(url)
+            status, body = self._open(url)
         return status, body
 
     def get_url(self, url: str) -> bytes:
         """Body of an absolute URL after the robots.txt check; FetchError on
         a block or any non-200 answer."""
-        if not self._allowed(url):
+        try:
+            allowed = self._allowed(url)
+        except ValueError:
+            raise FetchError(url, "invalid URL")
+        if not allowed:
             raise FetchError(url, "blocked by robots.txt")
         status, body = self._get(url)
         if status != 200:
@@ -134,7 +149,7 @@ class Source:
         with self._lock:
             rp = self._robots.get(origin)
             if rp is None:
-                status, body = self.opener(origin + "/robots.txt")
+                status, body = self._open(origin + "/robots.txt")
                 rp = urllib.robotparser.RobotFileParser()
                 if status in (401, 403):
                     rp.disallow_all = True
@@ -201,7 +216,7 @@ def index_getter(source: Source) -> Callable[[str], str]:
 
 def looks_html(body: str) -> bool:
     """True when the text starts (after whitespace) like an HTML document."""
-    head = body.lstrip()[:15].lower()
+    head = body.lstrip("\ufeff").lstrip()[:15].lower()
     return head.startswith(("<!doctype", "<html"))
 
 
@@ -245,6 +260,7 @@ class PageCache:
     def __init__(self, root: str):
         self.root = root
         self._lock = threading.Lock()
+        self._pending: Optional[dict] = None   # manifest updated this run, unwritten
 
     def _path(self, key: str, kind: str) -> str:
         real_root = os.path.realpath(self.root)
@@ -254,6 +270,11 @@ class PageCache:
         return path
 
     def manifest(self) -> dict:
+        if self._pending is not None:
+            return dict(self._pending)
+        return self._read_manifest()
+
+    def _read_manifest(self) -> dict:
         try:
             with open(os.path.join(self.root, "manifest.json"), encoding="utf-8") as fh:
                 data = json.load(fh)
@@ -276,7 +297,9 @@ class PageCache:
         data = text.encode("utf-8")
         with self._lock:
             _atomic_write(path, data)
-            manifest = self.manifest()
+            if self._pending is None:
+                self._pending = self._read_manifest()
+            manifest = self._pending
             old = manifest.get(key)
             if isinstance(old, dict) and old.get("type") in ("md", "html") and old["type"] != kind:
                 try:
@@ -285,8 +308,15 @@ class PageCache:
                     pass
             manifest[key] = {"url": url, "sha256": hashlib.sha256(data).hexdigest(),
                              "fetched": _iso(now), "type": kind}
+
+    def flush(self) -> None:
+        """Write the manifest atomically (once per run, not per page)."""
+        with self._lock:
+            if self._pending is None:
+                return
             _atomic_write(os.path.join(self.root, "manifest.json"),
-                          json.dumps(manifest, indent=1, sort_keys=True).encode("utf-8"))
+                          json.dumps(self._pending, indent=1, sort_keys=True).encode("utf-8"))
+            self._pending = None
 
 
 def fetch_llms(source: Source, pages: List[Tuple[str, str]], cache: PageCache,
@@ -316,13 +346,21 @@ def fetch_llms(source: Source, pages: List[Tuple[str, str]], cache: PageCache,
             hit = cache.get(key)
             if hit is not None:
                 raw[key] = hit
+        except (ValueError, OSError) as e:
+            errors[key] = "cannot store page: %s" % (getattr(e, "strerror", None) or e)
+            hit = cache.get(key)
+            if hit is not None:
+                raw[key] = hit
         if source.delay:
             source.sleep(source.delay)
 
-    if source.workers == 1:
-        for item in pages:
-            one(item)
-    else:
-        with ThreadPoolExecutor(max_workers=source.workers) as pool:
-            list(pool.map(one, pages))
+    try:
+        if source.workers == 1:
+            for item in pages:
+                one(item)
+        else:
+            with ThreadPoolExecutor(max_workers=source.workers) as pool:
+                list(pool.map(one, pages))
+    finally:
+        cache.flush()
     return raw, errors, fetched

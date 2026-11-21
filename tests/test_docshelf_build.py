@@ -1427,5 +1427,173 @@ class SignalsTests(unittest.TestCase):
         self.assertEqual(page_signals("", "md")["you_per_1k"], 0.0)
 
 
+class FinalFixTests(unittest.TestCase):
+    """Final whole-branch review fixes."""
+
+    def setUp(self):
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        self.tmp = os.path.realpath(tmp.name)
+        self.cache = os.path.join(self.tmp, "cache")
+        self.env = {"HOME": self.tmp, "DOCSHELF_CACHE_DIR": self.cache}
+
+    def run_main(self, *argv, opener=None):
+        out, err = io.StringIO(), io.StringIO()
+        with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
+            code = docshelf_build.main(list(argv), env=self.env, opener=opener,
+                                       sleep=lambda s: None)
+        return code, out.getvalue(), err.getvalue()
+
+    def test_remove_dot_names_refused(self):
+        for d in ("built", "built-src", "built-plans"):
+            os.makedirs(os.path.join(self.cache, d))
+        for bad in ("..", "."):
+            code, _, err = self.run_main("remove", bad)
+            self.assertEqual(code, 2, bad)
+            self.assertIn("not a docvol name", err)
+        for d in ("built", "built-src", "built-plans"):
+            self.assertTrue(os.path.isdir(os.path.join(self.cache, d)))
+        self.assertTrue(os.path.isdir(self.cache))
+
+    def test_parse_index_skips_bad_ipv6_link(self):
+        text = "# T\n- [a](http://[oops/x.md)\n- [b](https://x.io/b.md)\n"
+        _, links = parse_index(text, "https://x.io/llms.txt")
+        self.assertEqual([l.url for l in links], ["https://x.io/b.md"])
+
+    def test_invalid_urls_not_retried(self):
+        calls = []
+
+        def opener(url):
+            calls.append(url)
+            if url.endswith("/robots.txt"):
+                return 404, b""
+            raise __import__("http.client").client.InvalidURL("bad")
+
+        sleeps = []
+        src = open_url_source(opener=opener, sleep=sleeps.append, delay=0)
+        with self.assertRaises(FetchError) as cm:
+            src.get_url("https://x.io/a b.md")
+        self.assertEqual(cm.exception.reason, "invalid URL")
+        self.assertEqual(sleeps, [])
+        self.assertEqual(len([c for c in calls if not c.endswith("robots.txt")]), 1)
+
+        def idna(url):
+            if url.endswith("/robots.txt"):
+                return 404, b""
+            raise UnicodeError("label empty")
+        src = open_url_source(opener=idna, sleep=sleeps.append, delay=0)
+        with self.assertRaises(FetchError):
+            src.get_url("https://a..b/x.md")
+        self.assertEqual(sleeps, [])
+
+    def test_default_opener_real_bad_urls(self):
+        for url in ("https://x.io/a b.md", "https://a..b/x.md"):
+            try:
+                got = build_fetch.default_opener(url)
+            except (ValueError, UnicodeError):
+                continue
+            self.assertEqual(got[0], 0)
+
+    def test_fetch_llms_records_oserror_and_valueerror(self):
+        cache = PageCache(os.path.join(self.tmp, "src"))
+        op = fake_opener([(200, b"# A"), (200, b"# B")])
+        src = open_url_source(opener=op, sleep=lambda s: None, delay=0)
+        with mock.patch.object(PageCache, "put", side_effect=[OSError("disk"), ValueError("key")]):
+            raw, errors, _ = fetch_llms(src, [("a", "https://x.io/a.md"),
+                                              ("b", "https://x.io/b.md")], cache, True, 0.0)
+        self.assertEqual(raw, {})
+        self.assertEqual(sorted(errors), ["a", "b"])
+
+    def test_conversion_failure_becomes_stub(self):
+        site = {"https://x.io/llms.txt": (200, b"# P\n- [A](https://x.io/a.md)\n"),
+                "https://x.io/a.md": (200, b"# A\n\nbody\n")}
+
+        def opener(url):
+            if url.endswith("/robots.txt"):
+                return 404, b""
+            return site.get(url, (404, b""))
+        with mock.patch("build_docvol.md_to_html", side_effect=RecursionError), \
+                mock.patch("docshelf_build.page_signals", side_effect=RecursionError):
+            code, out, err = self.run_main("build", "https://x.io/llms.txt", opener=opener)
+        self.assertEqual(code, 0, err)
+        plan = load_plan(os.path.join(self.cache, "built-plans", "p.json"))
+        self.assertEqual(plan["pages"]["a"]["fetch_error"], "convert failed: RecursionError")
+        db = json.load(open(os.path.join(self.cache, "built", "p", "db.json")))
+        self.assertIn("convert failed", db["a"])
+
+    def test_conversion_failure_in_writer_only(self):
+        site = {"https://x.io/llms.txt": (200, b"# P\n- [A](https://x.io/a.md)\n"),
+                "https://x.io/a.md": (200, b"# A\n\nbody\n")}
+
+        def opener(url):
+            if url.endswith("/robots.txt"):
+                return 404, b""
+            return site.get(url, (404, b""))
+        with mock.patch("build_docvol.md_to_html", side_effect=RecursionError):
+            code, _, err = self.run_main("build", "https://x.io/llms.txt", opener=opener)
+        self.assertEqual(code, 0, err)
+        db = json.load(open(os.path.join(self.cache, "built", "p", "db.json")))
+        self.assertIn("convert failed", db["a"])
+
+    def test_local_txt_stored_absolute_and_missing_message(self):
+        a, b = os.path.join(self.tmp, "A"), os.path.join(self.tmp, "B")
+        os.makedirs(a)
+        os.makedirs(b)
+        write(a, "llms.txt", "# L\n- [P](https://x.io/p.md)\n")
+        op = lambda url: (404, b"") if url.endswith("robots.txt") else (200, b"# P\n\nhi\n")
+        old = os.getcwd()
+        self.addCleanup(os.chdir, old)
+        os.chdir(a)
+        self.assertEqual(self.run_main("plan", "llms.txt", "--name", "l", opener=op)[0], 0)
+        os.chdir(b)
+        code, out, err = self.run_main("build", "l", opener=op)
+        self.assertEqual(code, 0, err)
+        code, _, err = self.run_main("plan", "nope.txt", opener=op)
+        self.assertEqual(code, 2)
+        self.assertIn("no such llms.txt file", err)
+        code, _, err = self.run_main("build", "nope.txt", opener=op)
+        self.assertEqual(code, 2)
+        self.assertIn("no such llms.txt file", err)
+
+    def test_read_tree_unreadable_root(self):
+        def boom(path):
+            raise OSError(2, "No such file or directory")
+        with self.assertRaises(CLIError) as cm:
+            read_tree("rel/llms.txt", lambda u: "", read_file=boom)
+        self.assertEqual(cm.exception.code, 2)
+        self.assertIn("cannot read", str(cm.exception))
+
+    def test_url_key_dot_host(self):
+        self.assertEqual(url_key("http://../x.md", "x.io"), "_/x")
+        self.assertEqual(url_key("http://./x.md", "x.io"), "_/x")
+
+    def test_manifest_written_once(self):
+        cache = PageCache(os.path.join(self.tmp, "src"))
+        op = fake_opener([(200, b"# 1"), (200, b"# 2"), (200, b"# 3")])
+        src = open_url_source(opener=op, sleep=lambda s: None, delay=0)
+        pages = [("a", "https://x.io/a.md"), ("b", "https://x.io/b.md"),
+                 ("c", "https://x.io/c.md")]
+        real = build_fetch._atomic_write
+        writes = []
+
+        def counting(path, data):
+            writes.append(os.path.basename(path))
+            real(path, data)
+        with mock.patch.object(build_fetch, "_atomic_write", counting):
+            fetch_llms(src, pages, cache, True, 0.0)
+        self.assertEqual(writes.count("manifest.json"), 1)
+        self.assertEqual(sorted(cache.manifest()), ["a", "b", "c"])
+
+    def test_cache_get_sees_unflushed_put(self):
+        cache = PageCache(os.path.join(self.tmp, "src"))
+        cache.put("a", "https://x.io/a.md", "hello", "md", 0.0)
+        self.assertEqual(cache.get("a"), ("hello", "md"))
+        cache.flush()
+        self.assertEqual(PageCache(cache.root).get("a"), ("hello", "md"))
+
+    def test_looks_html_bom(self):
+        self.assertTrue(looks_html("\ufeff<!doctype html>"))
+
+
 if __name__ == "__main__":
     unittest.main()
