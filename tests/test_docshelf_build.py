@@ -897,6 +897,13 @@ class MarkdownTests(unittest.TestCase):
         self.check("<Note>\nstill here\n\n## After",
                    '<p>still here</p><h2 id="after">After</h2>')
 
+    def test_mdx_generic_in_prose_kept(self):
+        self.check("Use Vec<String> here", "<p>Use Vec&lt;String&gt; here</p>")
+
+    def test_mdx_tag_in_indented_code_kept(self):
+        self.check('para\n\n    <Card title="x" />\n',
+                   '<p>para</p><pre><code>&lt;Card title="x" /&gt;</code></pre>')
+
     def test_jsx_in_code_kept(self):
         self.check('```jsx\n<Card title="x" />\n```',
                    '<pre><code class="language-jsx">&lt;Card title="x" /&gt;</code></pre>')

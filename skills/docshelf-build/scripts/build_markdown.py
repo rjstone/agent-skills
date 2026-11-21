@@ -91,6 +91,7 @@ def _mdx(lines: List[str]) -> List[str]:
     out: List[str] = []
     stack: List[Tuple[str, int]] = []
     fence = ""
+    in_list = False
     i = 0
     while i < len(lines):
         line = lines[i]
@@ -118,7 +119,19 @@ def _mdx(lines: List[str]) -> List[str]:
         if re.match(r"^\s*\{/\*.*\*/\}\s*$", line):
             i += 1
             continue
-        tag = next((t for t in _TAG.finditer(line) if not _in_code(line, t.start())), None)
+        if line.startswith("    ") and not stack and not in_list \
+                and (not out or not out[-1].strip() or out[-1].startswith("    ")):
+            out.append(line)  # indented code: never scan for tags
+            i += 1
+            continue
+        if line.strip():
+            in_list = bool(_LIST.match(line)) or (in_list and line.startswith(" "))
+        names = [s[0] for s in stack]
+        tag = next((t for t in _TAG.finditer(line)
+                    if not _in_code(line, t.start())
+                    and (not line[:t.start()].strip()
+                         or (t.group(0)[1] == "/" and t.group(0)[2:] in names)
+                         or "</%s" % t.group(0)[1:] in line[t.end():])), None)
         if tag is None:
             out.append(line)
             i += 1
