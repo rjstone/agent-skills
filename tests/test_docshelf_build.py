@@ -3,6 +3,7 @@ by make_inv() and sites are folders or fake openers. Run from the repo root:
 python3 -m unittest discover -s tests -v
 """
 import contextlib
+import hashlib
 import io
 import json
 import os
@@ -33,6 +34,7 @@ from build_fetch import fetch_pages, normalize_source, open_source  # noqa: E402
 from build_html import main_content, rewrite_links, stub_html  # noqa: E402
 from build_docvol import check_name, derive_name, role_label, write_docvol  # noqa: E402
 import docshelf_build  # noqa: E402
+from build_llms import is_llms_source, parse_index, read_tree, url_key  # noqa: E402
 
 DOCSHELF = os.path.join(REPO_ROOT, "skills", "docshelf", "scripts", "docshelf.py")
 
@@ -701,6 +703,116 @@ class CliTests(unittest.TestCase):
                             "--help"], capture_output=True, text=True)
         self.assertEqual(r.returncode, 0, r.stderr)
         self.assertIn("plan", r.stdout)
+
+
+FLAT_INDEX = """\ufeff# OpenCode\r
+\r
+> Agents in your terminal.\r
+\r
+- [Home](https://x.io/index.md)\r
+\r
+## Docs\r
+\r
+- [Build](https://x.io/docs/build.md): build agents\r
+* [Run](/docs/run/)\r
+  - [Run flags](docs/run/flags.mdx)\r
+\r
+## Optional\r
+\r
+- [Pricing](https://x.io/pricing)\r
+- [Build again](https://x.io/docs/build.md)\r
+"""
+
+
+class LlmsIndexTests(unittest.TestCase):
+    def test_parse_flat_index(self):
+        title, links = parse_index(FLAT_INDEX, "https://x.io/llms.txt")
+        self.assertEqual(title, "OpenCode")
+        self.assertEqual([(l.title, l.url, l.note, l.section) for l in links], [
+            ("Home", "https://x.io/index.md", None, None),
+            ("Build", "https://x.io/docs/build.md", "build agents", "Docs"),
+            ("Run", "https://x.io/docs/run/", None, "Docs"),
+            ("Run flags", "https://x.io/docs/run/flags.mdx", None, "Docs"),
+            ("Pricing", "https://x.io/pricing", None, "Optional"),
+            ("Build again", "https://x.io/docs/build.md", None, "Optional")])
+
+    def test_url_key(self):
+        h = "x.io"
+        for url, key in [("https://x.io/docs/build.md", "docs/build"),
+                         ("https://x.io/docs/run/", "docs/run/index"),
+                         ("https://x.io/", "index"),
+                         ("https://x.io/a/b.mdx?x=1#frag", "a/b"),
+                         ("https://x.io/a/page.html", "a/page"),
+                         ("https://other.io/docs/a.md", "other.io/docs/a"),
+                         ("https://x.io/../../etc/passwd.md", "etc/passwd"),
+                         ("https://x.io/a/%2e%2e/%2e%2e/b.md", "b"),
+                         ("https://x.io//a//b.md", "a/b")]:
+            self.assertEqual(url_key(url, h), key, url)
+
+    def test_is_llms_source(self):
+        self.assertTrue(is_llms_source("https://x.io/llms.txt"))
+        self.assertTrue(is_llms_source("https://x.io/_llms/python.txt"))
+        self.assertFalse(is_llms_source("https://x.io/docs/"))
+        with tempfile.TemporaryDirectory() as d:
+            f = os.path.join(d, "llms.txt")
+            with open(f, "w", encoding="utf-8") as fh:
+                fh.write("# T\n")
+            self.assertTrue(is_llms_source(f))
+            self.assertFalse(is_llms_source(d))
+            self.assertFalse(is_llms_source(os.path.join(d, "missing.txt")))
+
+    def test_tree_flat(self):
+        tree = read_tree("https://x.io/llms.txt", get_text={"https://x.io/llms.txt": FLAT_INDEX}.__getitem__)
+        self.assertEqual(tree.title, "OpenCode")
+        self.assertEqual(tree.main_host, "x.io")
+        self.assertEqual([p.key for p in tree.pages],
+                         ["index", "docs/build", "docs/run/index", "docs/run/flags", "pricing"])
+        self.assertEqual(tree.pages[1].description, "build agents")
+        self.assertEqual(tree.indexes, [{"url": "https://x.io/llms.txt", "title": "OpenCode",
+                                         "pages": 5, "parent": None, "note": None}])
+        self.assertEqual(tree.sha256, hashlib.sha256(FLAT_INDEX.encode()).hexdigest())
+
+    def test_tree_nested_cycle_dup_other_host(self):
+        texts = {
+            "https://x.io/llms.txt": "# Root\n## Python\n- [Py](/_llms/python.txt)\n"
+                                     "- [Ext](https://other.io/llms.txt)\n- [Top](/top.md)\n",
+            "https://x.io/_llms/python.txt": "# Python docs\n- [A](/py/a.md)\n- [Top](/top.md)\n"
+                                             "- [Back](/llms.txt)\n- [Deeper](/_llms/d1.txt)\n",
+            "https://x.io/_llms/d1.txt": "# D1\n- [D](/d/1.md)\n- [D2](/_llms/d2.txt)\n",
+            "https://x.io/_llms/d2.txt": "# D2\n- [E](/d/2.md)\n- [D3](/_llms/d3.txt)\n",
+        }
+        tree = read_tree("https://x.io/llms.txt", texts.__getitem__)
+        self.assertEqual([(p.key, p.section) for p in tree.pages],
+                         [("py/a", "Python / Python docs"), ("top", "Python / Python docs"),
+                          ("d/1", "Python / Python docs / D1"), ("d/2", "Python / Python docs / D1 / D2")])
+        notes = {i["url"]: i["note"] for i in tree.indexes}
+        self.assertEqual(notes["https://other.io/llms.txt"], "other host, not followed")
+        self.assertEqual(notes["https://x.io/_llms/d3.txt"], "depth limit")
+        self.assertEqual(sum(1 for i in tree.indexes if i["url"] == "https://x.io/llms.txt"), 1)
+
+    def test_tree_local_file_main_host_by_majority(self):
+        text = ("# Local\n- [A](https://x.io/a.md)\n- [O](https://other.io/o.md)\n"
+                "- [B](https://x.io/b.md)\n")
+        with tempfile.TemporaryDirectory() as d:
+            f = os.path.join(d, "llms.txt")
+            with open(f, "w", encoding="utf-8") as fh:
+                fh.write(text)
+            tree = read_tree(f, get_text=lambda u: self.fail("no fetch expected: " + u))
+        self.assertEqual(tree.main_host, "x.io")
+        self.assertEqual([p.key for p in tree.pages], ["a", "other.io/o", "b"])
+        self.assertEqual(tree.indexes[0]["url"], f)
+
+    def test_tree_key_collision(self):
+        text = "# T\n- [A](https://x.io/docs/build.md)\n- [B](https://x.io/docs/build.mdx)\n"
+        with contextlib.redirect_stderr(io.StringIO()) as err:
+            tree = read_tree("https://x.io/llms.txt", {"https://x.io/llms.txt": text}.__getitem__)
+        self.assertEqual([p.key for p in tree.pages], ["docs/build", "docs/build-2"])
+        self.assertIn("docs/build", err.getvalue())
+
+    def test_tree_without_links_is_error(self):
+        with self.assertRaises(CLIError) as cm:
+            read_tree("https://x.io/llms.txt", lambda u: "<!doctype html><html><body>Not found</body></html>")
+        self.assertEqual(cm.exception.code, 3)
 
 
 if __name__ == "__main__":
