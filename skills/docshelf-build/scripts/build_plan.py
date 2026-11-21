@@ -116,14 +116,7 @@ def summarize(plan: dict, old: Optional[dict]) -> List[str]:
     biggest = sorted(groups, key=lambda g: (-sum(groups[g].values()), g))
     for g in biggest[:5]:
         lines.append("  %s: %d full, %d stub" % (g, groups[g]["full"], groups[g]["stub"]))
-    if old is not None:
-        added = sorted(set(pages) - set(old.get("pages", {})))
-        dropped = sorted(set(old.get("pages", {})) - set(pages))
-        for word, keys in (("added", added), ("dropped", dropped)):
-            if keys:
-                more = " ..." if len(keys) > 10 else ""
-                lines.append("%s %d page%s: %s%s" % (word, len(keys), "" if len(keys) == 1
-                                                      else "s", ", ".join(keys[:10]), more))
+    lines.extend(_added_dropped(pages, old))
     if full == 0 and biggest:
         top = next((g for g in biggest if any("/" in k for k in pages if _group(k) == g)),
                    biggest[0])
@@ -148,14 +141,16 @@ def make_llms_plan(source: str, tree: Tree, overrides: List[Tuple[str, str]],
         entry = {"keep": keep, "title": page.title, "section": page.section,
                  "description": page.description or (prev or {}).get("description"),
                  "why": why, "uri": page.url}
-        if reset and why != "manual" and not page.description:
+        if prev and str(prev.get("why", "")).startswith("model:") and why == prev["why"]:
+            entry["description"] = prev.get("description")
+        elif reset and why != "manual" and not page.description:
             entry["description"] = None
         for field in CARRIED:
             if prev and field in prev:
                 entry[field] = prev[field]
         pages[page.key] = entry
     return {"format": FORMAT, "kind": "llms", "source": source, "base_url": None,
-            "index_sha256": tree.sha256, "indexes": tree.indexes,
+            "main_host": tree.main_host, "index_sha256": tree.sha256, "indexes": tree.indexes,
             "project": tree.title, "version": "", "entry_count": len(pages),
             "rule": "llms-all", "overrides": stored + cli, "pages": pages}
 
@@ -187,14 +182,20 @@ def summarize_llms(plan: dict, old: Optional[dict]) -> List[str]:
     if indexes:
         lines.append("index tree:")
         depth: Dict[Optional[str], int] = {}
-        host = urlsplit(plan["source"]).netloc
+        host = plan.get("main_host", urlsplit(plan["source"]).netloc)
         for ix in indexes:
             d = 0 if ix.get("parent") is None else depth.get(ix["parent"], 0) + 1
             depth[ix["url"]] = d
             parts = urlsplit(ix["url"])
-            shown = parts.path.lstrip("/") if parts.netloc == host else ix["url"]
-            info = ix["note"] if ix.get("pages") is None and ix.get("note") else ix.get("pages")
-            lines.append("%s%s (%s)" % ("  " * (d + 1), shown, info))
+            if parts.scheme not in ("http", "https"):
+                shown = os.path.basename(ix["url"])  # a local root file
+            elif (parts.hostname or "") == host:
+                shown = parts.path.lstrip("/")
+            else:
+                shown = ix["url"]
+            info = ix["note"] if ix.get("pages") is None else ix["pages"]
+            lines.append("%s%s%s" % ("  " * (d + 1), shown,
+                                     "" if info is None else " (%s)" % info))
     lines.extend(_added_dropped(pages, old))
     if full > 300:
         lines.append("warning: %d full pages; narrow with a sub-index as SOURCE (see the tree) "

@@ -272,6 +272,30 @@ class LlmsPlanTests(unittest.TestCase):
         reset = make_llms_plan(SRC_LLMS, llms_tree([("docs/a", "Docs")]), [], old=old, reset=True)
         self.assertEqual(reset["pages"]["docs/a"]["why"], "llms: all")
 
+    def test_model_choice_keeps_description(self):
+        old = make_llms_plan(SRC_LLMS, llms_tree([("a", "Docs")]), [])
+        old["pages"]["a"].update(keep="stub", why="model:emb-1", description="model words")
+        tree = llms_tree([("a", "Docs")], sha="s2")
+        tree = tree._replace(pages=[tree.pages[0]._replace(description="index note")])
+        again = make_llms_plan(SRC_LLMS, tree, [], old=old)
+        self.assertEqual(again["pages"]["a"]["description"], "model words")
+        fresh = make_llms_plan(SRC_LLMS, tree, [])
+        self.assertEqual(fresh["pages"]["a"]["description"], "index note")
+
+    def test_summary_local_source_paths(self):
+        tree = llms_tree([("a", "Docs")], indexes=[
+            {"url": "docs/llms.txt", "title": "R", "pages": 1, "parent": None, "note": None},
+            {"url": "https://x.io/_llms/py.txt", "title": "P", "pages": 2,
+             "parent": "docs/llms.txt", "note": None},
+            {"url": "https://x.io/_llms/deep.txt", "title": "D", "pages": None,
+             "parent": "docs/llms.txt", "note": None}])
+        plan = make_llms_plan("docs/llms.txt", tree, [])
+        self.assertEqual(plan["main_host"], "x.io")
+        lines = summarize_llms(plan, None)
+        self.assertEqual(lines[2:5], ["index tree:", "  llms.txt (1)", "    _llms/py.txt (2)"])
+        self.assertIn("    _llms/deep.txt", lines)
+        self.assertFalse(any("None" in l for l in lines), lines)
+
     def test_manual_beats_cli_and_reset(self):
         old = make_llms_plan(SRC_LLMS, llms_tree([("a", "Docs")]), [])
         old["pages"]["a"].update(keep="stub", why="manual")
