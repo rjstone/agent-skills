@@ -26,6 +26,7 @@ from build_core import CLIError
 from build_html import _SELECTORS, VOID, _element_end, _serialize, _tokens
 from build_fetch import Source, _atomic_write, default_head  # noqa: F401 (re-export)
 
+HEAD_REFUSED = (0, 400, 403, 405, 501)  # a HEAD answer that says nothing about the file
 MAX_UNPACKED = 500 * 1024 * 1024
 MAX_FILES = 50000
 RTD_API = "https://readthedocs.org/api/v3/projects/%s/versions/%s/"
@@ -74,6 +75,8 @@ def find_archive(site_url: str, get: Getter, head: Optional[Header] = None) -> O
     probe = "%s/_/downloads/%s/%s/htmlzip/" % (origin, lang, version)
     try:
         status = head(probe)[0] if head else get(probe)[0]
+        if head and status in HEAD_REFUSED:
+            status = get(probe)[0]  # some servers refuse HEAD: one GET (downloads the archive)
     except ValueError:
         return None
     return probe if status == 200 else None
@@ -344,10 +347,11 @@ def split_singlehtml(html: str, docnames: List[str]) -> Dict[str, str]:
         here = posixpath.dirname(d + ".html") or "."
 
         def href(value: str, d=d, here=here) -> str:
-            path, _, ident = value.partition("#")
-            if path not in ("", "index.html", "./index.html") or not ident:
+            path, _, frag = value.partition("#")
+            if path not in ("", "index.html", "./index.html") or not frag:
                 return value
-            value = "#" + ident
+            value = "#" + frag
+            ident = urllib.parse.unquote(frag)  # '#guide%2Fa' names id "guide/a"
             if ident.startswith(DOC_PREFIX):
                 tgt = wanted.get(ident[len(DOC_PREFIX):], ident[len(DOC_PREFIX):])
                 return posixpath.relpath(tgt + ".html", here) if tgt in pages else value

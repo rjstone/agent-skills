@@ -442,7 +442,7 @@ class FetchTests(unittest.TestCase):
         def fake_urlopen(req, timeout=None):
             seen["ua"] = req.get_header("User-agent")
             return Resp()
-        with mock.patch("urllib.request.urlopen", fake_urlopen):
+        with mock.patch.object(build_fetch._URL_OPENER, "open", fake_urlopen):
             self.assertEqual(build_fetch.default_opener("https://x.io/a.html"), (200, b"x"))
         self.assertEqual(seen["ua"], "docshelf-build/" + build_core.VERSION)
 
@@ -2850,6 +2850,102 @@ class ArchiveCliTests(unittest.TestCase):
         self.assertTrue(os.path.isdir(folder))
         self.assertEqual(self.run_main("remove", "demo")[0], 0)
         self.assertFalse(os.path.exists(folder))
+
+
+class DeferredMinorsTests(unittest.TestCase):
+    """0.4.1: the minors deferred from 0.4.0."""
+
+    def test_stray_brackets_scan_in_bounded_time(self):
+        import time
+        import build_markdown
+        t = time.time()
+        build_markdown._inline("[[]" * 40000)
+        self.assertLess(time.time() - t, 4)  # quadratic before: about 7 s
+        self.assertIn('<a href="u">a [b]</a>', build_markdown._inline("[a [b]](u)"))
+
+    def test_bare_line_after_fence_or_table_row_is_not_lazy(self):
+        import build_markdown as bm
+        for quote in (["> ```", "> x", "> ```"], ["> | a | b |", "> |---|---|", "> | 1 | 2 |"]):
+            html = bm._blocks(quote + ["bare"], {}, False, 0)
+            self.assertIn("</blockquote>\n<p>bare</p>", html)
+        html = bm._blocks(["> para", "bare"], {}, False, 0)
+        self.assertIn("<p>para\nbare</p>", html.replace("parabare", "para\nbare"))
+
+    def _src(self, routes, robots):
+        """routes: url -> (status, bytes); robots: origin -> robots text."""
+        seen = []
+
+        def opener(url):
+            seen.append(url)
+            if url.endswith("/robots.txt"):
+                text = robots.get(url[:-len("/robots.txt")])
+                return (200, text.encode()) if text is not None else (404, b"")
+            return routes[url]
+        return open_source("https://x.io/docs/", opener=opener, sleep=lambda s: None, delay=0), seen
+
+    def test_redirect_target_is_checked_against_its_own_robots(self):
+        src, seen = self._src({"https://x.io/a.html": (301, b"https://y.io/p.html"),
+                               "https://y.io/p.html": (200, b"body")},
+                              {"https://y.io": "User-agent: *\nDisallow: /\n"})
+        self.assertEqual(src.get_quiet("https://x.io/a.html"), (0, b""))
+        self.assertNotIn("https://y.io/p.html", seen)
+        with self.assertRaises(FetchError):
+            src.get_url("https://x.io/a.html")
+
+    def test_allowed_redirect_is_followed_and_loops_end(self):
+        src, _ = self._src({"https://x.io/a.html": (302, b"/b.html"),
+                            "https://x.io/b.html": (200, b"ok"),
+                            "https://x.io/l1": (302, b"/l2"), "https://x.io/l2": (302, b"/l1")}, {})
+        self.assertEqual(src.get_url("https://x.io/a.html"), b"ok")
+        with self.assertRaises(FetchError) as c:
+            src.get_url("https://x.io/l1")
+        self.assertIn("too many redirects", str(c.exception))
+
+    def test_default_opener_hands_back_the_redirect(self):
+        import urllib.error
+        import email.message
+
+        def fake_open(req, timeout=None):
+            h = email.message.Message()
+            h["Location"] = "https://y.io/z"
+            raise urllib.error.HTTPError(req.full_url, 301, "moved", h, None)
+        with mock.patch.object(build_fetch._URL_OPENER, "open", fake_open):
+            self.assertEqual(build_fetch.default_opener("https://x.io/a"), (301, b"https://y.io/z"))
+            self.assertEqual(build_fetch.default_head("https://x.io/a"), (301, {"location": "https://y.io/z"}))
+
+    def test_probe_falls_back_to_get_when_head_is_refused(self):
+        import build_archive
+        probe = "https://p.readthedocs.io/_/downloads/en/latest/htmlzip/"
+        get = lambda url: (0, b"") if "api/v3" in url else (200, b"PK")  # noqa: E731
+        for refused in (405, 403, 501, 0):
+            self.assertEqual(build_archive.find_archive("https://p.readthedocs.io/en/latest/", get,
+                                                        lambda u, r=refused: (r, {})), probe)
+        self.assertIsNone(build_archive.find_archive("https://p.readthedocs.io/en/latest/", get,
+                                                     lambda u: (404, {})))
+
+    def test_percent_encoded_fragments_resolve(self):
+        import build_archive
+        html = ("<div role='main'><span id='document-guide/a'></span><p>A <a href='#document-cmd%2Fopt'>o</a>"
+                " <a href='#sec%2D1'>s</a></p><span id='document-cmd/opt'></span><section>"
+                "<h1 id='sec-1'>S</h1></section></div>")
+        pages = build_archive.split_singlehtml(html, ["index", "guide/a", "cmd/opt"])
+        self.assertIn('href="../cmd/opt.html"', pages["guide/a"])
+        self.assertIn('href="../cmd/opt.html#sec%2D1"', pages["guide/a"])
+
+    def test_single_page_check_ignores_extra_html_files(self):
+        import docshelf_build as db
+        marker = "<div role='main'><p>Intro</p><span id='document-a'></span><p>A</p></div>"
+        uris = ["index.html", "a.html", "b.html"]
+        # every page present: a normal archive, left alone
+        html = {"index.html": marker, "a.html": "<p>a</p>", "b.html": "<p>b</p>"}
+        db._split_single_page(None, uris, html, {})
+        self.assertEqual(html["a.html"], "<p>a</p>")
+        # all pages but index.html missing: split
+        html = {"index.html": marker}
+        errors = {"a.html": "missing", "b.html": "missing"}
+        db._split_single_page(None, uris, html, errors)
+        self.assertIn("A", html["a.html"])
+        self.assertEqual(list(errors), ["b.html"])
 
 
 if __name__ == "__main__":
