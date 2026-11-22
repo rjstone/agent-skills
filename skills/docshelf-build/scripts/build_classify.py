@@ -129,7 +129,8 @@ def review_lines(plan: Dict, get_raw: Callable[[str], Optional[Tuple[str, str]]]
 
 def parse_choices(text: str) -> Tuple[List[Tuple[int, str, str, Optional[str]]], List[str]]:
     """Parse an agent's choices: `full KEY` or `stub KEY [description]` per line.
-    The key REST (upper case, no description) means every page still in review.
+    `full REST` (upper case, no description) means every page still in review;
+    `stub REST` is refused: a page in doubt stays full.
     Returns (line number, keep, key, description or None) tuples and errors."""
     choices: List[Tuple[int, str, str, Optional[str]]] = []
     errors: List[str] = []
@@ -142,6 +143,10 @@ def parse_choices(text: str) -> Tuple[List[Tuple[int, str, str, Optional[str]]],
             errors.append("line %d: expected 'full KEY' or 'stub KEY [description]'" % n)
             continue
         desc = parts[2].strip() if len(parts) > 2 else ""
+        if parts[1] == "REST" and parts[0] == "stub":
+            errors.append("line %d: stub REST is not allowed; "
+                          "stub only pages you have read" % n)
+            continue
         if parts[1] == "REST" and desc:
             errors.append("line %d: REST takes no description" % n)
             continue

@@ -46,7 +46,8 @@ as SOURCE. Exit 3: neither was found; exit 4: the site could not be reached.
   mkdocstrings): [BUILD-sphinx.md](BUILD-sphinx.md). Reference pages in
   full, guides as stubs that link to the live page.
 - **llms** (`llms.txt`: Mintlify, Starlight and others):
-  [BUILD-llmstxt.md](BUILD-llmstxt.md). Every listed page in full, cached,
+  [BUILD-llmstxt.md](BUILD-llmstxt.md). Pages on the docs' host start in full (other hosts start as stubs), cached;
+  sub-indexes are followed on the index's host or the docs' main host;
   narrowed by sub-index and sorted into reference and guides with
   `classify`.
 

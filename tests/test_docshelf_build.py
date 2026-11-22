@@ -2110,27 +2110,34 @@ class ClassifyApplyTests(unittest.TestCase):
         self.assertEqual(plan["pages"]["pe"]["why"], "manual")
         self.assertEqual(plan["pages"]["ns"]["why"], "llms: all")
 
-    def test_rest_stub_and_explicit_lines_win_in_either_order(self):
-        for text in ("full a\nstub REST\n", "stub REST\nfull a\n"):
+    def test_rest_stub_is_refused(self):
+        for text in ("stub REST\n", "stub REST\nfull a\n"):
+            ch, err = parse_choices(text)
+            self.assertEqual(err, ["line 1: stub REST is not allowed; "
+                                   "stub only pages you have read"])
+            self.assertTrue(all(c[2] != "REST" for c in ch))
+
+    def test_rest_full_and_explicit_lines_win_in_either_order(self):
+        for text in ("stub a\nfull REST\n", "full REST\nstub a\n"):
             plan = self.rest_plan()
             ch, _ = parse_choices(text)
             n, _ = apply_choices(plan, ch, "t")
             self.assertEqual(n, 2)
-            self.assertEqual(plan["pages"]["a"]["keep"], "full")
-            self.assertEqual(plan["pages"]["b"]["keep"], "stub")
+            self.assertEqual(plan["pages"]["a"]["keep"], "stub")
+            self.assertEqual(plan["pages"]["b"]["keep"], "full")
 
     def test_rest_with_description_is_an_error(self):
-        ch, err = parse_choices("stub REST dropped\nfull a\n")
+        ch, err = parse_choices("full REST dropped\nfull a\n")
         self.assertEqual(err, ["line 1: REST takes no description"])
         self.assertEqual(ch, [(2, "full", "a", None)])
 
     def test_real_page_named_rest_still_means_bulk(self):
         plan = self.rest_plan()
-        plan["pages"]["REST"] = {"keep": "full", "why": "llms: all", "signals": {}}
-        ch, _ = parse_choices("stub REST\n")
+        plan["pages"]["REST"] = {"keep": "stub", "why": "llms: all", "signals": {}}
+        ch, _ = parse_choices("full REST\n")
         apply_choices(plan, ch, "t")
-        self.assertEqual(plan["pages"]["REST"]["keep"], "stub")
-        self.assertEqual(plan["pages"]["a"]["keep"], "stub")
+        self.assertEqual(plan["pages"]["REST"]["keep"], "full")
+        self.assertEqual(plan["pages"]["a"]["keep"], "full")
 
     def test_last_write_wins_and_description_stays(self):
         plan = {"kind": "llms", "pages": {"a/b": {"keep": "full", "why": "llms: all"}}}
@@ -2178,6 +2185,22 @@ class FollowupIndexTests(unittest.TestCase):
         self.urls.clear()
         self.assertEqual(self.run_main(site, "build", "demo")[0], 0)
         self.assertEqual(self.fetched(), ["https://x.io/llms.txt", "https://x.io/a.md"])
+
+    def test_replan_of_old_plan_keeps_keys_when_all_on_index_host(self):
+        site = {"https://x.io/llms.txt": (200, b"# Demo\n- [A](https://x.io/docs/a.md)\n"
+                                          b"- [B](https://x.io/docs/b.md)\n"),
+                "https://x.io/docs/a.md": (200, b"# A\n\nText.\n"),
+                "https://x.io/docs/b.md": (200, b"# B\n\nText.\n")}
+        self.assertEqual(self.run_main(site, "plan", "https://x.io/llms.txt")[0], 0)
+        path = os.path.join(self.cache, "built-plans", "demo.json")
+        before = load_plan(path)
+        keys = sorted(before["pages"])
+        self.assertEqual(len(keys), 2)
+        self.assertEqual(self.run_main(site, "plan", "https://x.io/llms.txt",
+                                       "--name", "demo")[0], 0)
+        after = load_plan(path)
+        self.assertEqual(sorted(after["pages"]), keys)
+        self.assertTrue(all(p["keep"] == "full" for p in after["pages"].values()))
 
     def test_well_known_txt_not_followed(self):
         idx = ("# Demo\n- [Humans](https://x.io/humans.txt)\n"
