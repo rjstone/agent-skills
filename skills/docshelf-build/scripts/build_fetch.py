@@ -222,7 +222,7 @@ def looks_html(body: str) -> bool:
 
 def fetch_llms_page(source: Source, url: str) -> Tuple[str, str]:
     """(text, "md"|"html") for a listed page. An HTML answer is retried once
-    at url + ".md" (unless url already ends .md/.mdx); the HTML is kept when
+    at the URL path + ".md", query kept, fragment dropped (unless url already ends .md/.mdx); the HTML is kept when
     the retry fails or is HTML too."""
     text = source.get_url(url).decode("utf-8", "replace")
     if not looks_html(text):
@@ -230,7 +230,10 @@ def fetch_llms_page(source: Source, url: str) -> Tuple[str, str]:
     if urllib.parse.urlsplit(url).path.lower().endswith((".md", ".mdx")):
         return text, "html"
     try:
-        alt = source.get_url(url.rstrip("/") + ".md").decode("utf-8", "replace")
+        parts = urllib.parse.urlsplit(url)
+        alt_url = urllib.parse.urlunsplit(
+            (parts.scheme, parts.netloc, parts.path.rstrip("/") + ".md", parts.query, ""))
+        alt = source.get_url(alt_url).decode("utf-8", "replace")
     except FetchError:
         return text, "html"
     return (text, "html") if looks_html(alt) else (alt, "md")

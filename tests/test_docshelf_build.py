@@ -2069,5 +2069,73 @@ class ClassifyApplyTests(unittest.TestCase):
                          ("full", "model:t", "First"))
 
 
+class FollowupIndexTests(unittest.TestCase):
+    def setUp(self):
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        self.tmp = os.path.realpath(tmp.name)
+        self.cache = os.path.join(self.tmp, "cache")
+        self.env = {"HOME": self.tmp, "DOCSHELF_CACHE_DIR": self.cache}
+        self.urls = []
+
+    def run_main(self, site, *argv):
+        def opener(url):
+            self.urls.append(url)
+            if url.endswith("/robots.txt"):
+                return 404, b""
+            return site.get(url, (404, b""))
+        out, err = io.StringIO(), io.StringIO()
+        with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
+            code = docshelf_build.main(list(argv), env=self.env, opener=opener,
+                                       sleep=lambda s: None)
+        return code, out.getvalue()
+
+    def fetched(self):
+        return [u for u in self.urls if not u.endswith("robots.txt")]
+
+    def test_other_host_pages_are_stubs(self):
+        site = {"https://x.io/llms.txt": (200, b"# Demo\n- [A](https://x.io/a.md)\n"
+                                          b"- [Chat](https://discord.gg/x)\n"),
+                "https://x.io/a.md": (200, b"# A\n\nText.\n")}
+        self.assertEqual(self.run_main(site, "plan", "https://x.io/llms.txt")[0], 0)
+        plan = load_plan(os.path.join(self.cache, "built-plans", "demo.json"))
+        self.assertEqual(plan["pages"]["a"]["keep"], "full")
+        self.assertEqual(plan["pages"]["discord.gg/x"]["keep"], "stub")
+        self.assertEqual(plan["pages"]["discord.gg/x"]["why"], "llms: other host")
+        self.urls.clear()
+        self.assertEqual(self.run_main(site, "build", "demo")[0], 0)
+        self.assertEqual(self.fetched(), ["https://x.io/llms.txt", "https://x.io/a.md"])
+
+    def test_well_known_txt_not_followed(self):
+        idx = ("# Demo\n- [Humans](https://x.io/humans.txt)\n"
+               "- [Robots](https://x.io/Robots.txt)\n"
+               "- [Sub](https://x.io/sub/llms-a.txt)\n")
+        got = []
+
+        def get_text(url):
+            got.append(url)
+            return {"https://x.io/llms.txt": idx,
+                    "https://x.io/sub/llms-a.txt": "# Sub\n- [P](https://x.io/p.md)\n"}[url]
+        tree = read_tree("https://x.io/llms.txt", get_text)
+        self.assertEqual(got, ["https://x.io/llms.txt", "https://x.io/sub/llms-a.txt"])
+        self.assertEqual([e["url"] for e in tree.indexes],
+                         ["https://x.io/llms.txt", "https://x.io/sub/llms-a.txt"])
+
+    def test_md_retry_keeps_query(self):
+        op = fake_opener([(200, b"<!doctype html><html>x</html>"), (200, b"# Real")])
+        src = open_url_source(opener=op, sleep=lambda s: None)
+        self.assertEqual(fetch_llms_page(src, "https://x.io/docs/a?lang=py#top"),
+                         ("# Real", "md"))
+        self.assertEqual(op.urls[-1], "https://x.io/docs/a.md?lang=py")
+
+    def test_local_root_only_subindexes_main_host(self):
+        root = "# R\n- [A](https://x.io/a/llms-a.txt)\n- [B](https://x.io/b/llms-b.txt)\n"
+        subs = {"https://x.io/a/llms-a.txt": "# A\n- [P](https://x.io/a/p.md)\n",
+                "https://x.io/b/llms-b.txt": "# B\n- [Q](https://x.io/b/q.md)\n"}
+        tree = read_tree("rel/llms.txt", subs.__getitem__, read_file=lambda p: root)
+        self.assertEqual(tree.main_host, "x.io")
+        self.assertEqual([p.key for p in tree.pages], ["a/p", "b/q"])
+
+
 if __name__ == "__main__":
     unittest.main()

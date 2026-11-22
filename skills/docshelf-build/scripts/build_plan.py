@@ -126,6 +126,10 @@ def summarize(plan: dict, old: Optional[dict]) -> List[str]:
     return lines
 
 
+def _host_of(url: str) -> str:
+    return (urlsplit(url).hostname or "").lower()
+
+
 def make_llms_plan(source: str, tree: Tree, overrides: List[Tuple[str, str]],
                    old: Optional[dict] = None, reset: bool = False) -> dict:
     """A plan for an llms.txt tree: every page full, then the precedence of
@@ -137,7 +141,10 @@ def make_llms_plan(source: str, tree: Tree, overrides: List[Tuple[str, str]],
     for page in sorted(tree.pages, key=lambda x: x.key):
         prev = old_pages.get(page.key)
         usable = prev if prev and (not reset or prev.get("why") == "manual") else None
-        keep, why = _choose(page.key, "full", "llms: all", stored, cli, usable)
+        rule_keep, rule_why = "full", "llms: all"
+        if _host_of(page.url) != tree.main_host:
+            rule_keep, rule_why = "stub", "llms: other host"
+        keep, why = _choose(page.key, rule_keep, rule_why, stored, cli, usable)
         entry = {"keep": keep, "title": page.title, "section": page.section,
                  "description": page.description or (prev or {}).get("description"),
                  "why": why, "uri": page.url}

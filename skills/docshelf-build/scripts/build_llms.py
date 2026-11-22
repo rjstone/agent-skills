@@ -113,6 +113,14 @@ def is_llms_source(arg: str) -> bool:
     return arg.lower().endswith(".txt") and os.path.isfile(arg)
 
 
+WELL_KNOWN_TXT = ("robots.txt", "humans.txt", "security.txt", "ads.txt", "app-ads.txt")
+
+
+def _is_well_known(url: str) -> bool:
+    """A site-metadata .txt file (robots.txt ...), never an index."""
+    return urlsplit(url).path.rsplit("/", 1)[-1].lower() in WELL_KNOWN_TXT
+
+
 def _host(url: str) -> str:
     return (urlsplit(url).hostname or "").lower()
 
@@ -176,6 +184,9 @@ def read_tree(source: str, get_text: Callable[[str], str],
     if local:
         hosts = Counter(_host(lk.url) for lk in root_links
                         if not urlsplit(lk.url).path.lower().endswith(".txt"))
+        if not hosts:  # only sub-indexes listed: their host is the site's
+            hosts = Counter(_host(lk.url) for lk in root_links
+                            if not _is_well_known(lk.url))
         main_host = hosts.most_common(1)[0][0] if hosts else ""
     else:
         main_host = _host(source)
@@ -185,6 +196,8 @@ def read_tree(source: str, get_text: Callable[[str], str],
         entry = {"url": url, "title": title, "pages": 0, "parent": parent, "note": None}
         indexes.append(entry)
         for lk in links:
+            if _is_well_known(lk.url):
+                continue
             if urlsplit(lk.url).path.lower().endswith(".txt"):
                 if lk.url in visited:
                     continue
