@@ -227,6 +227,14 @@
       ]
     },
     {
+      "name": "skillspector-install",
+      "version": "0.1.0",
+      "files": [
+        "SKILL.md",
+        "scripts/install.py"
+      ]
+    },
+    {
       "name": "thonny-plugin",
       "version": "0.1.0",
       "files": [
