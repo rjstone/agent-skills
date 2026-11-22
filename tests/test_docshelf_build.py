@@ -1438,6 +1438,13 @@ class FollowupMarkdownTests(unittest.TestCase):
             md_to_html(src)
             self.assertLess(time.monotonic() - t0, 1.0)
 
+    def test_blockquote_lazy_is_fast(self):
+        import time
+        t0 = time.monotonic()
+        html = md_to_html("> a\n" + "b\n" * 25000)
+        self.assertLess(time.monotonic() - t0, 1.0)
+        self.assertIn("<blockquote>", html)
+
     def test_emphasis_still_works(self):
         self.check("*a* **b** _c_ __d__ ~~e~~",
                    "<p><em>a</em> <strong>b</strong> <em>c</em> <strong>d</strong> <del>e</del></p>")

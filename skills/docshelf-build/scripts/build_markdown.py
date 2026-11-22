@@ -330,13 +330,12 @@ def _starts_block(ln: str) -> bool:
                                               or m.group(2)[:-1] == "1"))
 
 
-def _lazy_ok(inner: List[str]) -> bool:
+def _lazy_ok(last: str, open_fence: bool) -> bool:
     """True when the quote's last line is paragraph text a bare line may continue."""
-    last = inner[-1] if inner else ""
-    if not last.strip() or last.startswith("    ") or _ATX.match(last) or _HR.match(last) \
+    if open_fence or not last.strip() or last.startswith("    ") or _ATX.match(last) or _HR.match(last) \
             or _HTML_BLOCK.match(last) or _SETEXT.match(last):
         return False
-    return sum(1 for x in inner if _BLOCK_FENCE.match(x)) % 2 == 0
+    return True
 
 
 def _is_table(lines: List[str], i: int) -> bool:
@@ -456,11 +455,14 @@ def _blocks(lines: List[str], seen: Set[str], tight: bool = False, depth: int = 
             continue
         if re.match(r"^ {0,3}>", ln):
             inner: List[str] = []
+            open_fence = False  # parity of fence lines so far (bare lines never add one)
             while i < n:
                 if re.match(r"^ {0,3}>", lines[i]):
                     inner.append(re.sub(r"^ {0,3}> ?", "", lines[i]))
+                    if _BLOCK_FENCE.match(inner[-1]):
+                        open_fence = not open_fence
                 elif lines[i].strip() and not _starts_block(lines[i]) \
-                        and _lazy_ok(inner):
+                        and _lazy_ok(inner[-1], open_fence):
                     inner.append(lines[i])  # lazy continuation of the quoted paragraph
                 else:
                     break
