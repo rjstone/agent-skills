@@ -295,7 +295,7 @@ metadata:
   Remove this skill if upstream adds its own installer (the user,
   2026-11-22). Bump `DEFAULT_REF`, `SKILLS_CLI` and `UV_VERSION` together
   with `metadata.version`, after a real install and a
-  `skillspector scan skills/skillspector-install --no-llm` (0.1.0: CAUTION,
+  `skillspector scan skills/skillspector-install --no-llm` (0.1.1: CAUTION,
   only subprocess calls and no `allowed-tools`, which is left out so the
   installer's commands still need approval).
 

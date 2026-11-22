@@ -35,11 +35,13 @@ def no_subprocess(*args, **kwargs):
 
 
 class DryRun(unittest.TestCase):
-    def run_main(self, argv, present=TOOLS, have=None):
+    def run_main(self, argv, present=TOOLS, have=None, extra=False, registered=False):
         out = io.StringIO()
         with mock.patch.object(inst.shutil, "which", fake_which(present)), \
                 mock.patch.object(inst.subprocess, "run", no_subprocess), \
                 mock.patch.object(inst, "installed_version", lambda path: have), \
+                mock.patch.object(inst, "mcp_extra_installed", lambda uv: extra), \
+                mock.patch.object(inst, "mcp_registered", lambda: registered), \
                 contextlib.redirect_stdout(out):
             code = inst.main(["--dry-run"] + argv)
         cmds = [line.split("$ ", 1)[1] for line in out.getvalue().splitlines() if "$ " in line]
@@ -78,6 +80,48 @@ class DryRun(unittest.TestCase):
         code, cmds, _ = self.run_main(["--skip-skill"], have="0.0.1")
         self.assertEqual(code, 0)
         self.assertIn(" --force ", cmds[0])
+
+    def test_force_reinstall_keeps_installed_mcp_extra(self):
+        code, cmds, out = self.run_main(["--skip-skill", "--force"],
+                                        have=inst.DEFAULT_REF.lstrip("v"), extra=True)
+        self.assertEqual(code, 0)
+        self.assertIn("skillspector[mcp] @ git+", cmds[0])
+        self.assertIn("keeping the [mcp] extra", out)
+
+    def test_upgrade_keeps_mcp_for_registered_server(self):
+        code, cmds, _ = self.run_main(["--skip-skill"], have="0.0.1", registered=True)
+        self.assertEqual(code, 0)
+        self.assertIn("skillspector[mcp] @ git+", cmds[0])
+
+    def test_registered_server_without_extra_is_repaired(self):
+        # same version, but the extra was dropped earlier: reinstall with it
+        code, cmds, _ = self.run_main(["--skip-skill"], have=inst.DEFAULT_REF.lstrip("v"),
+                                      registered=True)
+        self.assertEqual(code, 0)
+        self.assertIn("skillspector[mcp] @ git+", cmds[0])
+
+    def test_install_mcp_skips_scanner_when_extra_present(self):
+        code, cmds, out = self.run_main(["--skip-skill", "--install-mcp"],
+                                        have=inst.DEFAULT_REF.lstrip("v"), extra=True)
+        self.assertEqual(code, 0)
+        self.assertIn("already installed", out)
+        self.assertEqual(len(cmds), 1, cmds)  # only `claude mcp add`
+        self.assertIn(" mcp add ", cmds[0])
+
+    def test_extras_parser(self):
+        def fake_run(stdout):
+            return lambda *a, **k: mock.Mock(stdout=stdout)
+        cases = {
+            "black v26.5.1\nskillspector v2.13.6 [extras: mcp]\n- skillspector\n": True,
+            "skillspector v2.13.6 [extras: dev, mcp]\n": True,
+            "skillspector v2.13.6\n- skillspector\n": False,
+            "skillspector-other v1.0.0 [extras: mcp]\n": False,
+            "": False,
+        }
+        for stdout, expected in cases.items():
+            with self.subTest(stdout=stdout), \
+                    mock.patch.object(inst.subprocess, "run", fake_run(stdout)):
+                self.assertIs(inst.mcp_extra_installed("uv"), expected)
 
     def test_repeatable_agent(self):
         _, cmds, _ = self.run_main(["--skip-scanner", "--agent", "opencode", "--agent", "codex"])
