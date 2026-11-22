@@ -267,6 +267,11 @@ metadata:
   downloads, page keys from the URL path (stable whichever index is the
   SOURCE), per-page `signals` in the plan for a later classifier whose
   `why: "model:<id>"` choices survive re-planning (the user, 2026-11-21).
+  `SKILL.md` only finds the site type (`detect URL_OR_PATH`,
+  `build_detect.py`: `objects.inv` or `llms.txt`, Sphinx preferred when
+  both exist) and points to one `BUILD-<type>.md` beside it, so an agent
+  reads only its own type's procedure; a new source type adds a
+  `BUILD-<type>.md` and a `detect` rule (the user, 2026-11-22).
 - `sandboxing` - run a nested agent CLI or test harness in a bubblewrap
   sandbox (Linux) that hides the caller's environment, processes and files:
   `scripts/sandbox.py` (`env -i` + bwrap `--clearenv`, `/work` as `HOME`,

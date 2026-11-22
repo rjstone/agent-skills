@@ -11,6 +11,7 @@ from typing import Callable, List, Optional
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
+from build_detect import describe, detect, offline  # noqa: E402
 from build_core import (NAME_RE, VERSION, CLIError, built_dir, cache_dir, plans_dir, src_dir,  # noqa: E402
                         warn)
 from build_docvol import check_name, derive_name, write_docvol, write_llms_docvol  # noqa: E402
@@ -28,6 +29,7 @@ MkDocs with mkdocstrings) or from a site's llms.txt page list (Mintlify,
 Starlight and others). Sphinx: reference pages are kept in full, guide pages
 become stubs with a link. llms.txt: every listed page is kept in full; narrow
 with a sub-index as SOURCE or --stub. Usual loop:
+  detect URL                  which type the site supports, and the SOURCE
   plan SOURCE --name NAME     read the inventory, write and summarize the plan
   plan SOURCE --name NAME --full 'group/*'   keep a prose group in full
   build NAME                  fetch the full pages, write the docvol
@@ -273,6 +275,9 @@ def _parser() -> argparse.ArgumentParser:
     b.add_argument("--refetch", action="store_true",
                    help="download pages again instead of using the page cache "
                         "(llms.txt sources; Sphinx builds have no page cache)")
+    d = sub.add_parser("detect", help="which build type a site supports (objects.inv "
+                       "or llms.txt), and the SOURCE to plan")
+    d.add_argument("source", metavar="URL_OR_PATH")
     sub.add_parser("list", help="built and planned docvols")
     r = sub.add_parser("remove", help="delete a built docvol (the plan stays)")
     r.add_argument("name", metavar="NAME")
@@ -306,6 +311,13 @@ def main(argv: Optional[List[str]] = None, env=None, opener=None,
                                                                          args.source), 2)
                 name = args.source
             do_build(cache, name, args.workers, args.refetch, opener, sleep)
+        elif args.command == "detect":
+            found = detect(args.source, opener=opener, sleep=sleep)
+            if found.kind is None:
+                raise CLIError("no objects.inv or llms.txt found; tried: %s"
+                               % ", ".join("%s (%s)" % t for t in found.tried),
+                               4 if offline(found) else 3)
+            _print(describe(found))
         elif args.command == "list":
             do_list(cache)
         else:

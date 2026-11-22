@@ -1595,5 +1595,97 @@ class FinalFixTests(unittest.TestCase):
         self.assertTrue(looks_html("\ufeff<!doctype html>"))
 
 
+class DetectTests(unittest.TestCase):
+    INV = make_inv([("demo.f", "py:function", "1", "api.html#$", "-")])
+    LLMS = b"# Demo\n\n## Docs\n\n- [Start](https://d.io/start.md)\n"
+
+    def setUp(self):
+        self.site = {}
+        self.urls = []
+
+    def opener(self, url):
+        self.urls.append(url)
+        if url.endswith("/robots.txt"):
+            return 404, b""
+        return self.site.get(url, (404, b""))
+
+    def detect(self, src):
+        from build_detect import detect
+        return detect(src, opener=self.opener, sleep=lambda s: None)
+
+    def test_sphinx_preferred_over_llms(self):
+        self.site = {"https://d.io/en/latest/objects.inv": (200, self.INV),
+                     "https://d.io/llms.txt": (200, self.LLMS)}
+        d = self.detect("https://d.io/en/latest/")
+        self.assertEqual((d.kind, d.source), ("sphinx", "https://d.io/en/latest/"))
+        self.assertEqual(d.found, [("sphinx", "https://d.io/en/latest/objects.inv"),
+                                   ("llms", "https://d.io/llms.txt")])
+
+    def test_llms_only_folder_then_root(self):
+        self.site = {"https://d.io/llms.txt": (200, self.LLMS)}
+        d = self.detect("https://d.io/docs/index.html")
+        self.assertEqual((d.kind, d.source), ("llms", "https://d.io/llms.txt"))
+        self.assertIn("https://d.io/docs/llms.txt", self.urls)
+
+    def test_explicit_txt_url_checks_folder_inventory(self):
+        self.site = {"https://d.io/llms.txt": (200, self.LLMS),
+                     "https://d.io/objects.inv": (200, self.INV)}
+        d = self.detect("https://d.io/llms.txt")
+        self.assertEqual(d.kind, "sphinx")
+        self.assertIn(("llms", "https://d.io/llms.txt"), d.found)
+
+    def test_html_and_bad_inventory_rejected(self):
+        self.site = {"https://d.io/objects.inv": (200, b"<html>not found</html>"),
+                     "https://d.io/llms.txt": (200, b"<!doctype html><html></html>")}
+        d = self.detect("https://d.io/")
+        self.assertIsNone(d.kind)
+        self.assertEqual(d.found, [])
+
+    def test_local_folder(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            with open(os.path.join(tmp, "objects.inv"), "wb") as f:
+                f.write(self.INV)
+            d = self.detect(tmp)
+            self.assertEqual((d.kind, d.source), ("sphinx", os.path.realpath(tmp)))
+            self.assertEqual(self.urls, [])
+
+    def test_local_txt(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = os.path.join(tmp, "index.txt")
+            with open(path, "wb") as f:
+                f.write(self.LLMS)
+            d = self.detect(path)
+            self.assertEqual((d.kind, d.source), ("llms", os.path.realpath(path)))
+
+    def run_main(self, *argv):
+        out, err = io.StringIO(), io.StringIO()
+        with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
+            code = docshelf_build.main(list(argv), env={"HOME": "/nonexistent"},
+                                       opener=self.opener, sleep=lambda s: None)
+        return code, out.getvalue(), err.getvalue()
+
+    def test_cli_prints_type_source_and_doc(self):
+        self.site = {"https://d.io/llms.txt": (200, self.LLMS)}
+        code, out, _ = self.run_main("detect", "https://d.io/")
+        self.assertEqual(code, 0)
+        self.assertIn("type: llms\n", out)
+        self.assertIn("source: https://d.io/llms.txt\n", out)
+        self.assertIn("read: BUILD-llmstxt.md\n", out)
+
+    def test_cli_nothing_found_exit_3(self):
+        code, out, err = self.run_main("detect", "https://d.io/")
+        self.assertEqual(code, 3)
+        self.assertIn("no objects.inv or llms.txt", err)
+        self.assertIn("HTTP 404", err)
+
+    def test_cli_network_failure_exit_4(self):
+        self.site = {}
+        orig = self.opener
+        self.opener = lambda url: (0, b"") if not url.endswith("/robots.txt") else orig(url)
+        code, _, err = self.run_main("detect", "https://d.io/")
+        self.assertEqual(code, 4)
+        self.assertIn("network error", err)
+
+
 if __name__ == "__main__":
     unittest.main()

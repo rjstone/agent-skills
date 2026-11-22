@@ -181,6 +181,10 @@ column is from memory: verify each against real output before building.
       general web search to (`readthedocs.io`, `github.io`, ...); maybe
       PyPI `project_urls` "Documentation" (the user, 2026-11-21, PR #29
       review).
+- [ ] 8.13 docshelf-build bulk downloads: when a site offers its docs as
+      one archive (zip or tgz: Read the Docs "Downloads" HTML zip, a
+      project's release docs tarball), fetch that once instead of page by
+      page, and have `detect` report it (the user, 2026-11-22).
 - Ignore Dash-only extras: `dashtoc`, playground URLs, docset feeds
   (`dash-feed://`), per-docset JavaScript and full-text-search switches.
 
