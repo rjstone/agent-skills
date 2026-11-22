@@ -109,6 +109,27 @@ vendors' plugin formats):
   2026-11-18). `codeql.yml` - CodeQL advanced setup (actions,
   python); it only uploads when CodeQL *default* setup is off in the repo's
   Code security settings.
+- `.github/workflows/skillspector.yml` - NVIDIA SkillSpector scan of every
+  skill (pushes to `main`, PRs to `main`, weekly), SARIF to the Security tab
+  (category `skillspector`). `scripts/skillspector_ci.py` (stdlib) scans
+  each skill statically (`--no-llm`) from a copy without `__pycache__`/
+  `*.pyc` (the scanner flags compiled files), merges the reports into one
+  run with `skills/<name>/` paths, and fails on any HIGH/CRITICAL finding
+  not in a baseline, a failed scan, or a baseline naming no skill (the
+  user, 2026-11-22). Locally: install the scanner with
+  `python3 skills/skillspector-install/scripts/install.py --skip-skill`
+  (that skill's pin is CI's pin), then
+  `python3 scripts/skillspector_ci.py [--skills a,b]`. Baselines live in
+  `.skillspector/<skill>.yaml`, outside the skills, so accepting a finding
+  needs no version bump and nothing extra ships to users (the user,
+  2026-11-22). Upstream refuses `--baseline` on recursive scans, hence one
+  scan per skill. Baseline rules: glob rules only (`id`, `path` relative to
+  the skill folder, optional `message` glob on the finding text), each with
+  a `reason`, added only after reading the finding in context, and
+  reviewed by the user in the PR like any other change; no fingerprints
+  (they break on every edit). Coverage gaps can't be suppressed as such:
+  they appear as AE1 findings, accepted one file at a time
+  (`message: "*<file> (partial)*"`), so a new gap still fails.
 - `.github/pull_request_template.md` - every PR fills it in: Kind and
   What changed always; Skill and version, Public-repo checklist and
   Testing for skills; Docs touched if it applies; Follow-ups optional
