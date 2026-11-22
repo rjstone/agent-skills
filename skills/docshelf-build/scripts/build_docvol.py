@@ -67,7 +67,7 @@ def _types(entries: List[dict]) -> List[dict]:
             for t in sorted(counts)]
 
 
-def _meta(name: str, plan: dict, index: dict, now: float, reused: List[str]) -> dict:
+def _meta(name: str, plan: dict, index: dict, now: float) -> dict:
     """The meta keys both docvol kinds share."""
     return {"slug": name, "name": plan.get("project") or name,
             "release": plan.get("version", ""), "version": plan.get("version", ""),
@@ -144,7 +144,7 @@ def write_docvol(cache: str, name: str, plan: dict, entries: List[InvEntry],
     folder = os.path.join(built_dir(cache), name)
     reused: List[str] = []
     db = _db(plan, pages_html, errors, _previous_db(folder), reused)
-    meta = _meta(name, plan, index, now, reused)
+    meta = _meta(name, plan, index, now)
     meta.update({"inventory_sha256": plan["inventory_sha256"], "reused": sorted(reused)})
     _write_files(cache, name, {"index.json": index, "db.json": db, "meta.json": meta})
     return meta
@@ -232,7 +232,7 @@ def write_llms_docvol(cache: str, name: str, plan: dict, raw: Dict[str, Tuple[st
         else:
             db[key] = stub_html(p["title"], p.get("section"), p.get("description"), p["uri"], None)
     index = _llms_index(plan, db)
-    meta = _meta(name, plan, index, now, reused)
+    meta = _meta(name, plan, index, now)
     meta.update({"source_kind": "llms", "index_sha256": plan["index_sha256"],
                  "reused": sorted(reused)})
     _write_files(cache, name, {"index.json": index, "db.json": db, "meta.json": meta})

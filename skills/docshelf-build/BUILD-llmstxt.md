@@ -4,8 +4,12 @@ For sites that publish `llms.txt`, a Markdown list of page links (Mintlify,
 Astro Starlight and others). SOURCE is the `llms.txt` URL that `detect`
 prints; a sub-index URL or a local `.txt` file also works.
 
-Every listed page is kept in full; nothing becomes a stub unless you ask
-(`--stub PAT`). Sub-indexes (`.txt` links) on the same host are followed
+Every listed page on the docs' main host (the most common host among the
+root index's page links) is kept in full; pages on other hosts start as
+stubs and are never fetched (keep them with `--full 'HOST/*'`), and
+nothing else becomes a stub unless you ask (`--stub PAT`). An existing plan
+gets the other-host rule when re-planned (`plan SOURCE --name NAME`), not
+on a plain `build NAME`. Sub-indexes (`.txt` links) on the same host are followed
 three levels deep; `*-full.txt` dumps are listed but not followed. Page keys
 come from the URL path, so a page has the same key whichever index is the
 SOURCE.

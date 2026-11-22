@@ -177,11 +177,16 @@ column is from memory: verify each against real output before building.
       `on*=` attributes and `javascript:` hrefs pass through `_serialize`
       (inert in docshelf's text renderer). A local root listing only
       sub-indexes gives an empty `main_host`.
-      Done in 0.3.1: `_serialize` drops `on*` attributes and
-      `javascript:`/`vbscript:`/`data:` href/src values; docvol meta and
-      types code shared (`_meta`, `_types`). Still deferred: the slow link
+      Done across 0.3.1 and 0.4.0: index/fetch (other-host pages become
+      stubs, `humans.txt` skipped, `.md` retry keeps the query, local-root
+      and main-host detection), Markdown (linear emphasis, lazy quotes,
+      depth cap, MDX heuristics), HTML/docvol (`on*` attributes and
+      `javascript:`/`vbscript:`/`data:` href/src dropped, `_meta`/`_types`
+      shared). Still deferred: the slow link
       regex on 25000 `[` (0.45 s) and a bare line right after a closed
-      fence inside a quote being absorbed as a lazy paragraph.
+      fence inside a quote being absorbed as a lazy paragraph. Also
+      deferred: the lazy-quote check treats a table row as paragraph text;
+      `xlink:href` and `<object data>` are not scheme-checked.
 - [ ] 8.10 Finding Sphinx docs for a library: the best way to search for
       a project's `objects.inv` site. Ideas: hosting domains with a search
       API (Read the Docs), or a list of docs-hosting domains to restrict a

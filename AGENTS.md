@@ -262,14 +262,15 @@ metadata:
   and plan under `docs/superpowers/`). 0.2.0 adds `llms.txt` sources
   (`build_llms.py`, `build_markdown.py`): nested `.txt` sub-indexes
   followed to depth 3 (same host only, never `*-full.txt`), every listed
-  page kept in full (fetch too much, sort later), raw pages cached in
+  page on the main host kept in full, other-host pages stubs (0.4.0; fetch
+  too much, sort later), raw pages cached in
   `<cache>/built-src/<name>/` so rebuilds and re-sorts need no page
   downloads, page keys from the URL path (stable whichever index is the
   SOURCE), per-page `signals` in the plan for a later classifier whose
   `why: "model:<id>"` choices survive re-planning (the user, 2026-11-21).
   0.3.0 adds `classify NAME` (`build_classify.py`): rules decide the clear
-  pages from the signals (`why: "model:rules-1"` in 0.3.0, checked against a labelled
-  fixture) and an agent decides the rest through `--apply` (the user,
+  pages from the signals (`why: "model:rules-1"` in 0.3.0, checked
+  against a labelled fixture) and an agent decides the rest through `--apply` (the user,
   2026-11-22; spec under `docs/superpowers/specs/`). 0.4.0 replaces the
   rules with `model:rules-2` (tuned on calibration + holdout, fresh split
   frozen; an old `model:rules-1` page is re-decided).

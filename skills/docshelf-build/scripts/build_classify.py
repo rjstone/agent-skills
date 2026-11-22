@@ -42,7 +42,7 @@ def may_decide(page: Dict) -> bool:
     if not isinstance(page.get("signals"), dict):
         return False
     why = page.get("why") or ""
-    if why == "manual" or why.startswith("override:"):
+    if why == "manual" or why.startswith("override:") or why == "llms: other host":
         return False
     return not why.startswith("model:") or why.startswith("model:rules-")
 

@@ -155,6 +155,8 @@ def make_llms_plan(source: str, tree: Tree, overrides: List[Tuple[str, str]],
         for field in CARRIED:
             if prev and field in prev:
                 entry[field] = prev[field]
+        if why == "llms: other host":
+            entry.pop("fetch_error", None)
         pages[page.key] = entry
     return {"format": FORMAT, "kind": "llms", "source": source, "base_url": None,
             "main_host": tree.main_host, "index_sha256": tree.sha256, "indexes": tree.indexes,
@@ -204,6 +206,12 @@ def summarize_llms(plan: dict, old: Optional[dict]) -> List[str]:
             lines.append("%s%s%s" % ("  " * (d + 1), shown,
                                      "" if info is None else " (%s)" % info))
     lines.extend(_added_dropped(pages, old))
+    others = Counter(_host_of(p["uri"]) for p in pages.values()
+                     if p.get("why") == "llms: other host" and p.get("uri"))
+    if others:
+        top = max(others, key=lambda h: (others[h], h))
+        lines.append("warning: %d pages on other hosts are stubs (e.g. %s); keep them "
+                     "with --full '%s/*'" % (sum(others.values()), top, top))
     if full > 300:
         lines.append("warning: %d full pages; narrow with a sub-index as SOURCE (see the tree) "
                      "or --stub globs" % full)

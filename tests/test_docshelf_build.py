@@ -2227,5 +2227,62 @@ class FollowupHtmlTests(unittest.TestCase):
         self.assertIn('<a href="https://x.io">z</a>', html)
 
 
+class FinalFixTests(unittest.TestCase):
+    def test_main_host_from_root_pages(self):
+        root = ("# D\n- [A](https://docs.b.io/a.md)\n- [B](https://docs.b.io/b.md)\n"
+                "- [C](https://docs.b.io/c.md)\n- [Chat](https://discord.gg/x)\n")
+        tree = read_tree("https://docs.a.io/llms.txt", {"https://docs.a.io/llms.txt": root}.__getitem__)
+        self.assertEqual(tree.main_host, "docs.b.io")
+        plan = make_llms_plan("https://docs.a.io/llms.txt", tree, [])
+        keeps = [p["keep"] for p in plan["pages"].values()]
+        self.assertEqual((keeps.count("full"), keeps.count("stub")), (3, 1))
+        lines = summarize_llms(plan, None)
+        warn = [ln for ln in lines if "other hosts" in ln]
+        self.assertEqual(len(warn), 1)
+        self.assertIn("1 pages on other hosts are stubs (e.g. discord.gg)", warn[0])
+        self.assertIn("--full 'discord.gg/*'", warn[0])
+
+    def test_main_host_falls_back_to_index_host(self):
+        subs = {"https://x.io/llms.txt": "# D\n- [S](https://x.io/s/llms.txt)\n",
+                "https://x.io/s/llms.txt": "# S\n- [P](https://x.io/s/p.md)\n"}
+        tree = read_tree("https://x.io/llms.txt", subs.__getitem__)
+        self.assertEqual(tree.main_host, "x.io")
+
+    def test_main_host_sub_index_on_main_host_followed(self):
+        root = "# D\n- [A](https://docs.b.io/a.md)\n- [S](https://docs.b.io/s/llms.txt)\n"
+        subs = {"https://docs.a.io/llms.txt": root,
+                "https://docs.b.io/s/llms.txt": "# S\n- [P](https://docs.b.io/s/p.md)\n"}
+        tree = read_tree("https://docs.a.io/llms.txt", subs.__getitem__)
+        self.assertEqual([p.key for p in tree.pages], ["a", "s/p"])
+
+    def test_local_root_fallback_with_well_known_txt(self):
+        root = ("# R\n- [H](https://x.io/humans.txt)\n- [A](https://x.io/a/llms-a.txt)\n"
+                "- [B](https://x.io/b/llms-b.txt)\n")
+        subs = {"https://x.io/a/llms-a.txt": "# A\n- [P](https://x.io/a/p.md)\n",
+                "https://x.io/b/llms-b.txt": "# B\n- [Q](https://x.io/b/q.md)\n"}
+        tree = read_tree("rel/llms.txt", subs.__getitem__, read_file=lambda p: root)
+        self.assertEqual(tree.main_host, "x.io")
+        self.assertEqual([p.key for p in tree.pages], ["a/p", "b/q"])
+
+    def test_other_host_stub_never_decided_and_error_cleared(self):
+        self.assertFalse(may_decide({"keep": "stub", "why": "llms: other host",
+                                     "signals": {"words": 800}}))
+        old = {"pages": {"discord.gg/x": {"keep": "full", "why": "llms: all",
+                                          "fetch_error": "boom", "signals": {"words": 1}}}}
+        tree = Tree("D", "x.io", [LlmsPage("discord.gg/x", "https://discord.gg/x", "C", None, None)],
+                    [], "h")
+        page = make_llms_plan("https://x.io/llms.txt", tree, [], old)["pages"]["discord.gg/x"]
+        self.assertEqual((page["keep"], page["why"]), ("stub", "llms: other host"))
+        self.assertNotIn("fetch_error", page)
+
+    def test_serialize_drops_encoded_script_schemes(self):
+        for href in ("&#106;avascript:alert(1)", "&#x6A;avascript:alert(1)",
+                     "java&Tab;script:alert(1)"):
+            html = main_content('<main><a href="%s">x</a></main>' % href)
+            self.assertNotIn("alert", html, href)
+        html = main_content('<main><p src="javascript:alert(1)">x</p></main>')
+        self.assertNotIn("alert", html)
+
+
 if __name__ == "__main__":
     unittest.main()
