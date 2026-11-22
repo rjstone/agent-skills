@@ -261,7 +261,7 @@ metadata:
   Agents want dense reference, not tutorials (the user, 2026-11-21; spec
   and plan under `docs/superpowers/`). 0.2.0 adds `llms.txt` sources
   (`build_llms.py`, `build_markdown.py`): nested `.txt` sub-indexes
-  followed to depth 3 (same host only, never `*-full.txt`), every listed
+  followed to depth 3 (index or main docs host only, never `*-full.txt`), every listed
   page on the main host kept in full, other-host pages stubs (0.4.0; fetch
   too much, sort later), raw pages cached in
   `<cache>/built-src/<name>/` so rebuilds and re-sorts need no page
