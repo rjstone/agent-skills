@@ -6,7 +6,7 @@ license: MIT
 metadata:
   author: Robert Stone
   source: https://github.com/rjstone/agent-skills
-  version: "0.1.0"
+  version: "0.1.1"
   credits: "NVIDIA SkillSpector"
 ---
 
@@ -39,7 +39,9 @@ What it does, in order:
    without editing shell profiles (it prints a PATH hint instead).
 2. `uv tool install --python 3.13 skillspector@<ref>` from GitHub. Python
    3.12/3.13 is needed for prebuilt YARA wheels; uv downloads it. Skipped
-   when the installed version already matches (`--force` reinstalls).
+   when the installed version already matches (`--force` reinstalls). A
+   reinstall keeps the `[mcp]` extra if it was installed before or an MCP
+   server named `skillspector` exists, so a registered server keeps working.
 3. `npx skills@1.9.0 add` (pinned CLI) the `skill-inspector` skill at the
    same ref, user scope (`-g`), for `--agent claude-code` (repeat `--agent`
    for other harnesses).
