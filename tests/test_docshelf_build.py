@@ -2569,6 +2569,58 @@ class SingleHtmlArchiveTests(unittest.TestCase):
         self.assertIn('href="../cmd/opt.html#opt-page"', pages["guide/a"])
         self.assertIn('href="../cmd/opt.html"', pages["guide/a"])   # #document-cmd/opt
 
+    FULL = ("<!DOCTYPE html><html><head><meta charset='utf-8'><title>T</title>"
+            "<link rel='stylesheet' href='s.css'></head><body><nav>SIDEBAR</nav>"
+            "<ul class='wy-breadcrumbs'><li>CRUMBS</li></ul>"
+            "<div role='main' class='document'><div class='body'><p id='top'>Intro</p>"
+            "<span id='document-a'></span><section><h1 id='x'>A</h1><p>A text"
+            " <a href='index.html#top'>t</a> <a href='index.html#document-b'>b</a></p></section>"
+            "<span id='document-b'></span><section><p>B text <a href='index.html#x'>x</a>"
+            " <a href='./index.html#b-own'>own</a> <a id='b-own'></a></p></section>"
+            "</div></div><footer>Built with Sphinx on readthedocs.org</footer>"
+            "<div class='rst-versions'>FLYOUT</div></body></html>")
+
+    def test_only_the_main_content_lands_in_chunks(self):
+        import build_archive
+        pages = build_archive.split_singlehtml(self.FULL, ["index", "a", "b"])
+        self.assertEqual(sorted(pages), ["a", "b", "index"])
+        for html in pages.values():
+            for bad in ("<link", "<meta", "<title", "SIDEBAR", "CRUMBS", "Built with",
+                        "readthedocs.org", "FLYOUT"):
+                self.assertNotIn(bad, html)
+            self.assertNotIn(bad := "<head", html)
+        self.assertIn("Intro", pages["index"])
+        self.assertIn("B text", pages["b"])
+
+    def test_index_html_fragment_links_count_as_fragment_links(self):
+        import build_archive
+        pages = build_archive.split_singlehtml(self.FULL, ["index", "a", "b"])
+        self.assertIn('href="index.html#top"', pages["a"])
+        self.assertIn('href="b.html"', pages["a"])          # index.html#document-b
+        self.assertIn('href="a.html#x"', pages["b"])
+        self.assertIn('href="#b-own"', pages["b"])          # same chunk: plain fragment
+        self.assertNotIn("document-", "".join(pages.values()))
+
+    def test_corrupt_deflate_data_means_no_archive_and_no_site(self):
+        import build_archive
+        import zipfile
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        zpath = os.path.join(tmp.name, "bad.zip")
+        with zipfile.ZipFile(zpath, "w", zipfile.ZIP_DEFLATED) as z:
+            z.writestr("x/index.html", "<p>hello world</p>" * 500)
+        with open(zpath, "rb") as f:
+            data = bytearray(f.read())
+        for i in range(45, 50):
+            data[i] ^= 0xFF
+        with open(zpath, "wb") as f:
+            f.write(bytes(data))
+        out = os.path.join(tmp.name, "site")
+        with self.assertRaises(CLIError):
+            build_archive.unpack(zpath, out)
+        self.assertFalse(os.path.exists(out))
+        self.assertEqual([n for n in os.listdir(tmp.name) if n.startswith(".unpack")], [])
+
     def build_cli_setup(self):
         import zipfile
         tmp = tempfile.TemporaryDirectory()

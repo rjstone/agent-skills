@@ -19,11 +19,11 @@ import tarfile
 import tempfile
 import urllib.parse
 import zipfile
-from html.parser import HTMLParser
+import zlib
 from typing import Callable, Dict, List, Optional, Tuple
 
 from build_core import CLIError
-from build_html import VOID, _serialize, _tokens
+from build_html import _SELECTORS, VOID, _element_end, _serialize, _tokens
 from build_fetch import Source, _atomic_write, default_head  # noqa: F401 (re-export)
 
 MAX_UNPACKED = 500 * 1024 * 1024
@@ -247,7 +247,8 @@ def unpack(archive_path: str, out_dir: str) -> str:
                 _unzip(archive_path, tmp)
             else:
                 _untar(archive_path, tmp)
-        except (zipfile.BadZipFile, tarfile.TarError, EOFError, OSError) as e:
+        except (zipfile.BadZipFile, tarfile.TarError, zlib.error, NotImplementedError,
+                RuntimeError, EOFError, OSError) as e:
             raise CLIError("cannot unpack the archive: %s" % e, 2)
         build = find_build(tmp)
         if build is None:
@@ -264,27 +265,6 @@ def unpack(archive_path: str, out_dir: str) -> str:
 
 
 DOC_PREFIX = "document-"
-
-
-class _Markers(HTMLParser):
-    """Offsets (in the source string) of every element whose id starts with
-    'document-': [(offset, docname)]."""
-
-    def __init__(self, text: str):
-        super().__init__(convert_charrefs=True)
-        self.starts = [0]
-        for line in text.split("\n")[:-1]:
-            self.starts.append(self.starts[-1] + len(line) + 1)
-        self.found: List[Tuple[int, str]] = []
-
-    def handle_starttag(self, tag, attrs):
-        for k, v in attrs:
-            if k == "id" and v and v.startswith(DOC_PREFIX):
-                line, col = self.getpos()
-                self.found.append((self.starts[line - 1] + col, v[len(DOC_PREFIX):]))
-                break
-
-    handle_startendtag = handle_starttag
 
 
 def is_singlehtml(html: str) -> bool:
@@ -323,16 +303,21 @@ def split_singlehtml(html: str, docnames: List[str]) -> Dict[str, str]:
     own marker id removed. A link '#id' to an id defined in another chunk
     becomes '<uri of that page, relative to this one>#id'; '#document-x'
     becomes page x; ids in the same chunk stay. Linear time."""
-    p = _Markers(html)
-    p.feed(html)
-    p.close()
-    found = p.found
-    ends = [o for o, _ in found[1:]] + [len(html)]
-    chunks: List[Tuple[str, str]] = []
-    if not found or found[0][0] > 0:
-        chunks.append(("index", html[:found[0][0] if found else len(html)]))
-    for (off, name), end in zip(found, ends):
-        chunks.append((name, html[off:end]))
+    tokens = _tokens(html)
+    inner = tokens
+    for match in _SELECTORS:   # the same element main_content picks
+        hit = next((i for i, (k, t, a) in enumerate(tokens)
+                    if k == "start" and match(t, a or [])), None)
+        if hit is not None:
+            inner = tokens[hit + 1:_element_end(tokens, hit) - 1]
+            break
+    chunks: List[Tuple[str, list]] = [("index", [])]
+    for tok in inner:
+        if tok[0] == "start":
+            ident = next((v for k, v in tok[2] or [] if k == "id"), None)
+            if ident and ident.startswith(DOC_PREFIX):
+                chunks.append((ident[len(DOC_PREFIX):], []))
+        chunks[-1][1].append(tok)
     wanted: Dict[str, str] = {}
     for d in docnames:
         wanted[d] = d
@@ -340,9 +325,9 @@ def split_singlehtml(html: str, docnames: List[str]) -> Dict[str, str]:
     pages: Dict[str, list] = {}
     for name, raw in chunks:
         d = wanted.get(name, name)
-        if d in pages:
+        if d in pages or (d == "index" and not raw and name == "index"):
             continue
-        toks = _balance(_tokens(raw))
+        toks = _balance(raw)
         if toks and toks[0][0] == "start":
             toks[0] = ("start", toks[0][1], [(k, v) for k, v in toks[0][2] or []
                                               if not (k == "id" and (v or "").startswith(DOC_PREFIX))])
@@ -359,9 +344,10 @@ def split_singlehtml(html: str, docnames: List[str]) -> Dict[str, str]:
         here = posixpath.dirname(d + ".html") or "."
 
         def href(value: str, d=d, here=here) -> str:
-            if not value.startswith("#") or len(value) < 2:
+            path, _, ident = value.partition("#")
+            if path not in ("", "index.html", "./index.html") or not ident:
                 return value
-            ident = value[1:]
+            value = "#" + ident
             if ident.startswith(DOC_PREFIX):
                 tgt = wanted.get(ident[len(DOC_PREFIX):], ident[len(DOC_PREFIX):])
                 return posixpath.relpath(tgt + ".html", here) if tgt in pages else value

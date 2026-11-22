@@ -12,7 +12,8 @@ from build_inventory import anchor_id
 VOID = {"area", "base", "br", "col", "embed", "hr", "img", "input", "link", "meta",
         "param", "source", "track", "wbr"}
 STUB_CLASS = "docshelf-build-stub"  # marks pages that hold no stored content
-DROP = {"script", "style", "nav", "noscript", "template", "iframe", "form", "button"}
+DROP = {"script", "style", "nav", "noscript", "template", "iframe", "form", "button",
+        "head", "title", "link", "meta"}
 
 Attrs = List[Tuple[str, Optional[str]]]
 # a token: ("start", tag, attrs) | ("end", tag, None) | ("text", text, None)

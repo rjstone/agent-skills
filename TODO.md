@@ -194,9 +194,10 @@ column is from memory: verify each against real output before building.
       PyPI `project_urls` "Documentation" (the user, 2026-11-21, PR #29
       review).
 - [x] 8.13 docshelf-build bulk downloads: when a site offers its docs as
-      one archive (zip or tgz: Read the Docs "Downloads" HTML zip, a
-      project's release docs tarball), fetch that once instead of page by
-      page, and have `detect` report it (the user, 2026-11-22).
+      one archive, fetch that once instead of page by page, and have
+      `detect` report it (the user, 2026-11-22). Done for the Read the Docs
+      "Downloads" HTML zip (discovery is Read the Docs only; unpacking
+      handles zip and tar.gz, but other tarballs are not discovered).
 - [x] 8.14 Done in docshelf-build 0.4.0: rules-2 (`model:rules-2`) tuned on
       calibration + holdout: agreement 26/26 langchain, 30/30 opencode, no
       reference page stubbed (thresholds: full needs you <= 3 and tables >= 2;
