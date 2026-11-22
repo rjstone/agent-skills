@@ -12,6 +12,7 @@ from typing import Callable, List, Optional
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 from build_detect import describe, detect, offline  # noqa: E402
+from build_classify import apply_choices, counts, parse_choices, review_lines, run_rules  # noqa: E402
 from build_core import (NAME_RE, VERSION, CLIError, built_dir, cache_dir, plans_dir, src_dir,  # noqa: E402
                         warn)
 from build_docvol import check_name, derive_name, write_docvol, write_llms_docvol  # noqa: E402
@@ -33,6 +34,8 @@ with a sub-index as SOURCE or --stub. Usual loop:
   plan SOURCE --name NAME     read the inventory, write and summarize the plan
   plan SOURCE --name NAME --full 'group/*'   keep a prose group in full
   build NAME                  fetch the full pages, write the docvol
+  classify NAME               (llms.txt) sort reference from guides after a build;
+                              --apply FILE --model ID records an agent's choices
   build SOURCE [plan options] plan and build in one step
 Then look things up with docshelf (the docvol is listed as "built").
 SOURCE is the site's base URL or a local Sphinx HTML build folder, or the
@@ -198,6 +201,55 @@ def do_build(cache: str, name: str, workers: int, refetch: bool = False, opener=
     _fail_lines(errors, len(meta["reused"]))
 
 
+def do_classify(cache: str, args) -> None:
+    name = args.name
+    path = _plan_path(cache, name)
+    if not os.path.isfile(path):
+        raise CLIError("no plan for %s; run: docshelf-build plan SOURCE --name %s" % (name, name), 2)
+    plan = load_plan(path)
+    if plan.get("kind") != "llms":
+        raise CLIError("classify works on llms.txt docvols; Sphinx plans use the role rule", 2)
+    if not any(isinstance(p.get("signals"), dict) for p in plan["pages"].values()):
+        raise CLIError("no page has signals yet; run: docshelf-build build %s first" % name, 2)
+    if args.apply:
+        if args.apply == "-":
+            text = sys.stdin.read()
+        else:
+            try:
+                with open(args.apply, encoding="utf-8") as fh:
+                    text = fh.read()
+            except (OSError, UnicodeDecodeError) as e:
+                raise CLIError("cannot read %s: %s" % (args.apply, e), 2)
+        choices, errors = parse_choices(text)
+        for err in errors:
+            print(err)
+        if not choices:
+            raise CLIError("no choices parsed; nothing applied", 2)
+        applied, messages = apply_choices(plan, choices, args.model)
+        save_plan(path, plan)
+        print("applied %d" % applied)
+        _print(messages)
+        print("left for review: %d" % counts(plan)["review"])
+        return
+    run_rules(plan)
+    save_plan(path, plan)
+    c = counts(plan)
+    print("reference %d, stub %d, review %d, decided by a person %d, by an agent %d, "
+          "no signals %d" % (c["reference"], c["stub"], c["review"], c["person"], c["agent"],
+                             c["no signals"]))
+    cache_pages = PageCache(os.path.join(src_dir(cache), name))
+    offset, limit = max(0, args.offset), max(0, args.limit)
+    _print(review_lines(plan, cache_pages.get, offset, limit))
+    if c["review"] == 0:
+        print("nothing left to review; run: build %s" % name)
+        return
+    print('next: write one line per page to a file: "full KEY" or "stub KEY [short description]",')
+    print("then run: classify %s --apply FILE --model YOUR_MODEL_ID, then classify %s again"
+          % (name, name))
+    if offset + limit < c["review"]:
+        print("more: classify %s --offset %d" % (name, offset + limit))
+
+
 def do_list(cache: str) -> None:
     names = set()
     for root, suffix in ((built_dir(cache), ""), (plans_dir(cache), ".json")):
@@ -278,6 +330,14 @@ def _parser() -> argparse.ArgumentParser:
     d = sub.add_parser("detect", help="which build type a site supports (objects.inv "
                        "or llms.txt), and the SOURCE to plan")
     d.add_argument("source", metavar="URL_OR_PATH")
+    c = sub.add_parser("classify", help="llms.txt: sort reference pages from guides by rules, "
+                       "list the undecided pages, record an agent's choices")
+    c.add_argument("name", metavar="NAME")
+    c.add_argument("--offset", type=int, default=0, help="first review page to list (default 0)")
+    c.add_argument("--limit", type=int, default=25, help="review pages to list (default 25)")
+    c.add_argument("--apply", metavar="FILE", help="apply 'full KEY' / 'stub KEY [text]' lines "
+                   "from FILE ('-' = stdin)")
+    c.add_argument("--model", default="agent", help="id recorded with --apply (default agent)")
     sub.add_parser("list", help="built and planned docvols")
     r = sub.add_parser("remove", help="delete a built docvol (the plan stays)")
     r.add_argument("name", metavar="NAME")
@@ -318,6 +378,8 @@ def main(argv: Optional[List[str]] = None, env=None, opener=None,
                                % ", ".join("%s (%s)" % t for t in found.tried),
                                4 if offline(found) else 3)
             _print(describe(found))
+        elif args.command == "classify":
+            do_classify(cache, args)
         elif args.command == "list":
             do_list(cache)
         else:

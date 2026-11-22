@@ -1690,6 +1690,125 @@ class DetectTests(unittest.TestCase):
         self.assertIn("network error", err)
 
 
+CL_INDEX = ("# Site\n## Docs\n- [Ref](https://x.io/ref.md)\n- [Guide](https://x.io/guide.md)\n"
+            "- [Thin](https://x.io/thin.md)\n")
+CL_REF = ("# Ref\n\n" + "The option sets the value used by the command. " * 40
+          + "\n\n```\n" + "".join("--flag%d VALUE\n" % i for i in range(12)) + "```\n")
+CL_GUIDE = "# Guide\n\n" + "First you open it, then you check that you can see what you need. " * 30 + "\n"
+CL_THIN = "# Thin\n\nShort page.\n"
+
+
+class ClassifyCliTests(unittest.TestCase):
+    def setUp(self):
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        self.tmp = os.path.realpath(tmp.name)
+        self.cache = os.path.join(self.tmp, "cache")
+        self.env = {"HOME": self.tmp, "DOCSHELF_CACHE_DIR": self.cache}
+        self.site = {
+            "https://x.io/llms.txt": (200, CL_INDEX.encode()),
+            "https://x.io/ref.md": (200, CL_REF.encode()),
+            "https://x.io/guide.md": (200, CL_GUIDE.encode()),
+            "https://x.io/thin.md": (200, CL_THIN.encode()),
+        }
+        self.pages_allowed = True
+        self.urls = []
+        self.plan_path = os.path.join(self.cache, "built-plans", "site.json")
+        self.docvol = os.path.join(self.cache, "built", "site")
+
+    def opener(self, url):
+        self.urls.append(url)
+        if url.endswith("/robots.txt"):
+            return 404, b""
+        if not self.pages_allowed and not url.endswith("llms.txt"):
+            return 500, b""
+        return self.site.get(url, (404, b""))
+
+    def run_main(self, *argv):
+        out, err = io.StringIO(), io.StringIO()
+        with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
+            code = docshelf_build.main(list(argv), env=self.env, opener=self.opener,
+                                       sleep=lambda s: None)
+        return code, out.getvalue(), err.getvalue()
+
+    def built(self):
+        self.assertEqual(self.run_main("build", "https://x.io/llms.txt", "--name", "site")[0], 0)
+
+    def write_choices(self, text):
+        path = os.path.join(self.tmp, "choices.txt")
+        with open(path, "w", encoding="utf-8") as fh:
+            fh.write(text)
+        return path
+
+    def test_refuses_sphinx_and_unbuilt(self):
+        os.makedirs(os.path.dirname(self.plan_path))
+        with open(self.plan_path, "w") as fh:
+            json.dump({"kind": "sphinx", "pages": {}}, fh)
+        code, _, err = self.run_main("classify", "site")
+        self.assertEqual(code, 2)
+        self.assertIn("classify works on llms.txt docvols; Sphinx plans use the role rule", err)
+        os.remove(self.plan_path)
+        self.assertEqual(self.run_main("classify", "nope")[0], 2)
+        self.assertEqual(self.run_main("plan", "https://x.io/llms.txt", "--name", "site")[0], 0)
+        code, _, err = self.run_main("classify", "site")
+        self.assertEqual(code, 2)
+        self.assertIn("build site first", err)
+
+    def test_classify_apply_build_offline(self):
+        self.built()
+        code, out, err = self.run_main("classify", "site")
+        self.assertEqual(code, 0, err)
+        self.assertIn("reference 1, stub 1, review 1, decided by a person 0, by an agent 0, "
+                      "no signals 0", out)
+        self.assertEqual(out.count("\n  words="), 1)
+        self.assertIn("thin   ", out)
+        self.assertIn("then run: classify site --apply FILE --model YOUR_MODEL_ID", out)
+        self.assertNotIn("more:", out)
+        path = self.write_choices("stub thin Short\n")
+        code, out, _ = self.run_main("classify", "site", "--apply", path, "--model", "t")
+        self.assertEqual(code, 0)
+        self.assertIn("applied 1", out)
+        self.assertIn("left for review: 0", out)
+        out = self.run_main("classify", "site")[1]
+        self.assertIn("nothing left to review; run: build site", out)
+        self.pages_allowed = False
+        self.urls.clear()
+        code, out, err = self.run_main("build", "site")
+        self.assertEqual(code, 0, err)
+        with open(os.path.join(self.docvol, "db.json"), encoding="utf-8") as fh:
+            self.assertIn("Short", json.load(fh)["thin"])
+        self.assertEqual([u for u in self.urls if not u.endswith("robots.txt")],
+                         ["https://x.io/llms.txt"])
+
+    def test_paging_hint(self):
+        self.built()
+        out = self.run_main("classify", "site", "--limit", "0")[1]
+        self.assertIn("more: classify site --offset 0", out)
+
+    def test_replan_keeps_choices(self):
+        self.built()
+        self.run_main("classify", "site")
+        path = self.write_choices("stub thin Short\n")
+        self.run_main("classify", "site", "--apply", path, "--model", "t")
+        first = self.run_main("classify", "site")[1].splitlines()[0]
+        self.assertEqual(self.run_main("plan", "https://x.io/llms.txt", "--name", "site")[0], 0)
+        self.assertEqual(self.run_main("classify", "site")[1].splitlines()[0], first)
+        self.assertEqual(load_plan(self.plan_path)["pages"]["thin"]["why"], "model:t")
+
+    def test_apply_stdin_and_bad_file(self):
+        self.built()
+        with mock.patch("sys.stdin", io.StringIO("full thin\r\n")):
+            code, out, _ = self.run_main("classify", "site", "--apply", "-")
+        self.assertEqual(code, 0)
+        self.assertIn("applied 1", out)
+        self.assertEqual(load_plan(self.plan_path)["pages"]["thin"]["why"], "model:agent")
+        path = self.write_choices("hello\nkeep x\n")
+        code, out, err = self.run_main("classify", "site", "--apply", path)
+        self.assertEqual(code, 2)
+        self.assertIn("line 1:", out)
+        self.assertEqual(load_plan(self.plan_path)["pages"]["thin"]["why"], "model:agent")
+
+
 class ClassifyRulesTests(unittest.TestCase):
     def test_rules_id(self):
         self.assertEqual(RULES_ID, "model:rules-1")

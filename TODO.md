@@ -154,7 +154,9 @@ column is from memory: verify each against real output before building.
       opencode.ai 90 pages (88 built, 2 social links on other hosts
       failed), docs.langchain.com 1,407 pages in a 4-level tree, its
       `build/python.txt` sub-index 240/240 built.
-- [ ] 8.11 Reference-vs-guide classifier for built docvols (both kinds): a
+- [x] 8.11 Done in docshelf-build 0.3.0 (`classify`; spec
+      `docs/superpowers/specs/2026-11-22-docshelf-build-classify-design.md`).
+      Reference-vs-guide classifier for built docvols (both kinds): a
       separate step that reads `pages.<key>.signals` (and the cached raw
       pages) and writes `keep` and `why: "model:<id>"` into the plan, which
       re-planning keeps. Options: cheap thresholds, an embedding classifier

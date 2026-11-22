@@ -39,8 +39,22 @@ options go with `plan` or with a SOURCE, never with `build NAME`.
 ## Sorting reference from tutorials
 
 Each page's plan entry holds `signals` (word count, code ratio, signature
-lines, "you" per 1000 words and similar counts) for sorting reference pages
-from tutorials. A choice written into the plan as `"keep"` with
-`"why": "model:<id>"` (and an optional `"description"`) survives
-re-planning; a command-line `--full`/`--stub` or `"why": "manual"` still
-wins over it.
+lines, "you" per 1000 words and similar counts), recorded by `build`. The
+loop:
+
+1. `build NAME` (fills the signals and the page cache).
+2. `classify NAME` applies the rules (`why: "model:rules-1"`), prints one
+   count line, then up to 25 review pages (`--offset K`, `--limit N`) with
+   signals and a short preview from the cache.
+3. Write one line per review page to a file: `full KEY` or
+   `stub KEY [short description]`. Pages you leave out stay in full.
+4. `classify NAME --apply FILE --model YOUR_MODEL_ID` (`-` reads stdin);
+   it stores `"why": "model:<id>"` and reports skipped lines.
+5. `classify NAME` again, until it says nothing is left to review.
+6. `build NAME` (no page downloads: the cache is used).
+
+The rules never touch a page a person decided (`manual`, `override:`) or an
+agent decided (`model:<id>`). Add patterns with `plan SOURCE --full/--stub
+PAT`, not by editing the plan: a hand-edited pattern loses to an earlier
+choice. A choice survives re-planning; `plan --reset` drops the agent's
+choices, and `classify` brings back the rules' part but not the agent's.
