@@ -1,0 +1,3125 @@
+{
+ "note": "Hand-labelled sample for docshelf-build classify (2026-11-22), in two splits. Pages from the 0.2.0 trial's llms.txt docvols: langchain = docs.langchain.com build/python.txt, opencode = opencode.ai llms.txt. split 'calibration' (124 pages): picked as a spread over each sorted key list (the langchain plan has a single section, \"Python\", so its spread is by key prefix) (every third langchain page, every other opencode page with signals); the rules' thresholds were tuned on these. split 'holdout' (84 pages, added 2026-11-22 and labelled by a different reader; never used for tuning): every remaining opencode page with signals, and every fourth of the remaining langchain pages with signals (sorted keys, starting from the second). label 'reference': an agent looks things up in it (API pages, parameters, options, config keys, error lists, CLI flags, integration pages that are mostly signatures and settings). label 'guide': tutorials, concepts, overviews, how-tos told in steps, marketing, legal, status, changelogs and release notes. A page that is both goes by what most of it is. Labels were read from each cached page, not from the signals; signals are copied from the plan. Pages are sorted by site, then split, then key. No page text.",
+ "pages": [
+  {
+   "site": "langchain",
+   "key": "langsmith/python/managed-deep-agents-agent-definition",
+   "label": "reference",
+   "split": "calibration",
+   "signals": {
+    "code_ratio": 0.488,
+    "headings": 7,
+    "signature_lines": 13,
+    "steps": 0,
+    "tables": 2,
+    "words": 1860,
+    "you_per_1k": 5.4
+   }
+  },
+  {
+   "site": "langchain",
+   "key": "langsmith/python/managed-deep-agents-channels",
+   "label": "guide",
+   "split": "calibration",
+   "signals": {
+    "code_ratio": 0.186,
+    "headings": 7,
+    "signature_lines": 3,
+    "steps": 2,
+    "tables": 0,
+    "words": 1053,
+    "you_per_1k": 1.9
+   }
+  },
+  {
+   "site": "langchain",
+   "key": "langsmith/python/managed-deep-agents-cli",
+   "label": "reference",
+   "split": "calibration",
+   "signals": {
+    "code_ratio": 0.07,
+    "headings": 16,
+    "signature_lines": 0,
+    "steps": 14,
+    "tables": 16,
+    "words": 3378,
+    "you_per_1k": 5.3
+   }
+  },
+  {
+   "site": "langchain",
+   "key": "langsmith/python/managed-deep-agents-custom-frontend",
+   "label": "guide",
+   "split": "calibration",
+   "signals": {
+    "code_ratio": 0.549,
+    "headings": 7,
+    "signature_lines": 25,
+    "steps": 0,
+    "tables": 2,
+    "words": 1380,
+    "you_per_1k": 10.9
+   }
+  },
+  {
+   "site": "langchain",
+   "key": "langsmith/python/managed-deep-agents-evals",
+   "label": "guide",
+   "split": "calibration",
+   "signals": {
+    "code_ratio": 0.259,
+    "headings": 6,
+    "signature_lines": 3,
+    "steps": 0,
+    "tables": 0,
+    "words": 979,
+    "you_per_1k": 11.2
+   }
+  },
+  {
+   "site": "langchain",
+   "key": "langsmith/python/managed-deep-agents-local-development",
+   "label": "guide",
+   "split": "calibration",
+   "signals": {
+    "code_ratio": 0.021,
+    "headings": 5,
+    "signature_lines": 0,
+    "steps": 5,
+    "tables": 1,
+    "words": 613,
+    "you_per_1k": 9.8
+   }
+  },
+  {
+   "site": "langchain",
+   "key": "langsmith/python/managed-deep-agents-memory",
+   "label": "guide",
+   "split": "calibration",
+   "signals": {
+    "code_ratio": 0.289,
+    "headings": 13,
+    "signature_lines": 7,
+    "steps": 3,
+    "tables": 5,
+    "words": 2885,
+    "you_per_1k": 8.0
+   }
+  },
+  {
+   "site": "langchain",
+   "key": "langsmith/python/managed-deep-agents-overview",
+   "label": "guide",
+   "split": "calibration",
+   "signals": {
+    "code_ratio": 0.0,
+    "headings": 4,
+    "signature_lines": 0,
+    "steps": 0,
+    "tables": 1,
+    "words": 1695,
+    "you_per_1k": 12.4
+   }
+  },
+  {
+   "site": "langchain",
+   "key": "langsmith/python/managed-deep-agents-quickstart",
+   "label": "guide",
+   "split": "calibration",
+   "signals": {
+    "code_ratio": 0.233,
+    "headings": 9,
+    "signature_lines": 0,
+    "steps": 4,
+    "tables": 0,
+    "words": 1746,
+    "you_per_1k": 17.2
+   }
+  },
+  {
+   "site": "langchain",
+   "key": "langsmith/python/managed-deep-agents-schedules",
+   "label": "guide",
+   "split": "calibration",
+   "signals": {
+    "code_ratio": 0.322,
+    "headings": 17,
+    "signature_lines": 6,
+    "steps": 0,
+    "tables": 1,
+    "words": 1942,
+    "you_per_1k": 7.2
+   }
+  },
+  {
+   "site": "langchain",
+   "key": "langsmith/python/managed-deep-agents-subagents",
+   "label": "guide",
+   "split": "calibration",
+   "signals": {
+    "code_ratio": 0.272,
+    "headings": 15,
+    "signature_lines": 6,
+    "steps": 3,
+    "tables": 6,
+    "words": 2123,
+    "you_per_1k": 3.8
+   }
+  },
+  {
+   "site": "langchain",
+   "key": "oss/openwiki/automate-updates",
+   "label": "guide",
+   "split": "calibration",
+   "signals": {
+    "code_ratio": 0.048,
+    "headings": 5,
+    "signature_lines": 0,
+    "steps": 0,
+    "tables": 1,
+    "words": 531,
+    "you_per_1k": 7.5
+   }
+  },
+  {
+   "site": "langchain",
+   "key": "oss/openwiki/customize",
+   "label": "reference",
+   "split": "calibration",
+   "signals": {
+    "code_ratio": 0.066,
+    "headings": 8,
+    "signature_lines": 0,
+    "steps": 0,
+    "tables": 2,
+    "words": 744,
+    "you_per_1k": 4.0
+   }
+  },
+  {
+   "site": "langchain",
+   "key": "oss/openwiki/personal-mode",
+   "label": "guide",
+   "split": "calibration",
+   "signals": {
+    "code_ratio": 0.202,
+    "headings": 8,
+    "signature_lines": 0,
+    "steps": 0,
+    "tables": 1,
+    "words": 878,
+    "you_per_1k": 8.0
+   }
+  },
+  {
+   "site": "langchain",
+   "key": "oss/openwiki/search-and-link",
+   "label": "guide",
+   "split": "calibration",
+   "signals": {
+    "code_ratio": 0.132,
+    "headings": 5,
+    "signature_lines": 0,
+    "steps": 4,
+    "tables": 0,
+    "words": 622,
+    "you_per_1k": 9.6
+   }
+  },
+  {
+   "site": "langchain",
+   "key": "oss/python/concepts/context",
+   "label": "guide",
+   "split": "calibration",
+   "signals": {
+    "code_ratio": 0.042,
+    "headings": 4,
+    "signature_lines": 1,
+    "steps": 2,
+    "tables": 1,
+    "words": 1137,
+    "you_per_1k": 7.0
+   }
+  },
+  {
+   "site": "langchain",
+   "key": "oss/python/concepts/products",
+   "label": "guide",
+   "split": "calibration",
+   "signals": {
+    "code_ratio": 0.157,
+    "headings": 8,
+    "signature_lines": 0,
+    "steps": 0,
+    "tables": 1,
+    "words": 1177,
+    "you_per_1k": 14.4
+   }
+  },
+  {
+   "site": "langchain",
+   "key": "oss/python/contributing/comarketing",
+   "label": "guide",
+   "split": "calibration",
+   "signals": {
+    "code_ratio": 0.0,
+    "headings": 1,
+    "signature_lines": 0,
+    "steps": 0,
+    "tables": 0,
+    "words": 289,
+    "you_per_1k": 3.5
+   }
+  },
+  {
+   "site": "langchain",
+   "key": "oss/python/contributing/integrations-langchain",
+   "label": "guide",
+   "split": "calibration",
+   "signals": {
+    "code_ratio": 0.0,
+    "headings": 3,
+    "signature_lines": 0,
+    "steps": 0,
+    "tables": 0,
+    "words": 836,
+    "you_per_1k": 14.4
+   }
+  },
+  {
+   "site": "langchain",
+   "key": "oss/python/contributing/standard-tests-langchain",
+   "label": "guide",
+   "split": "calibration",
+   "signals": {
+    "code_ratio": 0.183,
+    "headings": 5,
+    "signature_lines": 2,
+    "steps": 0,
+    "tables": 0,
+    "words": 866,
+    "you_per_1k": 18.5
+   }
+  },
+  {
+   "site": "langchain",
+   "key": "oss/python/deepagents/async-subagents",
+   "label": "guide",
+   "split": "calibration",
+   "signals": {
+    "code_ratio": 0.433,
+    "headings": 27,
+    "signature_lines": 13,
+    "steps": 0,
+    "tables": 4,
+    "words": 2876,
+    "you_per_1k": 3.1
+   }
+  },
+  {
+   "site": "langchain",
+   "key": "oss/python/deepagents/comparison",
+   "label": "guide",
+   "split": "calibration",
+   "signals": {
+    "code_ratio": 0.0,
+    "headings": 9,
+    "signature_lines": 0,
+    "steps": 0,
+    "tables": 1,
+    "words": 1500,
+    "you_per_1k": 18.7
+   }
+  },
+  {
+   "site": "langchain",
+   "key": "oss/python/deepagents/customization",
+   "label": "reference",
+   "split": "calibration",
+   "signals": {
+    "code_ratio": 0.245,
+    "headings": 21,
+    "signature_lines": 132,
+    "steps": 23,
+    "tables": 1,
+    "words": 12683,
+    "you_per_1k": 7.3
+   }
+  },
+  {
+   "site": "langchain",
+   "key": "oss/python/deepagents/dynamic-subagents",
+   "label": "guide",
+   "split": "calibration",
+   "signals": {
+    "code_ratio": 0.148,
+    "headings": 11,
+    "signature_lines": 15,
+    "steps": 0,
+    "tables": 0,
+    "words": 5503,
+    "you_per_1k": 18.0
+   }
+  },
+  {
+   "site": "langchain",
+   "key": "oss/python/deepagents/frontend/overview",
+   "label": "guide",
+   "split": "calibration",
+   "signals": {
+    "code_ratio": 0.477,
+    "headings": 4,
+    "signature_lines": 7,
+    "steps": 0,
+    "tables": 1,
+    "words": 662,
+    "you_per_1k": 7.6
+   }
+  },
+  {
+   "site": "langchain",
+   "key": "oss/python/deepagents/frontend/todo-list",
+   "label": "guide",
+   "split": "calibration",
+   "signals": {
+    "code_ratio": 0.632,
+    "headings": 11,
+    "signature_lines": 28,
+    "steps": 5,
+    "tables": 0,
+    "words": 995,
+    "you_per_1k": 5.0
+   }
+  },
+  {
+   "site": "langchain",
+   "key": "oss/python/deepagents/interpreters",
+   "label": "guide",
+   "split": "calibration",
+   "signals": {
+    "code_ratio": 0.565,
+    "headings": 11,
+    "signature_lines": 45,
+    "steps": 4,
+    "tables": 3,
+    "words": 2477,
+    "you_per_1k": 3.2
+   }
+  },
+  {
+   "site": "langchain",
+   "key": "oss/python/deepagents/multimodal",
+   "label": "guide",
+   "split": "calibration",
+   "signals": {
+    "code_ratio": 0.449,
+    "headings": 4,
+    "signature_lines": 3,
+    "steps": 0,
+    "tables": 0,
+    "words": 870,
+    "you_per_1k": 8.0
+   }
+  },
+  {
+   "site": "langchain",
+   "key": "oss/python/deepagents/profiles",
+   "label": "reference",
+   "split": "calibration",
+   "signals": {
+    "code_ratio": 0.415,
+    "headings": 7,
+    "signature_lines": 13,
+    "steps": 0,
+    "tables": 1,
+    "words": 1690,
+    "you_per_1k": 6.5
+   }
+  },
+  {
+   "site": "langchain",
+   "key": "oss/python/deepagents/retrieval",
+   "label": "guide",
+   "split": "calibration",
+   "signals": {
+    "code_ratio": 0.579,
+    "headings": 8,
+    "signature_lines": 29,
+    "steps": 0,
+    "tables": 1,
+    "words": 1242,
+    "you_per_1k": 9.7
+   }
+  },
+  {
+   "site": "langchain",
+   "key": "oss/python/deepagents/skills",
+   "label": "guide",
+   "split": "calibration",
+   "signals": {
+    "code_ratio": 0.565,
+    "headings": 38,
+    "signature_lines": 216,
+    "steps": 21,
+    "tables": 4,
+    "words": 7272,
+    "you_per_1k": 9.2
+   }
+  },
+  {
+   "site": "langchain",
+   "key": "oss/python/deepagents/tools",
+   "label": "guide",
+   "split": "calibration",
+   "signals": {
+    "code_ratio": 0.792,
+    "headings": 4,
+    "signature_lines": 35,
+    "steps": 0,
+    "tables": 1,
+    "words": 634,
+    "you_per_1k": 7.9
+   }
+  },
+  {
+   "site": "langchain",
+   "key": "oss/python/integrations/checkpointers/index",
+   "label": "reference",
+   "split": "calibration",
+   "signals": {
+    "code_ratio": 0.0,
+    "headings": 3,
+    "signature_lines": 0,
+    "steps": 0,
+    "tables": 1,
+    "words": 764,
+    "you_per_1k": 2.6
+   }
+  },
+  {
+   "site": "langchain",
+   "key": "oss/python/integrations/long-term-memory/index",
+   "label": "reference",
+   "split": "calibration",
+   "signals": {
+    "code_ratio": 0.0,
+    "headings": 3,
+    "signature_lines": 0,
+    "steps": 0,
+    "tables": 1,
+    "words": 559,
+    "you_per_1k": 3.6
+   }
+  },
+  {
+   "site": "langchain",
+   "key": "oss/python/integrations/providers/anthropic",
+   "label": "guide",
+   "split": "calibration",
+   "signals": {
+    "code_ratio": 0.0,
+    "headings": 2,
+    "signature_lines": 0,
+    "steps": 0,
+    "tables": 0,
+    "words": 157,
+    "you_per_1k": 6.4
+   }
+  },
+  {
+   "site": "langchain",
+   "key": "oss/python/integrations/providers/fireworks",
+   "label": "guide",
+   "split": "calibration",
+   "signals": {
+    "code_ratio": 0.083,
+    "headings": 2,
+    "signature_lines": 0,
+    "steps": 0,
+    "tables": 0,
+    "words": 178,
+    "you_per_1k": 5.6
+   }
+  },
+  {
+   "site": "langchain",
+   "key": "oss/python/integrations/providers/huggingface",
+   "label": "guide",
+   "split": "calibration",
+   "signals": {
+    "code_ratio": 0.106,
+    "headings": 10,
+    "signature_lines": 0,
+    "steps": 0,
+    "tables": 0,
+    "words": 430,
+    "you_per_1k": 2.3
+   }
+  },
+  {
+   "site": "langchain",
+   "key": "oss/python/integrations/providers/ollama",
+   "label": "guide",
+   "split": "calibration",
+   "signals": {
+    "code_ratio": 0.0,
+    "headings": 2,
+    "signature_lines": 0,
+    "steps": 0,
+    "tables": 0,
+    "words": 186,
+    "you_per_1k": 10.8
+   }
+  },
+  {
+   "site": "langchain",
+   "key": "oss/python/integrations/retrievers/index",
+   "label": "reference",
+   "split": "calibration",
+   "signals": {
+    "code_ratio": 0.0,
+    "headings": 6,
+    "signature_lines": 0,
+    "steps": 0,
+    "tables": 3,
+    "words": 4044,
+    "you_per_1k": 1.2
+   }
+  },
+  {
+   "site": "langchain",
+   "key": "oss/python/integrations/tools/index",
+   "label": "reference",
+   "split": "calibration",
+   "signals": {
+    "code_ratio": 0.0,
+    "headings": 14,
+    "signature_lines": 0,
+    "steps": 0,
+    "tables": 11,
+    "words": 12822,
+    "you_per_1k": 1.4
+   }
+  },
+  {
+   "site": "langchain",
+   "key": "oss/python/langchain/chunking",
+   "label": "guide",
+   "split": "calibration",
+   "signals": {
+    "code_ratio": 0.375,
+    "headings": 10,
+    "signature_lines": 7,
+    "steps": 0,
+    "tables": 2,
+    "words": 1359,
+    "you_per_1k": 16.9
+   }
+  },
+  {
+   "site": "langchain",
+   "key": "oss/python/langchain/deep-agent-from-scratch",
+   "label": "guide",
+   "split": "calibration",
+   "signals": {
+    "code_ratio": 0.728,
+    "headings": 9,
+    "signature_lines": 117,
+    "steps": 8,
+    "tables": 2,
+    "words": 1927,
+    "you_per_1k": 18.7
+   }
+  },
+  {
+   "site": "langchain",
+   "key": "oss/python/langchain/frontend/branching-chat",
+   "label": "guide",
+   "split": "calibration",
+   "signals": {
+    "code_ratio": 0.586,
+    "headings": 7,
+    "signature_lines": 12,
+    "steps": 6,
+    "tables": 0,
+    "words": 810,
+    "you_per_1k": 8.6
+   }
+  },
+  {
+   "site": "langchain",
+   "key": "oss/python/langchain/frontend/generative-ui-overview",
+   "label": "guide",
+   "split": "calibration",
+   "signals": {
+    "code_ratio": 0.188,
+    "headings": 6,
+    "signature_lines": 3,
+    "steps": 0,
+    "tables": 1,
+    "words": 883,
+    "you_per_1k": 18.1
+   }
+  },
+  {
+   "site": "langchain",
+   "key": "oss/python/langchain/frontend/integrations/ai-elements",
+   "label": "guide",
+   "split": "calibration",
+   "signals": {
+    "code_ratio": 0.797,
+    "headings": 4,
+    "signature_lines": 13,
+    "steps": 3,
+    "tables": 0,
+    "words": 350,
+    "you_per_1k": 14.3
+   }
+  },
+  {
+   "site": "langchain",
+   "key": "oss/python/langchain/frontend/integrations/openui",
+   "label": "guide",
+   "split": "calibration",
+   "signals": {
+    "code_ratio": 0.834,
+    "headings": 15,
+    "signature_lines": 99,
+    "steps": 4,
+    "tables": 1,
+    "words": 1234,
+    "you_per_1k": 3.2
+   }
+  },
+  {
+   "site": "langchain",
+   "key": "oss/python/langchain/frontend/markdown-messages",
+   "label": "guide",
+   "split": "calibration",
+   "signals": {
+    "code_ratio": 0.563,
+    "headings": 7,
+    "signature_lines": 29,
+    "steps": 3,
+    "tables": 1,
+    "words": 783,
+    "you_per_1k": 6.4
+   }
+  },
+  {
+   "site": "langchain",
+   "key": "oss/python/langchain/frontend/overview",
+   "label": "guide",
+   "split": "calibration",
+   "signals": {
+    "code_ratio": 0.33,
+    "headings": 10,
+    "signature_lines": 9,
+    "steps": 0,
+    "tables": 2,
+    "words": 1231,
+    "you_per_1k": 8.9
+   }
+  },
+  {
+   "site": "langchain",
+   "key": "oss/python/langchain/frontend/time-travel",
+   "label": "guide",
+   "split": "calibration",
+   "signals": {
+    "code_ratio": 0.706,
+    "headings": 10,
+    "signature_lines": 42,
+    "steps": 0,
+    "tables": 0,
+    "words": 996,
+    "you_per_1k": 5.0
+   }
+  },
+  {
+   "site": "langchain",
+   "key": "oss/python/langchain/guardrails",
+   "label": "guide",
+   "split": "calibration",
+   "signals": {
+    "code_ratio": 0.708,
+    "headings": 8,
+    "signature_lines": 31,
+    "steps": 0,
+    "tables": 1,
+    "words": 998,
+    "you_per_1k": 9.0
+   }
+  },
+  {
+   "site": "langchain",
+   "key": "oss/python/langchain/knowledge-base",
+   "label": "guide",
+   "split": "calibration",
+   "signals": {
+    "code_ratio": 0.194,
+    "headings": 16,
+    "signature_lines": 30,
+    "steps": 5,
+    "tables": 0,
+    "words": 2840,
+    "you_per_1k": 4.6
+   }
+  },
+  {
+   "site": "langchain",
+   "key": "oss/python/langchain/mcp/connections",
+   "label": "guide",
+   "split": "calibration",
+   "signals": {
+    "code_ratio": 0.531,
+    "headings": 11,
+    "signature_lines": 37,
+    "steps": 0,
+    "tables": 2,
+    "words": 1517,
+    "you_per_1k": 8.6
+   }
+  },
+  {
+   "site": "langchain",
+   "key": "oss/python/langchain/messages",
+   "label": "reference",
+   "split": "calibration",
+   "signals": {
+    "code_ratio": 0.259,
+    "headings": 16,
+    "signature_lines": 46,
+    "steps": 3,
+    "tables": 2,
+    "words": 3568,
+    "you_per_1k": 5.6
+   }
+  },
+  {
+   "site": "langchain",
+   "key": "oss/python/langchain/middleware/overview",
+   "label": "guide",
+   "split": "calibration",
+   "signals": {
+    "code_ratio": 0.375,
+    "headings": 3,
+    "signature_lines": 9,
+    "steps": 0,
+    "tables": 0,
+    "words": 615,
+    "you_per_1k": 6.5
+   }
+  },
+  {
+   "site": "langchain",
+   "key": "oss/python/langchain/multi-agent/handoffs",
+   "label": "guide",
+   "split": "calibration",
+   "signals": {
+    "code_ratio": 0.246,
+    "headings": 7,
+    "signature_lines": 7,
+    "steps": 2,
+    "tables": 0,
+    "words": 1891,
+    "you_per_1k": 8.5
+   }
+  },
+  {
+   "site": "langchain",
+   "key": "oss/python/langchain/multi-agent/router",
+   "label": "guide",
+   "split": "calibration",
+   "signals": {
+    "code_ratio": 0.205,
+    "headings": 8,
+    "signature_lines": 6,
+    "steps": 0,
+    "tables": 0,
+    "words": 852,
+    "you_per_1k": 8.2
+   }
+  },
+  {
+   "site": "langchain",
+   "key": "oss/python/langchain/multi-agent/skills-sql-assistant",
+   "label": "guide",
+   "split": "calibration",
+   "signals": {
+    "code_ratio": 0.159,
+    "headings": 15,
+    "signature_lines": 24,
+    "steps": 0,
+    "tables": 0,
+    "words": 4827,
+    "you_per_1k": 5.8
+   }
+  },
+  {
+   "site": "langchain",
+   "key": "oss/python/langchain/observability",
+   "label": "guide",
+   "split": "calibration",
+   "signals": {
+    "code_ratio": 0.5,
+    "headings": 6,
+    "signature_lines": 5,
+    "steps": 0,
+    "tables": 0,
+    "words": 600,
+    "you_per_1k": 26.7
+   }
+  },
+  {
+   "site": "langchain",
+   "key": "oss/python/langchain/quickstart",
+   "label": "guide",
+   "split": "calibration",
+   "signals": {
+    "code_ratio": 0.499,
+    "headings": 12,
+    "signature_lines": 42,
+    "steps": 15,
+    "tables": 0,
+    "words": 3045,
+    "you_per_1k": 22.7
+   }
+  },
+  {
+   "site": "langchain",
+   "key": "oss/python/langchain/short-term-memory",
+   "label": "guide",
+   "split": "calibration",
+   "signals": {
+    "code_ratio": 0.782,
+    "headings": 13,
+    "signature_lines": 106,
+    "steps": 0,
+    "tables": 0,
+    "words": 1280,
+    "you_per_1k": 10.9
+   }
+  },
+  {
+   "site": "langchain",
+   "key": "oss/python/langchain/structured-output",
+   "label": "reference",
+   "split": "calibration",
+   "signals": {
+    "code_ratio": 0.71,
+    "headings": 6,
+    "signature_lines": 65,
+    "steps": 0,
+    "tables": 0,
+    "words": 1510,
+    "you_per_1k": 4.6
+   }
+  },
+  {
+   "site": "langchain",
+   "key": "oss/python/langchain/test/index",
+   "label": "guide",
+   "split": "calibration",
+   "signals": {
+    "code_ratio": 0.0,
+    "headings": 0,
+    "signature_lines": 0,
+    "steps": 0,
+    "tables": 0,
+    "words": 377,
+    "you_per_1k": 18.6
+   }
+  },
+  {
+   "site": "langchain",
+   "key": "oss/python/langchain/tools",
+   "label": "guide",
+   "split": "calibration",
+   "signals": {
+    "code_ratio": 0.503,
+    "headings": 23,
+    "signature_lines": 79,
+    "steps": 4,
+    "tables": 2,
+    "words": 4395,
+    "you_per_1k": 8.9
+   }
+  },
+  {
+   "site": "langchain",
+   "key": "oss/python/langgraph/add-memory",
+   "label": "guide",
+   "split": "calibration",
+   "signals": {
+    "code_ratio": 0.077,
+    "headings": 13,
+    "signature_lines": 53,
+    "steps": 0,
+    "tables": 0,
+    "words": 7866,
+    "you_per_1k": 12.0
+   }
+  },
+  {
+   "site": "langchain",
+   "key": "oss/python/langgraph/backward-compatibility",
+   "label": "guide",
+   "split": "calibration",
+   "signals": {
+    "code_ratio": 0.362,
+    "headings": 5,
+    "signature_lines": 20,
+    "steps": 3,
+    "tables": 0,
+    "words": 1668,
+    "you_per_1k": 14.4
+   }
+  },
+  {
+   "site": "langchain",
+   "key": "oss/python/langgraph/deploy",
+   "label": "guide",
+   "split": "calibration",
+   "signals": {
+    "code_ratio": 0.0,
+    "headings": 3,
+    "signature_lines": 0,
+    "steps": 2,
+    "tables": 0,
+    "words": 684,
+    "you_per_1k": 36.5
+   }
+  },
+  {
+   "site": "langchain",
+   "key": "oss/python/langgraph/frontend/custom-stream-channels",
+   "label": "guide",
+   "split": "calibration",
+   "signals": {
+    "code_ratio": 0.469,
+    "headings": 7,
+    "signature_lines": 24,
+    "steps": 0,
+    "tables": 2,
+    "words": 982,
+    "you_per_1k": 9.2
+   }
+  },
+  {
+   "site": "langchain",
+   "key": "oss/python/langgraph/functional-api",
+   "label": "guide",
+   "split": "calibration",
+   "signals": {
+    "code_ratio": 0.075,
+    "headings": 19,
+    "signature_lines": 6,
+    "steps": 2,
+    "tables": 2,
+    "words": 2413,
+    "you_per_1k": 4.6
+   }
+  },
+  {
+   "site": "langchain",
+   "key": "oss/python/langgraph/graph-api-nodes",
+   "label": "reference",
+   "split": "calibration",
+   "signals": {
+    "code_ratio": 0.37,
+    "headings": 10,
+    "signature_lines": 72,
+    "steps": 5,
+    "tables": 3,
+    "words": 1973,
+    "you_per_1k": 4.1
+   }
+  },
+  {
+   "site": "langchain",
+   "key": "oss/python/langgraph/graph-api-visualize",
+   "label": "guide",
+   "split": "calibration",
+   "signals": {
+    "code_ratio": 0.626,
+    "headings": 3,
+    "signature_lines": 21,
+    "steps": 0,
+    "tables": 0,
+    "words": 369,
+    "you_per_1k": 8.1
+   }
+  },
+  {
+   "site": "langchain",
+   "key": "oss/python/langgraph/observability",
+   "label": "guide",
+   "split": "calibration",
+   "signals": {
+    "code_ratio": 0.479,
+    "headings": 6,
+    "signature_lines": 8,
+    "steps": 0,
+    "tables": 0,
+    "words": 634,
+    "you_per_1k": 25.2
+   }
+  },
+  {
+   "site": "langchain",
+   "key": "oss/python/langgraph/pregel",
+   "label": "guide",
+   "split": "calibration",
+   "signals": {
+    "code_ratio": 0.096,
+    "headings": 9,
+    "signature_lines": 16,
+    "steps": 0,
+    "tables": 0,
+    "words": 2536,
+    "you_per_1k": 5.9
+   }
+  },
+  {
+   "site": "langchain",
+   "key": "oss/python/langgraph/stores",
+   "label": "guide",
+   "split": "calibration",
+   "signals": {
+    "code_ratio": 0.588,
+    "headings": 11,
+    "signature_lines": 46,
+    "steps": 0,
+    "tables": 1,
+    "words": 1483,
+    "you_per_1k": 17.5
+   }
+  },
+  {
+   "site": "langchain",
+   "key": "oss/python/langgraph/test",
+   "label": "guide",
+   "split": "calibration",
+   "signals": {
+    "code_ratio": 0.746,
+    "headings": 4,
+    "signature_lines": 40,
+    "steps": 3,
+    "tables": 0,
+    "words": 509,
+    "you_per_1k": 45.2
+   }
+  },
+  {
+   "site": "langchain",
+   "key": "oss/python/langgraph/use-graph-api",
+   "label": "guide",
+   "split": "calibration",
+   "signals": {
+    "code_ratio": 0.434,
+    "headings": 2,
+    "signature_lines": 17,
+    "steps": 0,
+    "tables": 0,
+    "words": 751,
+    "you_per_1k": 12.0
+   }
+  },
+  {
+   "site": "langchain",
+   "key": "oss/python/langgraph/workflows-agents",
+   "label": "guide",
+   "split": "calibration",
+   "signals": {
+    "code_ratio": 0.826,
+    "headings": 10,
+    "signature_lines": 166,
+    "steps": 2,
+    "tables": 0,
+    "words": 1496,
+    "you_per_1k": 8.0
+   }
+  },
+  {
+   "site": "langchain",
+   "key": "oss/python/migrate/langchain-v1",
+   "label": "guide",
+   "split": "calibration",
+   "signals": {
+    "code_ratio": 0.615,
+    "headings": 31,
+    "signature_lines": 65,
+    "steps": 9,
+    "tables": 2,
+    "words": 2737,
+    "you_per_1k": 6.6
+   }
+  },
+  {
+   "site": "langchain",
+   "key": "oss/python/reference/overview",
+   "label": "guide",
+   "split": "calibration",
+   "signals": {
+    "code_ratio": 0.0,
+    "headings": 1,
+    "signature_lines": 0,
+    "steps": 0,
+    "tables": 0,
+    "words": 206,
+    "you_per_1k": 4.9
+   }
+  },
+  {
+   "site": "langchain",
+   "key": "oss/python/releases/langchain-v1",
+   "label": "guide",
+   "split": "calibration",
+   "signals": {
+    "code_ratio": 0.458,
+    "headings": 13,
+    "signature_lines": 18,
+    "steps": 0,
+    "tables": 2,
+    "words": 1594,
+    "you_per_1k": 6.9
+   }
+  },
+  {
+   "site": "langchain",
+   "key": "oss/python/versioning",
+   "label": "guide",
+   "split": "calibration",
+   "signals": {
+    "code_ratio": 0.143,
+    "headings": 14,
+    "signature_lines": 2,
+    "steps": 3,
+    "tables": 0,
+    "words": 693,
+    "you_per_1k": 4.3
+   }
+  },
+  {
+   "site": "langchain",
+   "key": "langsmith/python/managed-deep-agents-agent-owned-interrupts",
+   "label": "reference",
+   "split": "holdout",
+   "signals": {
+    "code_ratio": 0.426,
+    "headings": 9,
+    "signature_lines": 13,
+    "steps": 4,
+    "tables": 4,
+    "words": 1851,
+    "you_per_1k": 9.2
+   }
+  },
+  {
+   "site": "langchain",
+   "key": "langsmith/python/managed-deep-agents-connections",
+   "label": "reference",
+   "split": "holdout",
+   "signals": {
+    "code_ratio": 0.451,
+    "headings": 26,
+    "signature_lines": 48,
+    "steps": 2,
+    "tables": 5,
+    "words": 4494,
+    "you_per_1k": 7.6
+   }
+  },
+  {
+   "site": "langchain",
+   "key": "langsmith/python/managed-deep-agents-identity",
+   "label": "guide",
+   "split": "holdout",
+   "signals": {
+    "code_ratio": 0.297,
+    "headings": 7,
+    "signature_lines": 3,
+    "steps": 0,
+    "tables": 1,
+    "words": 1602,
+    "you_per_1k": 24.3
+   }
+  },
+  {
+   "site": "langchain",
+   "key": "langsmith/python/managed-deep-agents-middleware",
+   "label": "guide",
+   "split": "holdout",
+   "signals": {
+    "code_ratio": 0.422,
+    "headings": 4,
+    "signature_lines": 5,
+    "steps": 0,
+    "tables": 1,
+    "words": 641,
+    "you_per_1k": 7.8
+   }
+  },
+  {
+   "site": "langchain",
+   "key": "langsmith/python/managed-deep-agents-runtime",
+   "label": "reference",
+   "split": "holdout",
+   "signals": {
+    "code_ratio": 0.302,
+    "headings": 12,
+    "signature_lines": 7,
+    "steps": 0,
+    "tables": 1,
+    "words": 1364,
+    "you_per_1k": 4.4
+   }
+  },
+  {
+   "site": "langchain",
+   "key": "langsmith/python/managed-deep-agents-tools",
+   "label": "guide",
+   "split": "holdout",
+   "signals": {
+    "code_ratio": 0.372,
+    "headings": 7,
+    "signature_lines": 7,
+    "steps": 0,
+    "tables": 1,
+    "words": 1251,
+    "you_per_1k": 6.4
+   }
+  },
+  {
+   "site": "langchain",
+   "key": "oss/openwiki/integrations",
+   "label": "reference",
+   "split": "holdout",
+   "signals": {
+    "code_ratio": 0.212,
+    "headings": 6,
+    "signature_lines": 0,
+    "steps": 0,
+    "tables": 0,
+    "words": 783,
+    "you_per_1k": 1.3
+   }
+  },
+  {
+   "site": "langchain",
+   "key": "oss/openwiki/visualize",
+   "label": "reference",
+   "split": "holdout",
+   "signals": {
+    "code_ratio": 0.089,
+    "headings": 5,
+    "signature_lines": 0,
+    "steps": 0,
+    "tables": 1,
+    "words": 518,
+    "you_per_1k": 9.7
+   }
+  },
+  {
+   "site": "langchain",
+   "key": "oss/python/concepts/providers-and-models",
+   "label": "guide",
+   "split": "holdout",
+   "signals": {
+    "code_ratio": 0.346,
+    "headings": 8,
+    "signature_lines": 12,
+    "steps": 0,
+    "tables": 2,
+    "words": 975,
+    "you_per_1k": 15.4
+   }
+  },
+  {
+   "site": "langchain",
+   "key": "oss/python/contributing/overview",
+   "label": "guide",
+   "split": "holdout",
+   "signals": {
+    "code_ratio": 0.0,
+    "headings": 4,
+    "signature_lines": 0,
+    "steps": 0,
+    "tables": 0,
+    "words": 1206,
+    "you_per_1k": 18.2
+   }
+  },
+  {
+   "site": "langchain",
+   "key": "oss/python/deepagents/backends",
+   "label": "reference",
+   "split": "holdout",
+   "signals": {
+    "code_ratio": 0.516,
+    "headings": 22,
+    "signature_lines": 107,
+    "steps": 0,
+    "tables": 4,
+    "words": 4004,
+    "you_per_1k": 11.7
+   }
+  },
+  {
+   "site": "langchain",
+   "key": "oss/python/deepagents/data-analysis",
+   "label": "guide",
+   "split": "holdout",
+   "signals": {
+    "code_ratio": 0.619,
+    "headings": 13,
+    "signature_lines": 108,
+    "steps": 4,
+    "tables": 0,
+    "words": 1549,
+    "you_per_1k": 10.3
+   }
+  },
+  {
+   "site": "langchain",
+   "key": "oss/python/deepagents/frontend/sandbox",
+   "label": "guide",
+   "split": "holdout",
+   "signals": {
+    "code_ratio": 0.664,
+    "headings": 19,
+    "signature_lines": 162,
+    "steps": 3,
+    "tables": 1,
+    "words": 2042,
+    "you_per_1k": 3.9
+   }
+  },
+  {
+   "site": "langchain",
+   "key": "oss/python/deepagents/memory",
+   "label": "guide",
+   "split": "holdout",
+   "signals": {
+    "code_ratio": 0.371,
+    "headings": 12,
+    "signature_lines": 20,
+    "steps": 3,
+    "tables": 3,
+    "words": 2713,
+    "you_per_1k": 6.3
+   }
+  },
+  {
+   "site": "langchain",
+   "key": "oss/python/deepagents/quickstart",
+   "label": "guide",
+   "split": "holdout",
+   "signals": {
+    "code_ratio": 0.27,
+    "headings": 16,
+    "signature_lines": 2,
+    "steps": 18,
+    "tables": 0,
+    "words": 2074,
+    "you_per_1k": 19.3
+   }
+  },
+  {
+   "site": "langchain",
+   "key": "oss/python/deepagents/streaming",
+   "label": "guide",
+   "split": "holdout",
+   "signals": {
+    "code_ratio": 0.902,
+    "headings": 12,
+    "signature_lines": 209,
+    "steps": 0,
+    "tables": 2,
+    "words": 756,
+    "you_per_1k": 10.6
+   }
+  },
+  {
+   "site": "langchain",
+   "key": "oss/python/integrations/document_loaders/index",
+   "label": "reference",
+   "split": "holdout",
+   "signals": {
+    "code_ratio": 0.043,
+    "headings": 11,
+    "signature_lines": 4,
+    "steps": 0,
+    "tables": 6,
+    "words": 3559,
+    "you_per_1k": 2.0
+   }
+  },
+  {
+   "site": "langchain",
+   "key": "oss/python/integrations/providers/aws",
+   "label": "reference",
+   "split": "holdout",
+   "signals": {
+    "code_ratio": 0.423,
+    "headings": 28,
+    "signature_lines": 21,
+    "steps": 0,
+    "tables": 0,
+    "words": 1585,
+    "you_per_1k": 10.1
+   }
+  },
+  {
+   "site": "langchain",
+   "key": "oss/python/integrations/providers/microsoft",
+   "label": "guide",
+   "split": "holdout",
+   "signals": {
+    "code_ratio": 0.195,
+    "headings": 15,
+    "signature_lines": 10,
+    "steps": 0,
+    "tables": 0,
+    "words": 1543,
+    "you_per_1k": 8.4
+   }
+  },
+  {
+   "site": "langchain",
+   "key": "oss/python/integrations/sandboxes/index",
+   "label": "reference",
+   "split": "holdout",
+   "signals": {
+    "code_ratio": 0.0,
+    "headings": 3,
+    "signature_lines": 0,
+    "steps": 0,
+    "tables": 1,
+    "words": 858,
+    "you_per_1k": 1.2
+   }
+  },
+  {
+   "site": "langchain",
+   "key": "oss/python/langchain/component-architecture",
+   "label": "guide",
+   "split": "holdout",
+   "signals": {
+    "code_ratio": 0.659,
+    "headings": 8,
+    "signature_lines": 14,
+    "steps": 5,
+    "tables": 1,
+    "words": 387,
+    "you_per_1k": 2.6
+   }
+  },
+  {
+   "site": "langchain",
+   "key": "oss/python/langchain/frontend/controlled-generative-ui",
+   "label": "guide",
+   "split": "holdout",
+   "signals": {
+    "code_ratio": 0.0,
+    "headings": 7,
+    "signature_lines": 0,
+    "steps": 0,
+    "tables": 0,
+    "words": 736,
+    "you_per_1k": 27.2
+   }
+  },
+  {
+   "site": "langchain",
+   "key": "oss/python/langchain/frontend/integrations/assistant-ui",
+   "label": "guide",
+   "split": "holdout",
+   "signals": {
+    "code_ratio": 0.739,
+    "headings": 6,
+    "signature_lines": 16,
+    "steps": 3,
+    "tables": 0,
+    "words": 405,
+    "you_per_1k": 9.9
+   }
+  },
+  {
+   "site": "langchain",
+   "key": "oss/python/langchain/frontend/message-queues",
+   "label": "guide",
+   "split": "holdout",
+   "signals": {
+    "code_ratio": 0.601,
+    "headings": 10,
+    "signature_lines": 29,
+    "steps": 0,
+    "tables": 2,
+    "words": 971,
+    "you_per_1k": 11.3
+   }
+  },
+  {
+   "site": "langchain",
+   "key": "oss/python/langchain/frontend/tool-calling",
+   "label": "guide",
+   "split": "holdout",
+   "signals": {
+    "code_ratio": 0.618,
+    "headings": 11,
+    "signature_lines": 22,
+    "steps": 3,
+    "tables": 1,
+    "words": 796,
+    "you_per_1k": 16.3
+   }
+  },
+  {
+   "site": "langchain",
+   "key": "oss/python/langchain/long-term-memory",
+   "label": "guide",
+   "split": "holdout",
+   "signals": {
+    "code_ratio": 0.0,
+    "headings": 4,
+    "signature_lines": 0,
+    "steps": 0,
+    "tables": 0,
+    "words": 4371,
+    "you_per_1k": 2.1
+   }
+  },
+  {
+   "site": "langchain",
+   "key": "oss/python/langchain/middleware/built-in",
+   "label": "reference",
+   "split": "holdout",
+   "signals": {
+    "code_ratio": 0.405,
+    "headings": 24,
+    "signature_lines": 123,
+    "steps": 2,
+    "tables": 1,
+    "words": 7379,
+    "you_per_1k": 5.1
+   }
+  },
+  {
+   "site": "langchain",
+   "key": "oss/python/langchain/multi-agent/handoffs-customer-support",
+   "label": "guide",
+   "split": "holdout",
+   "signals": {
+    "code_ratio": 0.518,
+    "headings": 18,
+    "signature_lines": 60,
+    "steps": 8,
+    "tables": 0,
+    "words": 2189,
+    "you_per_1k": 8.2
+   }
+  },
+  {
+   "site": "langchain",
+   "key": "oss/python/langchain/multi-agent/subagents",
+   "label": "guide",
+   "split": "holdout",
+   "signals": {
+    "code_ratio": 0.443,
+    "headings": 15,
+    "signature_lines": 32,
+    "steps": 5,
+    "tables": 6,
+    "words": 2461,
+    "you_per_1k": 11.0
+   }
+  },
+  {
+   "site": "langchain",
+   "key": "oss/python/langchain/retrieval-optimization",
+   "label": "guide",
+   "split": "holdout",
+   "signals": {
+    "code_ratio": 0.526,
+    "headings": 8,
+    "signature_lines": 33,
+    "steps": 0,
+    "tables": 1,
+    "words": 1269,
+    "you_per_1k": 10.2
+   }
+  },
+  {
+   "site": "langchain",
+   "key": "oss/python/langchain/studio",
+   "label": "guide",
+   "split": "holdout",
+   "signals": {
+    "code_ratio": 0.327,
+    "headings": 9,
+    "signature_lines": 1,
+    "steps": 0,
+    "tables": 0,
+    "words": 924,
+    "you_per_1k": 37.9
+   }
+  },
+  {
+   "site": "langchain",
+   "key": "oss/python/langchain/ui",
+   "label": "guide",
+   "split": "holdout",
+   "signals": {
+    "code_ratio": 0.261,
+    "headings": 3,
+    "signature_lines": 0,
+    "steps": 6,
+    "tables": 0,
+    "words": 455,
+    "you_per_1k": 33.0
+   }
+  },
+  {
+   "site": "langchain",
+   "key": "oss/python/langgraph/case-studies",
+   "label": "guide",
+   "split": "holdout",
+   "signals": {
+    "code_ratio": 0.0,
+    "headings": 0,
+    "signature_lines": 0,
+    "steps": 0,
+    "tables": 1,
+    "words": 1165,
+    "you_per_1k": 4.3
+   }
+  },
+  {
+   "site": "langchain",
+   "key": "oss/python/langgraph/frontend/graph-execution",
+   "label": "guide",
+   "split": "holdout",
+   "signals": {
+    "code_ratio": 0.582,
+    "headings": 11,
+    "signature_lines": 37,
+    "steps": 4,
+    "tables": 1,
+    "words": 1147,
+    "you_per_1k": 10.5
+   }
+  },
+  {
+   "site": "langchain",
+   "key": "oss/python/langgraph/graph-api-send-command",
+   "label": "guide",
+   "split": "holdout",
+   "signals": {
+    "code_ratio": 0.676,
+    "headings": 6,
+    "signature_lines": 63,
+    "steps": 0,
+    "tables": 0,
+    "words": 1002,
+    "you_per_1k": 2.0
+   }
+  },
+  {
+   "site": "langchain",
+   "key": "oss/python/langgraph/overview",
+   "label": "guide",
+   "split": "holdout",
+   "signals": {
+    "code_ratio": 0.175,
+    "headings": 4,
+    "signature_lines": 7,
+    "steps": 0,
+    "tables": 0,
+    "words": 746,
+    "you_per_1k": 9.4
+   }
+  },
+  {
+   "site": "langchain",
+   "key": "oss/python/langgraph/streaming",
+   "label": "reference",
+   "split": "holdout",
+   "signals": {
+    "code_ratio": 0.261,
+    "headings": 17,
+    "signature_lines": 89,
+    "steps": 4,
+    "tables": 2,
+    "words": 4259,
+    "you_per_1k": 7.5
+   }
+  },
+  {
+   "site": "langchain",
+   "key": "oss/python/langgraph/use-subgraphs",
+   "label": "guide",
+   "split": "holdout",
+   "signals": {
+    "code_ratio": 0.186,
+    "headings": 10,
+    "signature_lines": 40,
+    "steps": 2,
+    "tables": 3,
+    "words": 4030,
+    "you_per_1k": 7.4
+   }
+  },
+  {
+   "site": "langchain",
+   "key": "oss/python/migrate/langgraph-supervisor",
+   "label": "guide",
+   "split": "holdout",
+   "signals": {
+    "code_ratio": 0.585,
+    "headings": 14,
+    "signature_lines": 27,
+    "steps": 9,
+    "tables": 1,
+    "words": 1539,
+    "you_per_1k": 4.5
+   }
+  },
+  {
+   "site": "langchain",
+   "key": "oss/python/releases/langgraph-v1",
+   "label": "guide",
+   "split": "holdout",
+   "signals": {
+    "code_ratio": 0.038,
+    "headings": 4,
+    "signature_lines": 0,
+    "steps": 0,
+    "tables": 0,
+    "words": 531,
+    "you_per_1k": 3.8
+   }
+  },
+  {
+   "site": "opencode",
+   "key": "brand",
+   "label": "guide",
+   "split": "calibration",
+   "signals": {
+    "code_ratio": 0.08,
+    "headings": 27,
+    "signature_lines": 0,
+    "steps": 0,
+    "tables": 1,
+    "words": 3043,
+    "you_per_1k": 4.3
+   }
+  },
+  {
+   "site": "opencode",
+   "key": "console",
+   "label": "guide",
+   "split": "calibration",
+   "signals": {
+    "code_ratio": 0.0,
+    "headings": 9,
+    "signature_lines": 0,
+    "steps": 0,
+    "tables": 1,
+    "words": 769,
+    "you_per_1k": 23.4
+   }
+  },
+  {
+   "site": "opencode",
+   "key": "console/go",
+   "label": "guide",
+   "split": "calibration",
+   "signals": {
+    "code_ratio": 0.0,
+    "headings": 11,
+    "signature_lines": 0,
+    "steps": 0,
+    "tables": 1,
+    "words": 755,
+    "you_per_1k": 21.2
+   }
+  },
+  {
+   "site": "opencode",
+   "key": "console/teams",
+   "label": "guide",
+   "split": "calibration",
+   "signals": {
+    "code_ratio": 0.0,
+    "headings": 15,
+    "signature_lines": 0,
+    "steps": 0,
+    "tables": 0,
+    "words": 885,
+    "you_per_1k": 39.5
+   }
+  },
+  {
+   "site": "opencode",
+   "key": "docs/agents/index",
+   "label": "reference",
+   "split": "calibration",
+   "signals": {
+    "code_ratio": 0.485,
+    "headings": 19,
+    "signature_lines": 0,
+    "steps": 1,
+    "tables": 4,
+    "words": 831,
+    "you_per_1k": 1.2
+   }
+  },
+  {
+   "site": "opencode",
+   "key": "docs/attachments/index",
+   "label": "reference",
+   "split": "calibration",
+   "signals": {
+    "code_ratio": 0.283,
+    "headings": 6,
+    "signature_lines": 0,
+    "steps": 0,
+    "tables": 3,
+    "words": 684,
+    "you_per_1k": 1.5
+   }
+  },
+  {
+   "site": "opencode",
+   "key": "docs/build/client/index",
+   "label": "reference",
+   "split": "calibration",
+   "signals": {
+    "code_ratio": 0.386,
+    "headings": 6,
+    "signature_lines": 16,
+    "steps": 0,
+    "tables": 0,
+    "words": 659,
+    "you_per_1k": 3.0
+   }
+  },
+  {
+   "site": "opencode",
+   "key": "docs/build/plugins/cli/index",
+   "label": "reference",
+   "split": "calibration",
+   "signals": {
+    "code_ratio": 0.623,
+    "headings": 22,
+    "signature_lines": 144,
+    "steps": 0,
+    "tables": 0,
+    "words": 1342,
+    "you_per_1k": 1.5
+   }
+  },
+  {
+   "site": "opencode",
+   "key": "docs/build/plugins/effect/rpc/index",
+   "label": "reference",
+   "split": "calibration",
+   "signals": {
+    "code_ratio": 0.616,
+    "headings": 10,
+    "signature_lines": 31,
+    "steps": 0,
+    "tables": 0,
+    "words": 190,
+    "you_per_1k": 0.0
+   }
+  },
+  {
+   "site": "opencode",
+   "key": "docs/build/plugins/index",
+   "label": "guide",
+   "split": "calibration",
+   "signals": {
+    "code_ratio": 0.42,
+    "headings": 3,
+    "signature_lines": 2,
+    "steps": 0,
+    "tables": 0,
+    "words": 528,
+    "you_per_1k": 11.4
+   }
+  },
+  {
+   "site": "opencode",
+   "key": "docs/build/plugins/rpc/index",
+   "label": "reference",
+   "split": "calibration",
+   "signals": {
+    "code_ratio": 0.616,
+    "headings": 10,
+    "signature_lines": 20,
+    "steps": 0,
+    "tables": 0,
+    "words": 436,
+    "you_per_1k": 4.6
+   }
+  },
+  {
+   "site": "opencode",
+   "key": "docs/build/sdk/cloudflare/index",
+   "label": "reference",
+   "split": "calibration",
+   "signals": {
+    "code_ratio": 0.63,
+    "headings": 2,
+    "signature_lines": 12,
+    "steps": 0,
+    "tables": 0,
+    "words": 200,
+    "you_per_1k": 10.0
+   }
+  },
+  {
+   "site": "opencode",
+   "key": "docs/build/sdk/index",
+   "label": "reference",
+   "split": "calibration",
+   "signals": {
+    "code_ratio": 0.417,
+    "headings": 4,
+    "signature_lines": 10,
+    "steps": 0,
+    "tables": 0,
+    "words": 271,
+    "you_per_1k": 7.4
+   }
+  },
+  {
+   "site": "opencode",
+   "key": "docs/cli/commands/index",
+   "label": "reference",
+   "split": "calibration",
+   "signals": {
+    "code_ratio": 0.255,
+    "headings": 18,
+    "signature_lines": 0,
+    "steps": 0,
+    "tables": 0,
+    "words": 770,
+    "you_per_1k": 3.9
+   }
+  },
+  {
+   "site": "opencode",
+   "key": "docs/cli/index",
+   "label": "guide",
+   "split": "calibration",
+   "signals": {
+    "code_ratio": 0.174,
+    "headings": 5,
+    "signature_lines": 0,
+    "steps": 0,
+    "tables": 0,
+    "words": 404,
+    "you_per_1k": 2.5
+   }
+  },
+  {
+   "site": "opencode",
+   "key": "docs/cli/plugins/index",
+   "label": "reference",
+   "split": "calibration",
+   "signals": {
+    "code_ratio": 0.592,
+    "headings": 0,
+    "signature_lines": 0,
+    "steps": 0,
+    "tables": 0,
+    "words": 163,
+    "you_per_1k": 6.1
+   }
+  },
+  {
+   "site": "opencode",
+   "key": "docs/cli/theme/index",
+   "label": "reference",
+   "split": "calibration",
+   "signals": {
+    "code_ratio": 0.522,
+    "headings": 12,
+    "signature_lines": 2,
+    "steps": 0,
+    "tables": 4,
+    "words": 816,
+    "you_per_1k": 12.3
+   }
+  },
+  {
+   "site": "opencode",
+   "key": "docs/cli/web/index",
+   "label": "reference",
+   "split": "calibration",
+   "signals": {
+    "code_ratio": 0.317,
+    "headings": 6,
+    "signature_lines": 0,
+    "steps": 0,
+    "tables": 1,
+    "words": 364,
+    "you_per_1k": 11.0
+   }
+  },
+  {
+   "site": "opencode",
+   "key": "docs/compaction/index",
+   "label": "reference",
+   "split": "calibration",
+   "signals": {
+    "code_ratio": 0.319,
+    "headings": 11,
+    "signature_lines": 0,
+    "steps": 0,
+    "tables": 6,
+    "words": 986,
+    "you_per_1k": 3.0
+   }
+  },
+  {
+   "site": "opencode",
+   "key": "docs/console/api/index",
+   "label": "reference",
+   "split": "calibration",
+   "signals": {
+    "code_ratio": 0.063,
+    "headings": 8,
+    "signature_lines": 1,
+    "steps": 8,
+    "tables": 5,
+    "words": 899,
+    "you_per_1k": 13.3
+   }
+  },
+  {
+   "site": "opencode",
+   "key": "docs/console/api/models/index",
+   "label": "reference",
+   "split": "calibration",
+   "signals": {
+    "code_ratio": 0.506,
+    "headings": 7,
+    "signature_lines": 1,
+    "steps": 0,
+    "tables": 5,
+    "words": 896,
+    "you_per_1k": 5.6
+   }
+  },
+  {
+   "site": "opencode",
+   "key": "docs/console/billing/index",
+   "label": "guide",
+   "split": "calibration",
+   "signals": {
+    "code_ratio": 0.016,
+    "headings": 9,
+    "signature_lines": 0,
+    "steps": 9,
+    "tables": 1,
+    "words": 493,
+    "you_per_1k": 10.1
+   }
+  },
+  {
+   "site": "opencode",
+   "key": "docs/console/go/index",
+   "label": "guide",
+   "split": "calibration",
+   "signals": {
+    "code_ratio": 0.037,
+    "headings": 15,
+    "signature_lines": 0,
+    "steps": 13,
+    "tables": 4,
+    "words": 2158,
+    "you_per_1k": 24.1
+   }
+  },
+  {
+   "site": "opencode",
+   "key": "docs/console/harnesses/codex/index",
+   "label": "reference",
+   "split": "calibration",
+   "signals": {
+    "code_ratio": 0.338,
+    "headings": 5,
+    "signature_lines": 0,
+    "steps": 0,
+    "tables": 0,
+    "words": 265,
+    "you_per_1k": 7.5
+   }
+  },
+  {
+   "site": "opencode",
+   "key": "docs/console/harnesses/index",
+   "label": "reference",
+   "split": "calibration",
+   "signals": {
+    "code_ratio": 0.062,
+    "headings": 5,
+    "signature_lines": 0,
+    "steps": 4,
+    "tables": 4,
+    "words": 640,
+    "you_per_1k": 25.0
+   }
+  },
+  {
+   "site": "opencode",
+   "key": "docs/console/harnesses/raycast/index",
+   "label": "guide",
+   "split": "calibration",
+   "signals": {
+    "code_ratio": 0.04,
+    "headings": 3,
+    "signature_lines": 0,
+    "steps": 3,
+    "tables": 1,
+    "words": 184,
+    "you_per_1k": 10.9
+   }
+  },
+  {
+   "site": "opencode",
+   "key": "docs/console/members/index",
+   "label": "guide",
+   "split": "calibration",
+   "signals": {
+    "code_ratio": 0.0,
+    "headings": 6,
+    "signature_lines": 0,
+    "steps": 5,
+    "tables": 1,
+    "words": 427,
+    "you_per_1k": 18.7
+   }
+  },
+  {
+   "site": "opencode",
+   "key": "docs/console/providers/index",
+   "label": "reference",
+   "split": "calibration",
+   "signals": {
+    "code_ratio": 0.196,
+    "headings": 14,
+    "signature_lines": 5,
+    "steps": 3,
+    "tables": 6,
+    "words": 1037,
+    "you_per_1k": 15.4
+   }
+  },
+  {
+   "site": "opencode",
+   "key": "docs/console/sso/index",
+   "label": "guide",
+   "split": "calibration",
+   "signals": {
+    "code_ratio": 0.097,
+    "headings": 7,
+    "signature_lines": 0,
+    "steps": 8,
+    "tables": 1,
+    "words": 547,
+    "you_per_1k": 25.6
+   }
+  },
+  {
+   "site": "opencode",
+   "key": "docs/console/workspaces/index",
+   "label": "guide",
+   "split": "calibration",
+   "signals": {
+    "code_ratio": 0.016,
+    "headings": 9,
+    "signature_lines": 0,
+    "steps": 11,
+    "tables": 1,
+    "words": 537,
+    "you_per_1k": 35.4
+   }
+  },
+  {
+   "site": "opencode",
+   "key": "docs/index",
+   "label": "guide",
+   "split": "calibration",
+   "signals": {
+    "code_ratio": 0.048,
+    "headings": 7,
+    "signature_lines": 0,
+    "steps": 0,
+    "tables": 0,
+    "words": 683,
+    "you_per_1k": 13.2
+   }
+  },
+  {
+   "site": "opencode",
+   "key": "docs/mcp-servers/index",
+   "label": "reference",
+   "split": "calibration",
+   "signals": {
+    "code_ratio": 0.524,
+    "headings": 18,
+    "signature_lines": 1,
+    "steps": 0,
+    "tables": 8,
+    "words": 1766,
+    "you_per_1k": 2.3
+   }
+  },
+  {
+   "site": "opencode",
+   "key": "docs/models/index",
+   "label": "reference",
+   "split": "calibration",
+   "signals": {
+    "code_ratio": 0.523,
+    "headings": 18,
+    "signature_lines": 0,
+    "steps": 0,
+    "tables": 5,
+    "words": 2117,
+    "you_per_1k": 1.9
+   }
+  },
+  {
+   "site": "opencode",
+   "key": "docs/permissions/index",
+   "label": "reference",
+   "split": "calibration",
+   "signals": {
+    "code_ratio": 0.353,
+    "headings": 10,
+    "signature_lines": 0,
+    "steps": 0,
+    "tables": 6,
+    "words": 1009,
+    "you_per_1k": 1.0
+   }
+  },
+  {
+   "site": "opencode",
+   "key": "docs/policies/index",
+   "label": "reference",
+   "split": "calibration",
+   "signals": {
+    "code_ratio": 0.309,
+    "headings": 12,
+    "signature_lines": 0,
+    "steps": 0,
+    "tables": 5,
+    "words": 1289,
+    "you_per_1k": 2.3
+   }
+  },
+  {
+   "site": "opencode",
+   "key": "docs/references/index",
+   "label": "reference",
+   "split": "calibration",
+   "signals": {
+    "code_ratio": 0.438,
+    "headings": 10,
+    "signature_lines": 0,
+    "steps": 0,
+    "tables": 1,
+    "words": 632,
+    "you_per_1k": 4.7
+   }
+  },
+  {
+   "site": "opencode",
+   "key": "docs/snapshots/index",
+   "label": "reference",
+   "split": "calibration",
+   "signals": {
+    "code_ratio": 0.167,
+    "headings": 7,
+    "signature_lines": 0,
+    "steps": 0,
+    "tables": 3,
+    "words": 620,
+    "you_per_1k": 11.3
+   }
+  },
+  {
+   "site": "opencode",
+   "key": "docs/tools/index",
+   "label": "reference",
+   "split": "calibration",
+   "signals": {
+    "code_ratio": 0.09,
+    "headings": 24,
+    "signature_lines": 0,
+    "steps": 0,
+    "tables": 0,
+    "words": 1439,
+    "you_per_1k": 2.1
+   }
+  },
+  {
+   "site": "opencode",
+   "key": "docs/warming/index",
+   "label": "reference",
+   "split": "calibration",
+   "signals": {
+    "code_ratio": 0.368,
+    "headings": 9,
+    "signature_lines": 0,
+    "steps": 0,
+    "tables": 1,
+    "words": 754,
+    "you_per_1k": 1.3
+   }
+  },
+  {
+   "site": "opencode",
+   "key": "index",
+   "label": "guide",
+   "split": "calibration",
+   "signals": {
+    "code_ratio": 0.204,
+    "headings": 11,
+    "signature_lines": 2,
+    "steps": 0,
+    "tables": 0,
+    "words": 940,
+    "you_per_1k": 24.5
+   }
+  },
+  {
+   "site": "opencode",
+   "key": "legal/terms-of-service",
+   "label": "guide",
+   "split": "calibration",
+   "signals": {
+    "code_ratio": 0.0,
+    "headings": 26,
+    "signature_lines": 0,
+    "steps": 13,
+    "tables": 0,
+    "words": 4490,
+    "you_per_1k": 39.0
+   }
+  },
+  {
+   "site": "opencode",
+   "key": "press",
+   "label": "guide",
+   "split": "calibration",
+   "signals": {
+    "code_ratio": 0.0,
+    "headings": 17,
+    "signature_lines": 0,
+    "steps": 0,
+    "tables": 0,
+    "words": 1848,
+    "you_per_1k": 7.0
+   }
+  },
+  {
+   "site": "opencode",
+   "key": "product/browse",
+   "label": "guide",
+   "split": "calibration",
+   "signals": {
+    "code_ratio": 0.138,
+    "headings": 3,
+    "signature_lines": 0,
+    "steps": 0,
+    "tables": 0,
+    "words": 337,
+    "you_per_1k": 47.5
+   }
+  },
+  {
+   "site": "opencode",
+   "key": "status.opencode.ai/index",
+   "label": "guide",
+   "split": "calibration",
+   "signals": {
+    "code_ratio": 0.0,
+    "headings": 6,
+    "signature_lines": 0,
+    "steps": 10,
+    "tables": 0,
+    "words": 583,
+    "you_per_1k": 24.0
+   }
+  },
+  {
+   "site": "opencode",
+   "key": "changelog",
+   "label": "guide",
+   "split": "holdout",
+   "signals": {
+    "code_ratio": 0.0,
+    "headings": 17,
+    "signature_lines": 0,
+    "steps": 0,
+    "tables": 0,
+    "words": 9694,
+    "you_per_1k": 3.4
+   }
+  },
+  {
+   "site": "opencode",
+   "key": "console/enterprise",
+   "label": "guide",
+   "split": "holdout",
+   "signals": {
+    "code_ratio": 0.0,
+    "headings": 11,
+    "signature_lines": 0,
+    "steps": 0,
+    "tables": 0,
+    "words": 320,
+    "you_per_1k": 37.5
+   }
+  },
+  {
+   "site": "opencode",
+   "key": "console/models",
+   "label": "guide",
+   "split": "holdout",
+   "signals": {
+    "code_ratio": 0.0,
+    "headings": 6,
+    "signature_lines": 0,
+    "steps": 0,
+    "tables": 1,
+    "words": 495,
+    "you_per_1k": 8.1
+   }
+  },
+  {
+   "site": "opencode",
+   "key": "desktop",
+   "label": "guide",
+   "split": "holdout",
+   "signals": {
+    "code_ratio": 0.013,
+    "headings": 10,
+    "signature_lines": 0,
+    "steps": 0,
+    "tables": 0,
+    "words": 1088,
+    "you_per_1k": 13.8
+   }
+  },
+  {
+   "site": "opencode",
+   "key": "docs/api/index",
+   "label": "reference",
+   "split": "holdout",
+   "signals": {
+    "code_ratio": 0.0,
+    "headings": 33,
+    "signature_lines": 0,
+    "steps": 0,
+    "tables": 787,
+    "words": 22480,
+    "you_per_1k": 0.0
+   }
+  },
+  {
+   "site": "opencode",
+   "key": "docs/build/client/effect/index",
+   "label": "reference",
+   "split": "holdout",
+   "signals": {
+    "code_ratio": 0.546,
+    "headings": 5,
+    "signature_lines": 24,
+    "steps": 0,
+    "tables": 0,
+    "words": 333,
+    "you_per_1k": 0.0
+   }
+  },
+  {
+   "site": "opencode",
+   "key": "docs/build/index",
+   "label": "guide",
+   "split": "holdout",
+   "signals": {
+    "code_ratio": 0.0,
+    "headings": 0,
+    "signature_lines": 0,
+    "steps": 0,
+    "tables": 0,
+    "words": 138,
+    "you_per_1k": 14.5
+   }
+  },
+  {
+   "site": "opencode",
+   "key": "docs/build/plugins/effect/index",
+   "label": "reference",
+   "split": "holdout",
+   "signals": {
+    "code_ratio": 0.721,
+    "headings": 25,
+    "signature_lines": 368,
+    "steps": 0,
+    "tables": 0,
+    "words": 2384,
+    "you_per_1k": 3.4
+   }
+  },
+  {
+   "site": "opencode",
+   "key": "docs/build/plugins/gui/index",
+   "label": "reference",
+   "split": "holdout",
+   "signals": {
+    "code_ratio": 0.592,
+    "headings": 81,
+    "signature_lines": 614,
+    "steps": 0,
+    "tables": 1,
+    "words": 11371,
+    "you_per_1k": 7.2
+   }
+  },
+  {
+   "site": "opencode",
+   "key": "docs/build/plugins/migrate-v1/index",
+   "label": "reference",
+   "split": "holdout",
+   "signals": {
+    "code_ratio": 0.541,
+    "headings": 10,
+    "signature_lines": 37,
+    "steps": 5,
+    "tables": 2,
+    "words": 1232,
+    "you_per_1k": 4.1
+   }
+  },
+  {
+   "site": "opencode",
+   "key": "docs/build/plugins/server/index",
+   "label": "reference",
+   "split": "holdout",
+   "signals": {
+    "code_ratio": 0.606,
+    "headings": 30,
+    "signature_lines": 409,
+    "steps": 0,
+    "tables": 0,
+    "words": 4093,
+    "you_per_1k": 1.2
+   }
+  },
+  {
+   "site": "opencode",
+   "key": "docs/build/sdk/effect/index",
+   "label": "reference",
+   "split": "holdout",
+   "signals": {
+    "code_ratio": 0.613,
+    "headings": 4,
+    "signature_lines": 15,
+    "steps": 0,
+    "tables": 0,
+    "words": 142,
+    "you_per_1k": 7.0
+   }
+  },
+  {
+   "site": "opencode",
+   "key": "docs/cli/acp/index",
+   "label": "reference",
+   "split": "holdout",
+   "signals": {
+    "code_ratio": 0.308,
+    "headings": 19,
+    "signature_lines": 0,
+    "steps": 0,
+    "tables": 7,
+    "words": 1811,
+    "you_per_1k": 1.7
+   }
+  },
+  {
+   "site": "opencode",
+   "key": "docs/cli/config/index",
+   "label": "reference",
+   "split": "holdout",
+   "signals": {
+    "code_ratio": 0.407,
+    "headings": 13,
+    "signature_lines": 0,
+    "steps": 0,
+    "tables": 11,
+    "words": 1488,
+    "you_per_1k": 2.0
+   }
+  },
+  {
+   "site": "opencode",
+   "key": "docs/cli/keybinds/index",
+   "label": "reference",
+   "split": "holdout",
+   "signals": {
+    "code_ratio": 0.136,
+    "headings": 13,
+    "signature_lines": 0,
+    "steps": 0,
+    "tables": 13,
+    "words": 2590,
+    "you_per_1k": 0.4
+   }
+  },
+  {
+   "site": "opencode",
+   "key": "docs/cli/providers/index",
+   "label": "reference",
+   "split": "holdout",
+   "signals": {
+    "code_ratio": 0.188,
+    "headings": 6,
+    "signature_lines": 0,
+    "steps": 0,
+    "tables": 1,
+    "words": 641,
+    "you_per_1k": 3.1
+   }
+  },
+  {
+   "site": "opencode",
+   "key": "docs/cli/tui/index",
+   "label": "guide",
+   "split": "holdout",
+   "signals": {
+    "code_ratio": 0.189,
+    "headings": 8,
+    "signature_lines": 0,
+    "steps": 0,
+    "tables": 0,
+    "words": 486,
+    "you_per_1k": 6.2
+   }
+  },
+  {
+   "site": "opencode",
+   "key": "docs/commands/index",
+   "label": "reference",
+   "split": "holdout",
+   "signals": {
+    "code_ratio": 0.344,
+    "headings": 11,
+    "signature_lines": 0,
+    "steps": 3,
+    "tables": 2,
+    "words": 698,
+    "you_per_1k": 1.4
+   }
+  },
+  {
+   "site": "opencode",
+   "key": "docs/config/index",
+   "label": "reference",
+   "split": "holdout",
+   "signals": {
+    "code_ratio": 0.47,
+    "headings": 36,
+    "signature_lines": 3,
+    "steps": 4,
+    "tables": 1,
+    "words": 1622,
+    "you_per_1k": 6.2
+   }
+  },
+  {
+   "site": "opencode",
+   "key": "docs/console/api/inference/index",
+   "label": "reference",
+   "split": "holdout",
+   "signals": {
+    "code_ratio": 0.443,
+    "headings": 7,
+    "signature_lines": 15,
+    "steps": 0,
+    "tables": 2,
+    "words": 495,
+    "you_per_1k": 24.2
+   }
+  },
+  {
+   "site": "opencode",
+   "key": "docs/console/api/providers/index",
+   "label": "reference",
+   "split": "holdout",
+   "signals": {
+    "code_ratio": 0.44,
+    "headings": 8,
+    "signature_lines": 15,
+    "steps": 0,
+    "tables": 1,
+    "words": 249,
+    "you_per_1k": 12.0
+   }
+  },
+  {
+   "site": "opencode",
+   "key": "docs/console/budgets/index",
+   "label": "guide",
+   "split": "holdout",
+   "signals": {
+    "code_ratio": 0.017,
+    "headings": 8,
+    "signature_lines": 0,
+    "steps": 6,
+    "tables": 2,
+    "words": 504,
+    "you_per_1k": 4.0
+   }
+  },
+  {
+   "site": "opencode",
+   "key": "docs/console/harnesses/claude-code/index",
+   "label": "reference",
+   "split": "holdout",
+   "signals": {
+    "code_ratio": 0.373,
+    "headings": 4,
+    "signature_lines": 0,
+    "steps": 0,
+    "tables": 0,
+    "words": 260,
+    "you_per_1k": 7.7
+   }
+  },
+  {
+   "site": "opencode",
+   "key": "docs/console/harnesses/hermes/index",
+   "label": "reference",
+   "split": "holdout",
+   "signals": {
+    "code_ratio": 0.256,
+    "headings": 3,
+    "signature_lines": 0,
+    "steps": 0,
+    "tables": 1,
+    "words": 230,
+    "you_per_1k": 13.0
+   }
+  },
+  {
+   "site": "opencode",
+   "key": "docs/console/harnesses/pi/index",
+   "label": "reference",
+   "split": "holdout",
+   "signals": {
+    "code_ratio": 0.234,
+    "headings": 4,
+    "signature_lines": 0,
+    "steps": 0,
+    "tables": 1,
+    "words": 226,
+    "you_per_1k": 13.3
+   }
+  },
+  {
+   "site": "opencode",
+   "key": "docs/console/index",
+   "label": "guide",
+   "split": "holdout",
+   "signals": {
+    "code_ratio": 0.037,
+    "headings": 2,
+    "signature_lines": 0,
+    "steps": 4,
+    "tables": 0,
+    "words": 234,
+    "you_per_1k": 25.6
+   }
+  },
+  {
+   "site": "opencode",
+   "key": "docs/console/models/index",
+   "label": "reference",
+   "split": "holdout",
+   "signals": {
+    "code_ratio": 0.151,
+    "headings": 17,
+    "signature_lines": 15,
+    "steps": 10,
+    "tables": 5,
+    "words": 4036,
+    "you_per_1k": 8.2
+   }
+  },
+  {
+   "site": "opencode",
+   "key": "docs/console/scim/index",
+   "label": "guide",
+   "split": "holdout",
+   "signals": {
+    "code_ratio": 0.049,
+    "headings": 10,
+    "signature_lines": 0,
+    "steps": 11,
+    "tables": 1,
+    "words": 478,
+    "you_per_1k": 25.1
+   }
+  },
+  {
+   "site": "opencode",
+   "key": "docs/console/websearch/index",
+   "label": "guide",
+   "split": "holdout",
+   "signals": {
+    "code_ratio": 0.083,
+    "headings": 4,
+    "signature_lines": 0,
+    "steps": 3,
+    "tables": 0,
+    "words": 248,
+    "you_per_1k": 0.0
+   }
+  },
+  {
+   "site": "opencode",
+   "key": "docs/formatters/index",
+   "label": "reference",
+   "split": "holdout",
+   "signals": {
+    "code_ratio": 0.45,
+    "headings": 6,
+    "signature_lines": 0,
+    "steps": 0,
+    "tables": 2,
+    "words": 585,
+    "you_per_1k": 3.4
+   }
+  },
+  {
+   "site": "opencode",
+   "key": "docs/instructions/index",
+   "label": "reference",
+   "split": "holdout",
+   "signals": {
+    "code_ratio": 0.388,
+    "headings": 6,
+    "signature_lines": 0,
+    "steps": 0,
+    "tables": 1,
+    "words": 669,
+    "you_per_1k": 1.5
+   }
+  },
+  {
+   "site": "opencode",
+   "key": "docs/migrate-v1/index",
+   "label": "reference",
+   "split": "holdout",
+   "signals": {
+    "code_ratio": 0.479,
+    "headings": 27,
+    "signature_lines": 6,
+    "steps": 5,
+    "tables": 1,
+    "words": 2446,
+    "you_per_1k": 5.7
+   }
+  },
+  {
+   "site": "opencode",
+   "key": "docs/network/index",
+   "label": "reference",
+   "split": "holdout",
+   "signals": {
+    "code_ratio": 0.368,
+    "headings": 7,
+    "signature_lines": 0,
+    "steps": 0,
+    "tables": 0,
+    "words": 565,
+    "you_per_1k": 3.5
+   }
+  },
+  {
+   "site": "opencode",
+   "key": "docs/plugins/index",
+   "label": "reference",
+   "split": "holdout",
+   "signals": {
+    "code_ratio": 0.408,
+    "headings": 7,
+    "signature_lines": 0,
+    "steps": 0,
+    "tables": 0,
+    "words": 613,
+    "you_per_1k": 3.3
+   }
+  },
+  {
+   "site": "opencode",
+   "key": "docs/providers/index",
+   "label": "reference",
+   "split": "holdout",
+   "signals": {
+    "code_ratio": 0.478,
+    "headings": 21,
+    "signature_lines": 2,
+    "steps": 0,
+    "tables": 4,
+    "words": 2474,
+    "you_per_1k": 2.8
+   }
+  },
+  {
+   "site": "opencode",
+   "key": "docs/skills/index",
+   "label": "reference",
+   "split": "holdout",
+   "signals": {
+    "code_ratio": 0.337,
+    "headings": 10,
+    "signature_lines": 0,
+    "steps": 16,
+    "tables": 6,
+    "words": 1004,
+    "you_per_1k": 2.0
+   }
+  },
+  {
+   "site": "opencode",
+   "key": "docs/themes/index",
+   "label": "reference",
+   "split": "holdout",
+   "signals": {
+    "code_ratio": 0.526,
+    "headings": 9,
+    "signature_lines": 0,
+    "steps": 0,
+    "tables": 5,
+    "words": 643,
+    "you_per_1k": 6.2
+   }
+  },
+  {
+   "site": "opencode",
+   "key": "docs/troubleshooting/index",
+   "label": "reference",
+   "split": "holdout",
+   "signals": {
+    "code_ratio": 0.189,
+    "headings": 9,
+    "signature_lines": 0,
+    "steps": 0,
+    "tables": 0,
+    "words": 912,
+    "you_per_1k": 7.7
+   }
+  },
+  {
+   "site": "opencode",
+   "key": "docs/websearch/index",
+   "label": "reference",
+   "split": "holdout",
+   "signals": {
+    "code_ratio": 0.449,
+    "headings": 5,
+    "signature_lines": 0,
+    "steps": 0,
+    "tables": 1,
+    "words": 240,
+    "you_per_1k": 8.3
+   }
+  },
+  {
+   "site": "opencode",
+   "key": "legal/privacy-policy",
+   "label": "guide",
+   "split": "holdout",
+   "signals": {
+    "code_ratio": 0.0,
+    "headings": 124,
+    "signature_lines": 0,
+    "steps": 0,
+    "tables": 2,
+    "words": 12615,
+    "you_per_1k": 57.5
+   }
+  },
+  {
+   "site": "opencode",
+   "key": "mobile",
+   "label": "guide",
+   "split": "holdout",
+   "signals": {
+    "code_ratio": 0.0,
+    "headings": 7,
+    "signature_lines": 0,
+    "steps": 3,
+    "tables": 0,
+    "words": 360,
+    "you_per_1k": 55.6
+   }
+  },
+  {
+   "site": "opencode",
+   "key": "product",
+   "label": "guide",
+   "split": "holdout",
+   "signals": {
+    "code_ratio": 0.0,
+    "headings": 10,
+    "signature_lines": 0,
+    "steps": 0,
+    "tables": 0,
+    "words": 532,
+    "you_per_1k": 35.7
+   }
+  },
+  {
+   "site": "opencode",
+   "key": "sdk",
+   "label": "guide",
+   "split": "holdout",
+   "signals": {
+    "code_ratio": 0.062,
+    "headings": 10,
+    "signature_lines": 0,
+    "steps": 0,
+    "tables": 0,
+    "words": 838,
+    "you_per_1k": 15.5
+   }
+  },
+  {
+   "site": "opencode",
+   "key": "terminal",
+   "label": "guide",
+   "split": "holdout",
+   "signals": {
+    "code_ratio": 0.128,
+    "headings": 11,
+    "signature_lines": 0,
+    "steps": 0,
+    "tables": 0,
+    "words": 808,
+    "you_per_1k": 16.1
+   }
+  }
+ ]
+}

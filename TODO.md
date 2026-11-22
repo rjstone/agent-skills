@@ -154,7 +154,9 @@ column is from memory: verify each against real output before building.
       opencode.ai 90 pages (88 built, 2 social links on other hosts
       failed), docs.langchain.com 1,407 pages in a 4-level tree, its
       `build/python.txt` sub-index 240/240 built.
-- [ ] 8.11 Reference-vs-guide classifier for built docvols (both kinds): a
+- [x] 8.11 Done in docshelf-build 0.3.0 (`classify`; spec
+      `docs/superpowers/specs/2026-11-22-docshelf-build-classify-design.md`).
+      Reference-vs-guide classifier for built docvols (both kinds): a
       separate step that reads `pages.<key>.signals` (and the cached raw
       pages) and writes `keep` and `why: "model:<id>"` into the plan, which
       re-planning keeps. Options: cheap thresholds, an embedding classifier
@@ -185,6 +187,11 @@ column is from memory: verify each against real output before building.
       one archive (zip or tgz: Read the Docs "Downloads" HTML zip, a
       project's release docs tarball), fetch that once instead of page by
       page, and have `detect` report it (the user, 2026-11-22).
+- [ ] 8.14 docshelf-build rules-1 is weaker out of sample on LangChain:
+      holdout 11/14 decided pages agree (calibration 23/23), and
+      `integrations/providers/aws` is stubbed though labelled reference. A
+      rules-2 could be tuned on calibration + holdout with a fresh holdout
+      (2026-11-22).
 - Ignore Dash-only extras: `dashtoc`, playground URLs, docset feeds
   (`dash-feed://`), per-docset JavaScript and full-text-search switches.
 

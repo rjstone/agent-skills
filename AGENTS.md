@@ -267,6 +267,10 @@ metadata:
   downloads, page keys from the URL path (stable whichever index is the
   SOURCE), per-page `signals` in the plan for a later classifier whose
   `why: "model:<id>"` choices survive re-planning (the user, 2026-11-21).
+  0.3.0 adds `classify NAME` (`build_classify.py`): rules decide the clear
+  pages from the signals (`why: "model:rules-1"`, checked against a labelled
+  fixture) and an agent decides the rest through `--apply` (the user,
+  2026-11-22; spec under `docs/superpowers/specs/`).
   `SKILL.md` only finds the site type (`detect URL_OR_PATH`,
   `build_detect.py`: `objects.inv` or `llms.txt`, Sphinx preferred when
   both exist) and points to one `BUILD-<type>.md` beside it, so an agent

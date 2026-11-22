@@ -6,7 +6,7 @@ license: MIT
 metadata:
   author: Robert Stone
   source: https://github.com/rjstone/agent-skills
-  version: "0.2.0"
+  version: "0.3.0"
 ---
 
 # docshelf-build
@@ -47,7 +47,8 @@ as SOURCE. Exit 3: neither was found; exit 4: the site could not be reached.
   full, guides as stubs that link to the live page.
 - **llms** (`llms.txt`: Mintlify, Starlight and others):
   [BUILD-llmstxt.md](BUILD-llmstxt.md). Every listed page in full, cached,
-  narrowed by sub-index or `--stub`.
+  narrowed by sub-index and sorted into reference and guides with
+  `classify`.
 
 Read only the one you need. Both use the same commands: `plan SOURCE --name
 NAME`, check the summary, `build NAME`.

@@ -2,9 +2,8 @@
 
 For sites that publish `objects.inv`: Sphinx, Read the Docs, PyDoctor,
 MkDocs with mkdocstrings. `detect` prints the SOURCE: the folder that holds
-`objects.inv`, a site URL or a local HTML build (`_build/html`). By hand: the
-site is Sphinx when `<site base URL>objects.inv` downloads (a binary file
-starting `# Sphinx inventory version 2`).
+`objects.inv`, a site URL or a local HTML build (`_build/html`). `detect`
+has already checked the inventory: pass its SOURCE straight to `plan`.
 
 ## The loop
 

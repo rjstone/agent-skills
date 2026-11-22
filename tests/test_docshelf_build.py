@@ -23,6 +23,7 @@ from _select import selected  # noqa: E402
 if not selected("docshelf-build"):
     raise unittest.SkipTest("docshelf-build not selected (SKILLS)")
 
+HERE = os.path.dirname(os.path.abspath(__file__))
 REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 SKILL = os.path.join(REPO_ROOT, "skills", "docshelf-build")
 sys.path.insert(0, os.path.join(SKILL, "scripts"))
@@ -38,6 +39,8 @@ from build_fetch import (FetchError, PageCache, fetch_llms, fetch_llms_page, fet
 from build_html import headings, main_content, rewrite_links, rewrite_url_links, stub_html  # noqa: E402
 from build_docvol import check_name, derive_name, role_label, write_docvol, write_llms_docvol  # noqa: E402
 import docshelf_build  # noqa: E402
+from build_classify import (RULES_ID, apply_choices, parse_choices, bucket, counts, may_decide, preview, review_lines,  # noqa: E402
+                            rule_choice, run_rules)
 from build_llms import LlmsPage, Tree, is_llms_source, parse_index, read_tree, url_key  # noqa: E402
 from build_markdown import front_matter, md_to_html, page_signals, slugify  # noqa: E402
 
@@ -1685,6 +1688,385 @@ class DetectTests(unittest.TestCase):
         code, _, err = self.run_main("detect", "https://d.io/")
         self.assertEqual(code, 4)
         self.assertIn("network error", err)
+
+
+CL_INDEX = ("# Site\n## Docs\n- [Ref](https://x.io/ref.md)\n- [Guide](https://x.io/guide.md)\n"
+            "- [Thin](https://x.io/thin.md)\n")
+CL_REF = ("# Ref\n\n" + "The option sets the value used by the command. " * 40
+          + "\n\n```\n" + "".join("--flag%d VALUE\n" % i for i in range(12)) + "```\n")
+CL_GUIDE = "# Guide\n\n" + "First you open it, then you check that you can see what you need. " * 30 + "\n"
+CL_THIN = "# Thin\n\nShort page.\n"
+
+
+class ClassifyCliTests(unittest.TestCase):
+    def setUp(self):
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        self.tmp = os.path.realpath(tmp.name)
+        self.cache = os.path.join(self.tmp, "cache")
+        self.env = {"HOME": self.tmp, "DOCSHELF_CACHE_DIR": self.cache}
+        self.site = {
+            "https://x.io/llms.txt": (200, CL_INDEX.encode()),
+            "https://x.io/ref.md": (200, CL_REF.encode()),
+            "https://x.io/guide.md": (200, CL_GUIDE.encode()),
+            "https://x.io/thin.md": (200, CL_THIN.encode()),
+        }
+        self.pages_allowed = True
+        self.urls = []
+        self.plan_path = os.path.join(self.cache, "built-plans", "site.json")
+        self.docvol = os.path.join(self.cache, "built", "site")
+
+    def opener(self, url):
+        self.urls.append(url)
+        if url.endswith("/robots.txt"):
+            return 404, b""
+        if not self.pages_allowed and not url.endswith("llms.txt"):
+            return 500, b""
+        return self.site.get(url, (404, b""))
+
+    def run_main(self, *argv):
+        out, err = io.StringIO(), io.StringIO()
+        with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
+            code = docshelf_build.main(list(argv), env=self.env, opener=self.opener,
+                                       sleep=lambda s: None)
+        return code, out.getvalue(), err.getvalue()
+
+    def built(self):
+        self.assertEqual(self.run_main("build", "https://x.io/llms.txt", "--name", "site")[0], 0)
+
+    def write_choices(self, text):
+        path = os.path.join(self.tmp, "choices.txt")
+        with open(path, "w", encoding="utf-8") as fh:
+            fh.write(text)
+        return path
+
+    def test_refuses_sphinx_and_unbuilt(self):
+        os.makedirs(os.path.dirname(self.plan_path))
+        with open(self.plan_path, "w") as fh:
+            json.dump({"kind": "sphinx", "pages": {}}, fh)
+        code, _, err = self.run_main("classify", "site")
+        self.assertEqual(code, 2)
+        self.assertIn("classify works on llms.txt docvols; Sphinx plans use the role rule", err)
+        os.remove(self.plan_path)
+        self.assertEqual(self.run_main("classify", "nope")[0], 2)
+        self.assertEqual(self.run_main("plan", "https://x.io/llms.txt", "--name", "site")[0], 0)
+        code, _, err = self.run_main("classify", "site")
+        self.assertEqual(code, 2)
+        self.assertIn("build site first", err)
+
+    def test_classify_apply_build_offline(self):
+        self.built()
+        code, out, err = self.run_main("classify", "site")
+        self.assertEqual(code, 0, err)
+        self.assertIn("reference 1, stub 1, review 1, decided by a person 0, by an agent 0, "
+                      "no signals 0", out)
+        self.assertEqual(out.count("\n  words="), 1)
+        self.assertIn("thin   ", out)
+        self.assertIn("then run: classify site --apply FILE --model YOUR_MODEL_ID", out)
+        self.assertNotIn("more:", out)
+        path = self.write_choices("stub thin Short\n")
+        code, out, _ = self.run_main("classify", "site", "--apply", path, "--model", "t")
+        self.assertEqual(code, 0)
+        self.assertIn("applied 1", out)
+        self.assertIn("left for review: 0", out)
+        out = self.run_main("classify", "site")[1]
+        self.assertIn("nothing left to review; run: build site", out)
+        self.pages_allowed = False
+        self.urls.clear()
+        code, out, err = self.run_main("build", "site")
+        self.assertEqual(code, 0, err)
+        with open(os.path.join(self.docvol, "db.json"), encoding="utf-8") as fh:
+            self.assertIn("Short", json.load(fh)["thin"])
+        self.assertEqual([u for u in self.urls if not u.endswith("robots.txt")],
+                         ["https://x.io/llms.txt"])
+
+    def test_limit_below_one_is_usage_error(self):
+        self.built()
+        for bad in ("0", "-3"):
+            code, _, err = self.run_main("classify", "site", "--limit", bad)
+            self.assertEqual(code, 2)
+            self.assertIn("--limit must be 1 or more", err)
+
+    def test_model_must_be_a_real_agent_id(self):
+        self.built()
+        path = self.write_choices("full thin\n")
+        for bad in ("", "rules-2"):
+            code, _, err = self.run_main("classify", "site", "--apply", path, "--model", bad)
+            self.assertEqual(code, 2)
+            self.assertIn("--model", err)
+        self.assertEqual(load_plan(self.plan_path)["pages"]["thin"]["why"], "llms: all")
+
+    def test_apply_exit_2_when_nothing_applied(self):
+        self.built()
+        path = self.write_choices("full no/such/key\n")
+        code, out, _ = self.run_main("classify", "site", "--apply", path)
+        self.assertEqual(code, 2)
+        self.assertIn("line 1:", out)
+        self.assertIn("applied 0", out)
+
+    def test_rest_counts_as_applied(self):
+        self.built()
+        path = self.write_choices("full REST\n")
+        code, out, _ = self.run_main("classify", "site", "--apply", path, "--model", "t")
+        self.assertEqual(code, 0)
+        self.assertIn("REST: 3 pages set to full", out)
+        self.assertIn("left for review: 0", out)
+
+    def test_replan_keeps_choices(self):
+        self.built()
+        self.run_main("classify", "site")
+        path = self.write_choices("stub thin Short\n")
+        self.run_main("classify", "site", "--apply", path, "--model", "t")
+        first = self.run_main("classify", "site")[1].splitlines()[0]
+        self.assertEqual(self.run_main("plan", "https://x.io/llms.txt", "--name", "site")[0], 0)
+        self.assertEqual(self.run_main("classify", "site")[1].splitlines()[0], first)
+        self.assertEqual(load_plan(self.plan_path)["pages"]["thin"]["why"], "model:t")
+
+    def test_apply_stdin_and_bad_file(self):
+        self.built()
+        with mock.patch("sys.stdin", io.StringIO("full thin\r\n")):
+            code, out, _ = self.run_main("classify", "site", "--apply", "-")
+        self.assertEqual(code, 0)
+        self.assertIn("applied 1", out)
+        self.assertEqual(load_plan(self.plan_path)["pages"]["thin"]["why"], "model:agent")
+        path = self.write_choices("hello\nkeep x\n")
+        code, out, err = self.run_main("classify", "site", "--apply", path)
+        self.assertEqual(code, 2)
+        self.assertIn("line 1:", out)
+        self.assertEqual(load_plan(self.plan_path)["pages"]["thin"]["why"], "model:agent")
+
+
+class ClassifyRulesTests(unittest.TestCase):
+    def test_rules_id(self):
+        self.assertEqual(RULES_ID, "model:rules-1")
+
+    def test_clear_reference(self):
+        self.assertEqual(rule_choice({"words": 900, "code_ratio": 0.6, "you_per_1k": 1.0,
+                                      "steps": 0, "signature_lines": 40, "headings": 12,
+                                      "tables": 3}), "full")
+
+    def test_clear_guide(self):
+        self.assertEqual(rule_choice({"words": 1500, "code_ratio": 0.05, "you_per_1k": 25.0,
+                                      "steps": 8, "signature_lines": 0, "headings": 6,
+                                      "tables": 0}), "stub")
+
+    def test_thin_page_reviewed(self):
+        self.assertEqual(rule_choice({"words": 40, "code_ratio": 0.0, "you_per_1k": 0.0,
+                                      "steps": 0, "signature_lines": 0, "headings": 0,
+                                      "tables": 0}), "review")
+
+    def test_missing_signal_keys_reviewed(self):  # RF 1
+        self.assertEqual(rule_choice({}), "review")
+
+    def _fixture_pages(self, split, site):
+        with open(os.path.join(HERE, "fixtures", "docshelf_build_classify.json")) as f:
+            data = json.load(f)
+        return [p for p in data["pages"] if p["site"] == site and p.get("split") == split]
+
+    def _decided(self, pages):
+        out = [(rule_choice(p["signals"]), p["label"]) for p in pages]
+        return [(c, lab) for c, lab in out if c != "review"]
+
+    def test_fixture_agreement_per_site(self):
+        for site in ("langchain", "opencode"):
+            decided = self._decided(self._fixture_pages("calibration", site))
+            agree = sum((c == "full") == (lab == "reference") for c, lab in decided)
+            self.assertGreaterEqual(agree / max(1, len(decided)), 0.95, site)
+            self.assertGreater(len(decided), 0, site)
+
+    def test_holdout_agreement(self):
+        # Floors are a regression guard at today's out-of-sample figures, not a target.
+        for site, floor in (("langchain", 0.75), ("opencode", 0.95)):
+            decided = self._decided(self._fixture_pages("holdout", site))
+            self.assertGreater(len(decided), 0, site)
+            agree = sum((c == "full") == (lab == "reference") for c, lab in decided)
+            self.assertGreaterEqual(agree / len(decided), floor, site)
+        stubbed = sum(
+            1 for site in ("langchain", "opencode")
+            for p in self._fixture_pages("holdout", site)
+            if p["label"] == "reference" and rule_choice(p["signals"]) == "stub")
+        self.assertLessEqual(stubbed, 1)
+
+
+class ClassifyPlanTests(unittest.TestCase):
+    REF = {"words": 900, "code_ratio": 0.6, "you_per_1k": 1.0, "steps": 0,
+           "signature_lines": 40, "headings": 12, "tables": 3}
+    GUIDE = {"words": 1500, "code_ratio": 0.05, "you_per_1k": 25.0, "steps": 8,
+             "signature_lines": 0, "headings": 6, "tables": 0}
+    THIN = {"words": 40, "code_ratio": 0.0, "you_per_1k": 0.0, "steps": 0,
+            "signature_lines": 0, "headings": 0, "tables": 0}
+
+    def pg(self, why="llms: all", keep="full", signals=None, **extra):
+        page = {"keep": keep, "title": "T", "section": None, "description": None,
+                "why": why, "uri": "u", "signals": dict(self.REF if signals is None else signals)}
+        page.update(extra)
+        return page
+
+    def test_may_decide(self):
+        self.assertTrue(may_decide(self.pg()))
+        self.assertTrue(may_decide(self.pg(why="model:rules-1")))
+        self.assertFalse(may_decide(self.pg(why="manual")))
+        self.assertFalse(may_decide(self.pg(why="override: a/*")))
+        self.assertFalse(may_decide(self.pg(why="model:agent")))
+        page = self.pg()
+        del page["signals"]
+        self.assertFalse(may_decide(page))
+
+    def test_run_rules_idempotent(self):  # RF 4
+        plan = {"kind": "llms", "pages": {"a": self.pg(keep="stub"),
+                                          "b": self.pg(signals=self.GUIDE),
+                                          "c": self.pg(signals=self.THIN, why="model:rules-1",
+                                                       keep="stub")}}
+        run_rules(plan)
+        self.assertEqual([plan["pages"][k]["keep"] for k in "abc"], ["full", "stub", "full"])
+        self.assertEqual([plan["pages"][k]["why"] for k in "abc"],
+                         ["model:rules-1", "model:rules-1", "llms: all"])
+        before = json.loads(json.dumps(plan))
+        run_rules(plan)
+        self.assertEqual(plan, before)
+
+    def test_run_rules_leaves_people_and_agents(self):
+        plan = {"kind": "llms", "pages": {
+            "a": self.pg(why="manual", keep="stub"),
+            "b": self.pg(why="model:agent", keep="full", signals=self.GUIDE)}}
+        before = json.loads(json.dumps(plan))
+        run_rules(plan)
+        self.assertEqual(plan, before)
+
+    def test_counts_add_up(self):  # RF 1
+        nosig = self.pg()
+        del nosig["signals"]
+        plan = {"kind": "llms", "pages": {
+            "a": self.pg(why="model:rules-1", keep="full"),
+            "b": self.pg(why="model:rules-1", keep="stub", signals=self.GUIDE),
+            "c": self.pg(why="manual", keep="stub"),
+            "d": self.pg(why="model:agent"),
+            "e": self.pg(signals=self.THIN),
+            "f": nosig}}
+        c = counts(plan)
+        self.assertEqual(c, {"reference": 1, "stub": 1, "person": 1, "agent": 1,
+                             "review": 1, "no signals": 1})
+        self.assertEqual(sum(c.values()), 6)
+        self.assertEqual(bucket(self.pg(why="override: x")), "person")
+
+    def test_preview_markdown(self):
+        text = "---\ntitle: X\n---\n# X\n\nUse <Tabs>the thing</Tabs> here.\n"
+        self.assertEqual(preview(text, "md"), "Use the thing here.")
+
+    def test_preview_html_and_empty(self):  # RF 3
+        html = "<html><body><main><h1>T</h1><p>Body text</p></main></body></html>"
+        self.assertEqual(preview(html, "html"), "Body text")
+        self.assertEqual(preview("", "md"), "")
+        self.assertEqual(preview("---\ntitle: X\n---\n", "md"), "")
+        self.assertEqual(preview("x" * 500, "md", 10), "x" * 10)
+
+    def test_review_lines_format_and_paging(self):
+        sig = dict(self.THIN, words=300, code_ratio=0.33, you_per_1k=5.0, signature_lines=2,
+                   steps=1, tables=0)
+        plan = {"kind": "llms", "pages": {
+            "k1": self.pg(signals=sig, title="One", section="Sec"),
+            "skip": self.pg(why="manual"),
+            "k2": self.pg(signals=sig, title="Two")}}
+        raw = {"k1": ("# One\n\nHello there.", "md")}
+        get = raw.get
+        self.assertEqual(review_lines(plan, get, 0, 1), [
+            "k1   [Sec] One", "  words=300 code=0.33 you=5.0 sig=2 steps=1 tables=0",
+            "  > Hello there."])
+        self.assertEqual(review_lines(plan, get, 1, 5), [
+            "k2   Two", "  words=300 code=0.33 you=5.0 sig=2 steps=1 tables=0"])
+
+
+class ClassifyApplyTests(unittest.TestCase):
+    def test_parse_basic_and_crlf(self):
+        ch, err = parse_choices("full a/b\r\nstub c/d  Short note here  \r\n\n# x\n")
+        self.assertEqual(ch, [(1, "full", "a/b", None), (2, "stub", "c/d", "Short note here")])
+        self.assertEqual(err, [])
+
+    def test_parse_errors(self):
+        ch, err = parse_choices("keep a\nfull\nstub\n")
+        self.assertEqual(ch, [])
+        self.assertEqual(len(err), 3)
+        for i, e in enumerate(err, 1):
+            self.assertTrue(e.startswith("line %d:" % i))
+
+    def test_key_with_hash(self):
+        ch, err = parse_choices("full a#b")
+        self.assertEqual(ch, [(1, "full", "a#b", None)])
+
+    def test_apply(self):
+        plan = {"kind": "llms", "pages": {
+            "a": {"keep": "full", "why": RULES_ID},
+            "b": {"keep": "full", "why": "manual"},
+            "c": {"keep": "stub", "why": "override: c*"}}}
+        ch, _ = parse_choices("stub a Guide\nfull b\nfull c\nfull zz\n")
+        n, msgs = apply_choices(plan, ch, "tester")
+        self.assertEqual(n, 1)
+        self.assertEqual(msgs, ["line 2: b: decided by a person (manual), skipped",
+                                "line 3: c: decided by a person (override), skipped",
+                                "line 4: zz: unknown page"])
+        self.assertEqual(plan["pages"]["a"]["keep"], "stub")
+        self.assertEqual(plan["pages"]["a"]["why"], "model:tester")
+        self.assertEqual(plan["pages"]["a"]["description"], "Guide")
+
+    def test_apply_overwrites_agent(self):
+        plan = {"kind": "llms", "pages": {"a": {"keep": "full", "why": "model:old"}}}
+        n, _ = apply_choices(plan, [(1, "stub", "a", None)], "new")
+        self.assertEqual(n, 1)
+        self.assertEqual(plan["pages"]["a"]["why"], "model:new")
+
+    def rest_plan(self):
+        return {"kind": "llms", "pages": {
+            "a": {"keep": "full", "why": "llms: all", "signals": {}},
+            "b": {"keep": "full", "why": "llms: all", "signals": {}},
+            "r": {"keep": "full", "why": RULES_ID, "signals": {}},
+            "ag": {"keep": "full", "why": "model:old", "signals": {}},
+            "pe": {"keep": "full", "why": "manual", "signals": {}},
+            "ns": {"keep": "full", "why": "llms: all"}}}
+
+    def test_rest_full_sets_only_review_pages(self):
+        plan = self.rest_plan()
+        ch, err = parse_choices("full REST\n")
+        self.assertEqual(err, [])
+        n, msgs = apply_choices(plan, ch, "t")
+        self.assertEqual(n, 2)
+        self.assertEqual(msgs, ["REST: 2 pages set to full"])
+        for k in ("a", "b"):
+            self.assertEqual(plan["pages"][k]["why"], "model:t")
+        self.assertEqual(plan["pages"]["r"]["why"], RULES_ID)
+        self.assertEqual(plan["pages"]["ag"]["why"], "model:old")
+        self.assertEqual(plan["pages"]["pe"]["why"], "manual")
+        self.assertEqual(plan["pages"]["ns"]["why"], "llms: all")
+
+    def test_rest_stub_and_explicit_lines_win_in_either_order(self):
+        for text in ("full a\nstub REST\n", "stub REST\nfull a\n"):
+            plan = self.rest_plan()
+            ch, _ = parse_choices(text)
+            n, _ = apply_choices(plan, ch, "t")
+            self.assertEqual(n, 2)
+            self.assertEqual(plan["pages"]["a"]["keep"], "full")
+            self.assertEqual(plan["pages"]["b"]["keep"], "stub")
+
+    def test_rest_with_description_is_an_error(self):
+        ch, err = parse_choices("stub REST dropped\nfull a\n")
+        self.assertEqual(err, ["line 1: REST takes no description"])
+        self.assertEqual(ch, [(2, "full", "a", None)])
+
+    def test_real_page_named_rest_still_means_bulk(self):
+        plan = self.rest_plan()
+        plan["pages"]["REST"] = {"keep": "full", "why": "llms: all", "signals": {}}
+        ch, _ = parse_choices("stub REST\n")
+        apply_choices(plan, ch, "t")
+        self.assertEqual(plan["pages"]["REST"]["keep"], "stub")
+        self.assertEqual(plan["pages"]["a"]["keep"], "stub")
+
+    def test_last_write_wins_and_description_stays(self):
+        plan = {"kind": "llms", "pages": {"a/b": {"keep": "full", "why": "llms: all"}}}
+        ch, _ = parse_choices("stub a/b First\nfull a/b\n")
+        n, _ = apply_choices(plan, ch, "t")
+        self.assertEqual(n, 2)
+        page = plan["pages"]["a/b"]
+        self.assertEqual((page["keep"], page["why"], page["description"]),
+                         ("full", "model:t", "First"))
 
 
 if __name__ == "__main__":
