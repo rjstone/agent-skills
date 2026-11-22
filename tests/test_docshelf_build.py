@@ -1780,10 +1780,29 @@ class ClassifyCliTests(unittest.TestCase):
         self.assertEqual([u for u in self.urls if not u.endswith("robots.txt")],
                          ["https://x.io/llms.txt"])
 
-    def test_paging_hint(self):
+    def test_limit_below_one_is_usage_error(self):
         self.built()
-        out = self.run_main("classify", "site", "--limit", "0")[1]
-        self.assertIn("more: classify site --offset 0", out)
+        for bad in ("0", "-3"):
+            code, _, err = self.run_main("classify", "site", "--limit", bad)
+            self.assertEqual(code, 2)
+            self.assertIn("--limit must be 1 or more", err)
+
+    def test_model_must_be_a_real_agent_id(self):
+        self.built()
+        path = self.write_choices("full thin\n")
+        for bad in ("", "rules-2"):
+            code, _, err = self.run_main("classify", "site", "--apply", path, "--model", bad)
+            self.assertEqual(code, 2)
+            self.assertIn("--model", err)
+        self.assertEqual(load_plan(self.plan_path)["pages"]["thin"]["why"], "llms: all")
+
+    def test_apply_exit_2_when_nothing_applied(self):
+        self.built()
+        path = self.write_choices("full no/such/key\n")
+        code, out, _ = self.run_main("classify", "site", "--apply", path)
+        self.assertEqual(code, 2)
+        self.assertIn("line 1:", out)
+        self.assertIn("applied 0", out)
 
     def test_replan_keeps_choices(self):
         self.built()

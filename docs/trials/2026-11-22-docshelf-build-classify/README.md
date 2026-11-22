@@ -47,23 +47,26 @@ user wants reference only.
 
 - Every run now builds first and then classifies with the rules plus its
   own review; every answer passes.
-- The rules made no mistake against the labels here (their 9 reference and
-  63-70 stub choices all agree). All reference pages stubbed came from the
-  model's choices or a group pattern.
-- The stubbed reference pages are the same five in every run
+- The rules decided 72, 76 and 79 pages per run. Only 22, 20 and 24 of
+  those carry a label, and all of those agree. The labelled pages are the
+  calibration sample the thresholds were fitted on (in-sample), so this is
+  no out-of-sample measure of the rules; the other decisions are
+  unlabelled. All reference pages stubbed came from the model's choices or
+  a group pattern.
+- luna and deepseek stubbed the same five reference pages
   (`oss/python/deepagents/customization`, `.../profiles`,
   `oss/openwiki/customize`, `langsmith/python/managed-deep-agents-cli`,
   `.../managed-deep-agents-agent-definition`): configuration pages with
-  prose around them. Three models agreeing suggests the labels there are
-  borderline (Task 1 flagged about 15 such pages).
+  prose around them. Step stubbed four of them (all but
+  `oss/python/deepagents/customization`), two of those through its
+  `langsmith/*` group pattern. Several models agreeing suggests
+  the labels there are borderline (Task 1 flagged about 15 such pages).
 - Otherwise the models err toward keeping guides in full (12 to 27 labelled
   guides kept), the cheap direction.
 - luna and deepseek wrote their choices with small scripts over the plan
   (prefix rules, or "full" for every remaining review page) after reading
   part of the listing, rather than page by page. The listing was used, but
   the long review tail (about 160 pages) invites bulk decisions.
-- docvol size: 1.6 to 1.9 MB (db.json) for the 240-page sub-index, against
-  3.5 MB in round 1 for step's unclassified 143-page build.
 
 ## Follow-ups
 

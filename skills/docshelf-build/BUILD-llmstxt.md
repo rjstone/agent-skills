@@ -51,11 +51,13 @@ loop:
 2. `classify NAME` applies the rules (`why: "model:rules-1"`), prints one
    count line, then up to 25 review pages (`--offset K`, `--limit N`) with
    signals and a short preview from the cache.
-3. Write one line per review page to a file: `full KEY` or
-   `stub KEY [short description]`. Pages you leave out stay in full.
+3. Write one line for every listed review page to a file: `full KEY` to
+   keep it, `stub KEY [short description]` to drop it. A page without a
+   line stays in review and is listed again.
 4. `classify NAME --apply FILE --model YOUR_MODEL_ID` (`-` reads stdin);
    it stores `"why": "model:<id>"` and reports skipped lines.
-5. `classify NAME` again, until it says nothing is left to review.
+5. `classify NAME` again, until it says nothing is left to review. (Pages
+   never decided stay in full in the docvol if you build anyway.)
 6. `build NAME` (no page downloads: the cache is used).
 
 The rules never touch a page a person decided (`manual`, `override:`) or an

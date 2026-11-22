@@ -211,7 +211,12 @@ def do_classify(cache: str, args) -> None:
         raise CLIError("classify works on llms.txt docvols; Sphinx plans use the role rule", 2)
     if not any(isinstance(p.get("signals"), dict) for p in plan["pages"].values()):
         raise CLIError("no page has signals yet; run: docshelf-build build %s first" % name, 2)
+    if args.limit < 1:
+        raise CLIError("classify: --limit must be 1 or more", 2)
     if args.apply:
+        if not args.model.strip() or args.model.startswith("rules-"):
+            raise CLIError("classify: --model must be non-empty and not start with 'rules-' "
+                           "(that id belongs to the rules)", 2)
         if args.apply == "-":
             text = sys.stdin.read()
         else:
@@ -230,6 +235,8 @@ def do_classify(cache: str, args) -> None:
         print("applied %d" % applied)
         _print(messages)
         print("left for review: %d" % counts(plan)["review"])
+        if applied == 0:
+            raise CLIError("nothing applied; check the keys (copy them from the listing)", 2)
         return
     run_rules(plan)
     save_plan(path, plan)
@@ -238,7 +245,7 @@ def do_classify(cache: str, args) -> None:
           "no signals %d" % (c["reference"], c["stub"], c["review"], c["person"], c["agent"],
                              c["no signals"]))
     cache_pages = PageCache(os.path.join(src_dir(cache), name))
-    offset, limit = max(0, args.offset), max(0, args.limit)
+    offset, limit = max(0, args.offset), args.limit
     _print(review_lines(plan, cache_pages.get, offset, limit))
     if c["review"] == 0:
         print("nothing left to review; run: build %s" % name)
