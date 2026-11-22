@@ -192,10 +192,12 @@ column is from memory: verify each against real output before building.
       one archive (zip or tgz: Read the Docs "Downloads" HTML zip, a
       project's release docs tarball), fetch that once instead of page by
       page, and have `detect` report it (the user, 2026-11-22).
-- [ ] 8.14 docshelf-build rules-1 is weaker out of sample on LangChain:
-      holdout 11/14 decided pages agree (calibration 23/23), and
-      `integrations/providers/aws` is stubbed though labelled reference. A
-      rules-2 could be tuned on calibration + holdout with a fresh holdout
+- [x] 8.14 Done in docshelf-build 0.4.0: rules-2 (`model:rules-2`) tuned on
+      calibration + holdout: agreement 26/26 langchain, 30/30 opencode, no
+      reference page stubbed (thresholds: full needs you <= 3 and tables >= 2;
+      stub needs you >= 14 and tables <= 1; fewer decided, more review).
+      Frozen check on the fresh langchain-ts split (never tuned on): 14 of 62
+      decided, 13 agree (0.93), 1 reference page stubbed, 48 left to review
       (2026-11-22).
 - Ignore Dash-only extras: `dashtoc`, playground URLs, docset feeds
   (`dash-feed://`), per-docset JavaScript and full-text-search switches.

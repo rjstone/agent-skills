@@ -48,7 +48,7 @@ lines, "you" per 1000 words and similar counts), recorded by `build`. The
 loop:
 
 1. `build NAME` (fills the signals and the page cache).
-2. `classify NAME` applies the rules (`why: "model:rules-1"`), prints one
+2. `classify NAME` applies the rules (`why: "model:rules-2"`), prints one
    count line, then up to 25 review pages (`--offset K`, `--limit N`) with
    signals and a short preview from the cache.
 3. Write one line for every listed review page to a file: `full KEY` to

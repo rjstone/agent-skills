@@ -1740,7 +1740,8 @@ class DetectTests(unittest.TestCase):
 CL_INDEX = ("# Site\n## Docs\n- [Ref](https://x.io/ref.md)\n- [Guide](https://x.io/guide.md)\n"
             "- [Thin](https://x.io/thin.md)\n")
 CL_REF = ("# Ref\n\n" + "The option sets the value used by the command. " * 40
-          + "\n\n```\n" + "".join("--flag%d VALUE\n" % i for i in range(12)) + "```\n")
+          + "\n\n```\n" + "".join("--flag%d VALUE\n" % i for i in range(12)) + "```\n"
+          + "\n| a | b |\n|---|---|\n| 1 | 2 |\n\n| c | d |\n|---|---|\n| 3 | 4 |\n")
 CL_GUIDE = "# Guide\n\n" + "First you open it, then you check that you can see what you need. " * 30 + "\n"
 CL_THIN = "# Thin\n\nShort page.\n"
 
@@ -1885,7 +1886,7 @@ class ClassifyCliTests(unittest.TestCase):
 
 class ClassifyRulesTests(unittest.TestCase):
     def test_rules_id(self):
-        self.assertEqual(RULES_ID, "model:rules-1")
+        self.assertEqual(RULES_ID, "model:rules-2")
 
     def test_clear_reference(self):
         self.assertEqual(rule_choice({"words": 900, "code_ratio": 0.6, "you_per_1k": 1.0,
@@ -1914,25 +1915,38 @@ class ClassifyRulesTests(unittest.TestCase):
         out = [(rule_choice(p["signals"]), p["label"]) for p in pages]
         return [(c, lab) for c, lab in out if c != "review"]
 
-    def test_fixture_agreement_per_site(self):
-        for site in ("langchain", "opencode"):
-            decided = self._decided(self._fixture_pages("calibration", site))
-            agree = sum((c == "full") == (lab == "reference") for c, lab in decided)
-            self.assertGreaterEqual(agree / max(1, len(decided)), 0.95, site)
-            self.assertGreater(len(decided), 0, site)
+    def _agreement(self, pages):
+        decided = self._decided(pages)
+        agree = sum((c == "full") == (lab == "reference") for c, lab in decided)
+        return decided, agree
 
-    def test_holdout_agreement(self):
-        # Floors are a regression guard at today's out-of-sample figures, not a target.
-        for site, floor in (("langchain", 0.75), ("opencode", 0.95)):
-            decided = self._decided(self._fixture_pages("holdout", site))
+    def _stubbed_reference(self, pages):
+        return sum(1 for p in pages
+                   if p["label"] == "reference" and rule_choice(p["signals"]) == "stub")
+
+    def test_tuning_bar_calibration_plus_holdout(self):
+        # rules-2 was tuned on these two splits together: the bar per site.
+        stubbed = 0
+        for site in ("langchain", "opencode"):
+            pages = (self._fixture_pages("calibration", site)
+                     + self._fixture_pages("holdout", site))
+            decided, agree = self._agreement(pages)
             self.assertGreater(len(decided), 0, site)
-            agree = sum((c == "full") == (lab == "reference") for c, lab in decided)
-            self.assertGreaterEqual(agree / len(decided), floor, site)
-        stubbed = sum(
-            1 for site in ("langchain", "opencode")
-            for p in self._fixture_pages("holdout", site)
-            if p["label"] == "reference" and rule_choice(p["signals"]) == "stub")
+            self.assertGreaterEqual(agree / len(decided), 0.95, site)
+            stubbed += self._stubbed_reference(pages)
         self.assertLessEqual(stubbed, 1)
+
+    def test_fresh_split_frozen_figures(self):
+        # The fresh split (another site) never took part in tuning. These
+        # floors are a regression guard at the figures measured once after
+        # the thresholds were frozen (14 of 62 decided, 13 agree, 1 reference
+        # page stubbed), not a target.
+        pages = self._fixture_pages("fresh", "langchain-ts")
+        self.assertEqual(len(pages), 62)
+        decided, agree = self._agreement(pages)
+        self.assertGreaterEqual(len(decided), 14)
+        self.assertGreaterEqual(agree / len(decided), 13 / 14 - 0.001)
+        self.assertLessEqual(self._stubbed_reference(pages), 1)
 
 
 class ClassifyPlanTests(unittest.TestCase):
@@ -1967,10 +1981,22 @@ class ClassifyPlanTests(unittest.TestCase):
         run_rules(plan)
         self.assertEqual([plan["pages"][k]["keep"] for k in "abc"], ["full", "stub", "full"])
         self.assertEqual([plan["pages"][k]["why"] for k in "abc"],
-                         ["model:rules-1", "model:rules-1", "llms: all"])
+                         ["model:rules-2", "model:rules-2", "llms: all"])
         before = json.loads(json.dumps(plan))
         run_rules(plan)
         self.assertEqual(plan, before)
+
+    def test_rules1_pages_redecided(self):  # RF 4
+        plan = {"kind": "llms", "pages": {
+            "a": self.pg(why="model:rules-1", keep="stub"),
+            "b": self.pg(why="model:rules-1", keep="full", signals=self.GUIDE),
+            "c": self.pg(why="model:agent", keep="stub"),
+            "d": self.pg(why="manual", keep="stub")}}
+        run_rules(plan)
+        self.assertEqual([plan["pages"][k]["keep"] for k in "abcd"],
+                         ["full", "stub", "stub", "stub"])
+        self.assertEqual([plan["pages"][k]["why"] for k in "abcd"],
+                         ["model:rules-2", "model:rules-2", "model:agent", "manual"])
 
     def test_run_rules_leaves_people_and_agents(self):
         plan = {"kind": "llms", "pages": {
