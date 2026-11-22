@@ -42,11 +42,12 @@
     },
     {
       "name": "docshelf-build",
-      "version": "0.3.0",
+      "version": "0.4.0",
       "files": [
         "BUILD-llmstxt.md",
         "BUILD-sphinx.md",
         "SKILL.md",
+        "scripts/build_archive.py",
         "scripts/build_classify.py",
         "scripts/build_core.py",
         "scripts/build_detect.py",
