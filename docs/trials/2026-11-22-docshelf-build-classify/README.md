@@ -90,7 +90,31 @@ Same prompt and models. Labels now 120 LangChain pages (calibration + holdout).
 - Two models still bypassed the listing: deepseek edited the plan file with
   scripts, step cut by path patterns before building.
 
+## Round 4 (0.4.0 final: rules-2, `full REST` only, other-host stubs)
+
+Same prompt and models; labels: 120 LangChain pages.
+
+| Run | Flow | Choices applied | Final plan (rules ref / rules stub / agent) | vs labels | Reference pages stubbed | Answer | Time |
+|---|---|---|---|---|---|---|---|
+| luna | sub-index, build, classify x6, one `--apply` | 187 | 6 / 47 / 186 | 100/120 | 19 | correct | 343 s |
+| deepseek | sub-index, build, classify x2, one `--apply` deciding all 240 pages (rules' choices overwritten) | 240 | 0 / 0 / 240 | 87/120 | 11 | correct | 362 s |
+| step | sub-index, build, classify x3, `--apply` x2 | 192 | 6 / 47 / 187 | 102/120 | 12 | correct | 403 s |
+
+- First round where every model built the sub-index, classified and applied
+  its choices; none cut by path patterns or edited the plan file; no
+  `stub REST` (the docs' "refused" sentence was read; `full REST` used).
+- Agreement with the labels is the best so far (87-102 of 120, against
+  77-99 in round 3), and the docvols are smaller (0.6-2.0 MB).
+- Every stubbed reference page is the model's own explicit choice (why
+  `model:<id>`); none from rules-2. 11-19 per run is still the main
+  weakness: the review listing's three lines are too little for some
+  configuration-heavy pages.
+
 ## Follow-ups
+
+- Wrong stubs by the reviewing model (11-19 per run in round 4): show more of
+  a page (headings, a signature sample) in the review listing, or ask the
+  model to stub only pages with tutorial signals.
 
 - Bulk decisions on a long review tail: a `--limit` default of 25 still
   led two models to script the rest. Possible: sort the review listing by
