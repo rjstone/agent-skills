@@ -9,10 +9,13 @@ import os
 import tempfile
 from collections import Counter, defaultdict
 from typing import Dict, List, Optional, Tuple
+from urllib.parse import urlsplit
 
 from build_inventory import InvEntry, page_key, split_uri
+from build_llms import Tree
 
 FORMAT = 1
+CARRIED = ("signals", "fetched", "fetch_error")
 
 
 def _is_url(source: str) -> bool:
@@ -30,6 +33,25 @@ def _generated(key: str) -> bool:
     return key in ("genindex", "search") or ("/" not in key and key.endswith("modindex"))
 
 
+def _choose(key: str, rule_keep: str, rule_why: str, stored: List[List[str]],
+            cli: List[List[str]], prev: Optional[dict]) -> Tuple[str, str]:
+    """A page's (keep, why). Lowest to highest: the rule, stored overrides, a
+    model choice from the old plan (why starts "model:"; the caller passes
+    prev=None to drop it), command-line overrides, then a "manual" old choice."""
+    keep, why = rule_keep, rule_why
+    for mode, pat in stored:
+        if fnmatch.fnmatchcase(key, pat):
+            keep, why = mode, "override: " + pat
+    if prev and str(prev.get("why", "")).startswith("model:"):
+        keep, why = prev["keep"], prev["why"]
+    for mode, pat in cli:
+        if fnmatch.fnmatchcase(key, pat):
+            keep, why = mode, "override: " + pat
+    if prev and prev.get("why") == "manual":
+        keep, why = prev["keep"], "manual"
+    return keep, why
+
+
 def make_plan(source: str, inv_sha256: str, header: dict, entries: List[InvEntry],
               overrides: List[Tuple[str, str]], old: Optional[dict] = None,
               reset: bool = False, base_url: Optional[str] = None) -> dict:
@@ -37,7 +59,8 @@ def make_plan(source: str, inv_sha256: str, header: dict, entries: List[InvEntry
     its base_url is kept unless given, and its "manual" pages keep their
     choice; pages no longer in the inventory are dropped."""
     stored = [] if (old is None or reset) else [list(o) for o in old.get("overrides", [])]
-    all_overrides = stored + [[mode, pat] for mode, pat in overrides]
+    cli = [[mode, pat] for mode, pat in overrides]
+    all_overrides = stored + cli
     if _is_url(source):
         live = source
     else:
@@ -62,12 +85,9 @@ def make_plan(source: str, inv_sha256: str, header: dict, entries: List[InvEntry
         domain = sorted(r for r in roles[key] if not r.startswith("std:"))
         keep, why = ("full", "roles: " + ", ".join(domain)) if domain \
             else ("stub", "roles: std only")
-        for mode, pat in all_overrides:
-            if fnmatch.fnmatchcase(key, pat):
-                keep, why = mode, "override: " + pat
         prev = old_pages.get(key)
-        if prev and prev.get("why") == "manual":
-            keep, why = prev["keep"], "manual"
+        keep, why = _choose(key, keep, why, stored, cli, prev if not reset or
+                            (prev or {}).get("why") == "manual" else None)
         if "/" in key:
             group = _group(key)
             section = titles.get(group + "/index", group)
@@ -76,7 +96,7 @@ def make_plan(source: str, inv_sha256: str, header: dict, entries: List[InvEntry
         pages[key] = {"keep": keep, "title": titles.get(key, key), "section": section,
                       "description": (prev or {}).get("description"), "why": why,
                       "uri": uris[key]}
-    return {"format": FORMAT, "source": source, "base_url": live,
+    return {"format": FORMAT, "kind": "sphinx", "source": source, "base_url": live,
             "inventory_sha256": inv_sha256,
             "project": header.get("project", ""), "version": header.get("version", ""),
             "entry_count": len(entries), "rule": "roles",
@@ -96,6 +116,47 @@ def summarize(plan: dict, old: Optional[dict]) -> List[str]:
     biggest = sorted(groups, key=lambda g: (-sum(groups[g].values()), g))
     for g in biggest[:5]:
         lines.append("  %s: %d full, %d stub" % (g, groups[g]["full"], groups[g]["stub"]))
+    lines.extend(_added_dropped(pages, old))
+    if full == 0 and biggest:
+        top = next((g for g in biggest if any("/" in k for k in pages if _group(k) == g)),
+                   biggest[0])
+        lines.append("warning: no page has a domain role (every entry is std:*), so the "
+                     "rule keeps nothing in full; for prose reference use --full '%s/*' "
+                     "(or another group above)" % top)
+    return lines
+
+
+def make_llms_plan(source: str, tree: Tree, overrides: List[Tuple[str, str]],
+                   old: Optional[dict] = None, reset: bool = False) -> dict:
+    """A plan for an llms.txt tree: every page full, then the precedence of
+    _choose. Pages still listed keep the old plan's CARRIED fields."""
+    stored = [] if (old is None or reset) else [list(o) for o in old.get("overrides", [])]
+    cli = [[mode, pat] for mode, pat in overrides]
+    old_pages = (old or {}).get("pages", {})
+    pages = {}
+    for page in sorted(tree.pages, key=lambda x: x.key):
+        prev = old_pages.get(page.key)
+        usable = prev if prev and (not reset or prev.get("why") == "manual") else None
+        keep, why = _choose(page.key, "full", "llms: all", stored, cli, usable)
+        entry = {"keep": keep, "title": page.title, "section": page.section,
+                 "description": page.description or (prev or {}).get("description"),
+                 "why": why, "uri": page.url}
+        if prev and str(prev.get("why", "")).startswith("model:") and why == prev["why"]:
+            entry["description"] = prev.get("description")
+        elif reset and why != "manual" and not page.description:
+            entry["description"] = None
+        for field in CARRIED:
+            if prev and field in prev:
+                entry[field] = prev[field]
+        pages[page.key] = entry
+    return {"format": FORMAT, "kind": "llms", "source": source, "base_url": None,
+            "main_host": tree.main_host, "index_sha256": tree.sha256, "indexes": tree.indexes,
+            "project": tree.title, "version": "", "entry_count": len(pages),
+            "rule": "llms-all", "overrides": stored + cli, "pages": pages}
+
+
+def _added_dropped(pages: dict, old: Optional[dict]) -> List[str]:
+    lines: List[str] = []
     if old is not None:
         added = sorted(set(pages) - set(old.get("pages", {})))
         dropped = sorted(set(old.get("pages", {})) - set(pages))
@@ -104,12 +165,41 @@ def summarize(plan: dict, old: Optional[dict]) -> List[str]:
                 more = " ..." if len(keys) > 10 else ""
                 lines.append("%s %d page%s: %s%s" % (word, len(keys), "" if len(keys) == 1
                                                       else "s", ", ".join(keys[:10]), more))
-    if full == 0 and biggest:
-        top = next((g for g in biggest if any("/" in k for k in pages if _group(k) == g)),
-                   biggest[0])
-        lines.append("warning: no page has a domain role (every entry is std:*), so the "
-                     "rule keeps nothing in full; for prose reference use --full '%s/*' "
-                     "(or another group above)" % top)
+    return lines
+
+
+def summarize_llms(plan: dict, old: Optional[dict]) -> List[str]:
+    """Plan summary lines for an llms.txt plan: counts, sections, the index
+    tree, added/dropped pages and a warning over 300 full pages."""
+    pages = plan["pages"]
+    full = sum(1 for p in pages.values() if p["keep"] == "full")
+    lines = ["%s: %d pages: %d full, %d stub"
+             % (plan.get("project", ""), len(pages), full, len(pages) - full)]
+    sections = Counter((p.get("section") or "Pages").split(" / ")[0] for p in pages.values())
+    top = sorted(sections.items(), key=lambda kv: (-kv[1], kv[0]))[:8]
+    lines.append("  " + "   ".join("%s: %d" % kv for kv in top))
+    indexes = plan.get("indexes", [])
+    if indexes:
+        lines.append("index tree:")
+        depth: Dict[Optional[str], int] = {}
+        host = plan.get("main_host", urlsplit(plan["source"]).netloc)
+        for ix in indexes:
+            d = 0 if ix.get("parent") is None else depth.get(ix["parent"], 0) + 1
+            depth[ix["url"]] = d
+            parts = urlsplit(ix["url"])
+            if parts.scheme not in ("http", "https"):
+                shown = os.path.basename(ix["url"])  # a local root file
+            elif (parts.hostname or "") == host:
+                shown = parts.path.lstrip("/")
+            else:
+                shown = ix["url"]
+            info = ix["note"] if ix.get("pages") is None else ix["pages"]
+            lines.append("%s%s%s" % ("  " * (d + 1), shown,
+                                     "" if info is None else " (%s)" % info))
+    lines.extend(_added_dropped(pages, old))
+    if full > 300:
+        lines.append("warning: %d full pages; narrow with a sub-index as SOURCE (see the tree) "
+                     "or --stub globs" % full)
     return lines
 
 

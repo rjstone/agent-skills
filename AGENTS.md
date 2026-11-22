@@ -259,7 +259,19 @@ metadata:
   a change older docshelf cannot read, together with docshelf's reader
   and docshelf-build's stated minimum docshelf (the user, 2026-11-21).
   Agents want dense reference, not tutorials (the user, 2026-11-21; spec
-  and plan under `docs/superpowers/`).
+  and plan under `docs/superpowers/`). 0.2.0 adds `llms.txt` sources
+  (`build_llms.py`, `build_markdown.py`): nested `.txt` sub-indexes
+  followed to depth 3 (same host only, never `*-full.txt`), every listed
+  page kept in full (fetch too much, sort later), raw pages cached in
+  `<cache>/built-src/<name>/` so rebuilds and re-sorts need no page
+  downloads, page keys from the URL path (stable whichever index is the
+  SOURCE), per-page `signals` in the plan for a later classifier whose
+  `why: "model:<id>"` choices survive re-planning (the user, 2026-11-21).
+  `SKILL.md` only finds the site type (`detect URL_OR_PATH`,
+  `build_detect.py`: `objects.inv` or `llms.txt`, Sphinx preferred when
+  both exist) and points to one `BUILD-<type>.md` beside it, so an agent
+  reads only its own type's procedure; a new source type adds a
+  `BUILD-<type>.md` and a `detect` rule (the user, 2026-11-22).
 - `sandboxing` - run a nested agent CLI or test harness in a bubblewrap
   sandbox (Linux) that hides the caller's environment, processes and files:
   `scripts/sandbox.py` (`env -i` + bwrap `--clearenv`, `/work` as `HOME`,
