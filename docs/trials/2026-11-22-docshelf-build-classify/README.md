@@ -102,9 +102,9 @@ Same prompt and models; labels: 120 LangChain pages.
 
 - First round where every model built the sub-index, classified and applied
   its choices; none cut by path patterns or edited the plan file; no
-  `stub REST` (the docs' "refused" sentence was read; `full REST` used).
+  `stub REST` (the docs' "refused" sentence was read).
 - Agreement with the labels is the best so far (87-102 of 120, against
-  77-99 in round 3), and the docvols are smaller (0.6-2.0 MB).
+  77-99 in round 3); docvol sizes 0.6-2.0 MB (db.json).
 - Every stubbed reference page is the model's own explicit choice (why
   `model:<id>`); none from rules-2. 11-19 per run is still the main
   weakness: the review listing's three lines are too little for some
