@@ -23,6 +23,7 @@ from _select import selected  # noqa: E402
 if not selected("docshelf-build"):
     raise unittest.SkipTest("docshelf-build not selected (SKILLS)")
 
+HERE = os.path.dirname(os.path.abspath(__file__))
 REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 SKILL = os.path.join(REPO_ROOT, "skills", "docshelf-build")
 sys.path.insert(0, os.path.join(SKILL, "scripts"))
@@ -38,6 +39,7 @@ from build_fetch import (FetchError, PageCache, fetch_llms, fetch_llms_page, fet
 from build_html import headings, main_content, rewrite_links, rewrite_url_links, stub_html  # noqa: E402
 from build_docvol import check_name, derive_name, role_label, write_docvol, write_llms_docvol  # noqa: E402
 import docshelf_build  # noqa: E402
+from build_classify import RULES_ID, rule_choice  # noqa: E402
 from build_llms import LlmsPage, Tree, is_llms_source, parse_index, read_tree, url_key  # noqa: E402
 from build_markdown import front_matter, md_to_html, page_signals, slugify  # noqa: E402
 
@@ -1685,6 +1687,40 @@ class DetectTests(unittest.TestCase):
         code, _, err = self.run_main("detect", "https://d.io/")
         self.assertEqual(code, 4)
         self.assertIn("network error", err)
+
+
+class ClassifyRulesTests(unittest.TestCase):
+    def test_rules_id(self):
+        self.assertEqual(RULES_ID, "model:rules-1")
+
+    def test_clear_reference(self):
+        self.assertEqual(rule_choice({"words": 900, "code_ratio": 0.6, "you_per_1k": 1.0,
+                                      "steps": 0, "signature_lines": 40, "headings": 12,
+                                      "tables": 3}), "full")
+
+    def test_clear_guide(self):
+        self.assertEqual(rule_choice({"words": 1500, "code_ratio": 0.05, "you_per_1k": 25.0,
+                                      "steps": 8, "signature_lines": 0, "headings": 6,
+                                      "tables": 0}), "stub")
+
+    def test_thin_page_reviewed(self):
+        self.assertEqual(rule_choice({"words": 40, "code_ratio": 0.0, "you_per_1k": 0.0,
+                                      "steps": 0, "signature_lines": 0, "headings": 0,
+                                      "tables": 0}), "review")
+
+    def test_missing_signal_keys_reviewed(self):  # RF 1
+        self.assertEqual(rule_choice({}), "review")
+
+    def test_fixture_agreement_per_site(self):
+        with open(os.path.join(HERE, "fixtures", "docshelf_build_classify.json")) as f:
+            data = json.load(f)
+        for site in ("langchain", "opencode"):
+            pages = [p for p in data["pages"] if p["site"] == site]
+            decided = [(rule_choice(p["signals"]), p["label"]) for p in pages]
+            decided = [(c, lab) for c, lab in decided if c != "review"]
+            agree = sum((c == "full") == (lab == "reference") for c, lab in decided)
+            self.assertGreaterEqual(agree / max(1, len(decided)), 0.95, site)
+            self.assertGreater(len(decided), 0, site)
 
 
 if __name__ == "__main__":
