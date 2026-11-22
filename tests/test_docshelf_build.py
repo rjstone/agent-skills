@@ -2307,5 +2307,177 @@ class MainHostFixTests(unittest.TestCase):
         self.assertNotIn("alert", html)
 
 
+class ArchiveTests(unittest.TestCase):
+    def setUp(self):
+        import build_archive
+        self.ba = build_archive
+        self.tmp = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, self.tmp, True)
+
+    def make_zip(self, entries, symlink=None):
+        import zipfile
+        path = os.path.join(self.tmp, "a.zip")
+        with zipfile.ZipFile(path, "w") as z:
+            for name, data in entries:
+                z.writestr(name, data)
+            if symlink:
+                zi = zipfile.ZipInfo(symlink)
+                zi.external_attr = (0o120777 << 16)
+                z.writestr(zi, "/etc/passwd")
+        return path
+
+    def unpack(self, path):
+        out = os.path.join(self.tmp, "site")
+        return out, self.ba.unpack(path, out)
+
+    def test_find_api_htmlzip(self):
+        seen = []
+
+        def get(url):
+            seen.append(url)
+            return 200, json.dumps({"downloads": {"htmlzip": "https://x.example/z/"}}).encode()
+        self.assertEqual(self.ba.find_archive("https://sphinx.readthedocs.io/en/latest/", get),
+                         "https://x.example/z/")
+        self.assertIn("/projects/sphinx/versions/latest/", seen[0])
+
+    def test_find_api_subproject_slug(self):
+        seen = []
+
+        def get(url):
+            seen.append(url)
+            return 200, b"{}"
+        self.assertIsNone(self.ba.find_archive("https://a.readthedocs.io/projects/sub/en/v1/", get))
+        self.assertIn("/projects/sub/versions/v1/", seen[0])
+
+    def test_find_api_without_htmlzip_then_probe_404(self):
+        def get(url):
+            return (200, b'{"downloads": {}}') if "api/v3" in url else (404, b"")
+        self.assertIsNone(self.ba.find_archive("https://p.readthedocs.io/en/latest/", get))
+
+    def test_find_api_unreachable_probe_200(self):
+        def get(url):
+            return (0, b"") if "api/v3" in url else (200, b"PK")
+        self.assertEqual(self.ba.find_archive("https://p.readthedocs.io/en/latest/", get),
+                         "https://p.readthedocs.io/_/downloads/en/latest/htmlzip/")
+
+    def test_find_probe_uses_head_when_given(self):
+        calls = []
+
+        def get(url):
+            calls.append(url)
+            return 404, b""
+        found = self.ba.find_archive("https://docs.example/en/stable/guide/", get,
+                                     head=lambda u: (200, {}))
+        self.assertEqual(found, "https://docs.example/_/downloads/en/stable/htmlzip/")
+        self.assertEqual(calls, [])
+
+    def test_find_api_detail_unknown_project(self):
+        def get(url):
+            return (404, b'{"detail": "Not found."}') if "api/v3" in url else (404, b"")
+        self.assertIsNone(self.ba.find_archive("https://p.readthedocs.io/en/latest/", get))
+
+    def test_unpack_finds_build_one_level_down(self):
+        path = self.make_zip([("proj-html/objects.inv", "x"), ("proj-html/index.html", "i"),
+                              ("proj-html/_static/a.css", "c")])
+        out, build = self.unpack(path)
+        self.assertEqual(build, os.path.join(out, "proj-html"))
+        self.assertTrue(os.path.isfile(os.path.join(build, "_static", "a.css")))
+
+    def test_unpack_index_html_only(self):
+        out, build = self.unpack(self.make_zip([("top/index.html", "i")]))
+        self.assertEqual(build, os.path.join(out, "top"))
+
+    def test_unpack_no_build(self):
+        path = self.make_zip([("readme.txt", "x")])
+        with self.assertRaises(CLIError) as cm:
+            self.unpack(path)
+        self.assertEqual(cm.exception.code, 2)
+        self.assertFalse(os.path.exists(os.path.join(self.tmp, "site")))
+
+    def test_unpack_skips_traversal_absolute_symlink(self):
+        path = self.make_zip([("../evil", "x"), ("/etc/abs", "x"), ("a/../../evil2", "x"),
+                              ("ok/objects.inv", "x")], symlink="ok/link")
+        out, build = self.unpack(path)
+        self.assertEqual(build, os.path.join(out, "ok"))
+        self.assertEqual(os.listdir(build), ["objects.inv"])
+        self.assertFalse(os.path.exists(os.path.join(self.tmp, "evil")))
+        self.assertFalse(os.path.exists("/etc/abs"))
+        self.assertEqual(os.listdir(out), ["ok"])
+
+    def test_unpack_too_many_files(self):
+        path = self.make_zip([("d/f%d.html" % i, "x") for i in range(6)] + [("d/objects.inv", "x")])
+        with mock.patch.object(self.ba, "MAX_FILES", 5):
+            with self.assertRaises(CLIError) as cm:
+                self.unpack(path)
+        self.assertEqual(cm.exception.code, 2)
+        self.assertFalse(os.path.exists(os.path.join(self.tmp, "site")))
+        self.assertEqual([n for n in os.listdir(self.tmp) if n.startswith(".unpack")], [])
+
+    def test_unpack_too_big(self):
+        path = self.make_zip([("d/objects.inv", "x" * 100)])
+        with mock.patch.object(self.ba, "MAX_UNPACKED", 50):
+            with self.assertRaises(CLIError) as cm:
+                self.unpack(path)
+        self.assertEqual(cm.exception.code, 2)
+        self.assertFalse(os.path.exists(os.path.join(self.tmp, "site")))
+
+    def test_unpack_tar_gz(self):
+        import tarfile
+        path = os.path.join(self.tmp, "a.tar.gz")
+        src = os.path.join(self.tmp, "srcfile")
+        with open(src, "w") as f:
+            f.write("x")
+        with tarfile.open(path, "w:gz") as t:
+            t.add(src, arcname="top/objects.inv")
+            t.add(src, arcname="../evil")
+            link = tarfile.TarInfo("top/ln")
+            link.type = tarfile.SYMTYPE
+            link.linkname = "/etc/passwd"
+            t.addfile(link)
+        out, build = self.unpack(path)
+        self.assertEqual(os.listdir(build), ["objects.inv"])
+
+    def fetch_setup(self, body=b"PK-data"):
+        calls = []
+
+        def opener(url):
+            calls.append(url)
+            return (404, b"") if url.endswith("robots.txt") else (200, body)
+        src = open_url_source(opener=opener, sleep=lambda s: None, delay=0)
+        dest = os.path.join(self.tmp, "src")
+        return calls, src, dest
+
+    def test_fetch_archive_skips_when_unchanged(self):
+        calls, src, dest = self.fetch_setup()
+        url = "https://h.example/z/"
+        path, got = self.ba.fetch_archive(url, dest, src, False)
+        self.assertTrue(got)
+        self.assertEqual(open(path, "rb").read(), b"PK-data")
+        meta = json.load(open(os.path.join(dest, "archive.json")))
+        self.assertEqual(meta["url"], url)
+        self.assertEqual(meta["size"], 7)
+        self.assertEqual(meta["sha256"], hashlib.sha256(b"PK-data").hexdigest())
+        n = len(calls)
+        path2, got2 = self.ba.fetch_archive(url, dest, src, False)
+        self.assertFalse(got2)
+        self.assertEqual(path2, path)
+        self.assertEqual(len(calls), n)
+
+    def test_fetch_archive_refetch_and_changed(self):
+        calls, src, dest = self.fetch_setup()
+        url = "https://h.example/z/"
+        self.ba.fetch_archive(url, dest, src, False, head=lambda u: (200, {"content-length": "7"}))
+        self.assertFalse(self.ba.fetch_archive(
+            url, dest, src, False, head=lambda u: (200, {"content-length": "7"}))[1])
+        self.assertTrue(self.ba.fetch_archive(
+            url, dest, src, False, head=lambda u: (200, {"content-length": "9"}))[1])
+        self.assertTrue(self.ba.fetch_archive(url, dest, src, True)[1])
+
+    def test_fetch_archive_failure_raises(self):
+        src = open_url_source(opener=lambda u: (404, b""), sleep=lambda s: None, delay=0)
+        with self.assertRaises(FetchError):
+            self.ba.fetch_archive("https://h.example/z/", os.path.join(self.tmp, "s"), src, False)
+
+
 if __name__ == "__main__":
     unittest.main()
