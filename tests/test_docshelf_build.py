@@ -1412,6 +1412,46 @@ def f(x):
 """
 
 
+class FollowupMarkdownTests(unittest.TestCase):
+    check = MarkdownTests.check
+    norm = staticmethod(MarkdownTests.norm)
+
+    def test_blockquote_lazy(self):
+        self.check("> a\nb\n", "<blockquote><p>a\nb</p></blockquote>")
+
+    def test_mdx_exact_closer(self):
+        html = md_to_html("<Tabs>\n<Tab>x</Tab>\n</Tabs>")
+        self.assertIn("x", html)
+        self.assertNotIn("Tab", html)
+        self.assertNotIn("&lt;", html)
+        # </Tabs> must not count as the closer of an inline <Tab>
+        self.assertIn("&lt;Tab&gt;", md_to_html("see <Tab>x</Tabs> y"))
+
+    def test_list_indented_code(self):
+        html = md_to_html("- item\n\n      <Card />\n")
+        self.assertIn("<pre><code>&lt;Card /&gt;", html)
+
+    def test_emphasis_hostile_is_fast(self):
+        import time
+        for src in ("*a" * 20000, "_" * 50000):
+            t0 = time.monotonic()
+            md_to_html(src)
+            self.assertLess(time.monotonic() - t0, 1.0)
+
+    def test_emphasis_still_works(self):
+        self.check("*a* **b** _c_ __d__ ~~e~~",
+                   "<p><em>a</em> <strong>b</strong> <em>c</em> <strong>d</strong> <del>e</del></p>")
+
+    def test_deep_nesting_capped(self):
+        html = md_to_html("> " * 500 + "x")
+        self.assertIn("x", html)
+        lst = "\n".join("  " * k + "- " + ("x" if k == 499 else "i") for k in range(500))
+        self.assertIn("x", md_to_html(lst))
+        mdx = "\n".join("<C>" if False else "<Box>" for _ in range(500)) + "\nx\n" \
+            + "\n".join("</Box>" for _ in range(500))
+        self.assertIn("x", md_to_html(mdx))
+
+
 class SignalsTests(unittest.TestCase):
     def test_markdown_signals(self):
         self.assertEqual(page_signals(SIGNALS_MD, "md"), {

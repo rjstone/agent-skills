@@ -48,6 +48,7 @@ def _unique(slug: str, seen: Set[str]) -> str:
 
 # ---- MDX pre-pass ------------------------------------------------------
 
+MAX_DEPTH = 32  # nesting (lists, quotes, MDX components) deeper than this is plain text
 _FENCE = re.compile(r"^\s*(`{3,}|~{3,})")
 _TAG = re.compile(r"</?[A-Z][\w.]*")
 _ATTR = re.compile(r"""(\w+)=(?:"([^"]*)"|'([^']*)'|\{([^}]*)\})""")
@@ -92,6 +93,8 @@ def _mdx(lines: List[str]) -> List[str]:
     stack: List[Tuple[str, int]] = []
     fence = ""
     in_list = False
+    col = 0  # content column of the latest list item
+    extra = 0  # component tags opened beyond MAX_DEPTH, left as text
     i = 0
     while i < len(lines):
         line = lines[i]
@@ -124,14 +127,23 @@ def _mdx(lines: List[str]) -> List[str]:
             out.append(line)  # indented code: never scan for tags
             i += 1
             continue
+        if in_list and not stack and line.strip() and _indent(line) >= col + 4 \
+                and (not out or not out[-1].strip() or _indent(out[-1]) >= col + 4):
+            out.append(line)  # indented code inside a list item
+            i += 1
+            continue
         if line.strip():
-            in_list = bool(_LIST.match(line)) or (in_list and line.startswith(" "))
+            lm = _LIST.match(line)
+            if lm:
+                col = _content_col(lm)
+            in_list = bool(lm) or (in_list and line.startswith(" "))
         names = [s[0] for s in stack]
         tag = next((t for t in _TAG.finditer(line)
                     if not _in_code(line, t.start())
                     and (not line[:t.start()].strip()
                          or (t.group(0)[1] == "/" and t.group(0)[2:] in names)
-                         or "</%s" % t.group(0)[1:] in line[t.end():])), None)
+                         or re.search(r"</%s(?=[>\s])" % re.escape(t.group(0)[1:]),
+                                      line[t.end():]))), None)
         if tag is None:
             out.append(line)
             i += 1
@@ -150,6 +162,12 @@ def _mdx(lines: List[str]) -> List[str]:
         closing = tag.group(0).startswith("</")
         selfclose = raw.rstrip(">").rstrip().endswith("/")
         alone = not before.strip() and not after.strip()
+        if not selfclose and ((closing and extra and not (stack and stack[-1][0] == name))
+                              or (not closing and len(stack) >= MAX_DEPTH)):
+            extra += -1 if closing else 1
+            out.extend(lines[i:j + 1])  # over the depth cap: the tag stays text
+            i = j + 1
+            continue
         if closing:
             names = [s[0] for s in stack]
             if name in names:
@@ -199,6 +217,41 @@ _LINK = re.compile(r"\[((?:[^\[\]]|\[[^\]]*\])*)\]\(\s*([^\s()]*(?:\([^\s()]*\)[
 _IMG = re.compile(r"""!\[([^\]]*)\]\(\s*[^)\s]*(?:\s+(?:"[^"]*"|'[^']*'))?\s*\)""")
 
 
+# (opener, closer, delimiter length, tag): opener and closer are regex fragments tested
+# at one position each, so `_emph` pairs them in one linear pass
+_EMPH = [
+    (r"\*\*(?=\S)", r"(?<=\S)\*\*", 2, "strong"),
+    (r"(?<![\w])__(?=\S)", r"(?<=\S)__(?![\w])", 2, "strong"),
+    (r"(?<!\*)\*(?=[^\s*])", r"(?<=[^\s*])\*(?!\*)", 1, "em"),
+    (r"(?<![\w])_(?=[^\s_])", r"(?<=[^\s_])_(?![\w])", 1, "em"),
+    (r"~~(?=\S)", r"(?<=\S)~~", 2, "del"),
+]
+
+
+def _emph(text: str, opener: str, closer: str, n: int, tag: str) -> str:
+    """Wrap `opener ... closer` spans in <tag>, leftmost opener first, closest
+    closer at least one character later (what a lazy regex does), in linear time."""
+    ops = [m.start() for m in re.finditer("(?=%s)" % opener, text)]
+    if not ops:
+        return text
+    cls = [m.start() for m in re.finditer("(?=%s)" % closer, text)]
+    out: List[str] = []
+    pos = ci = 0
+    for p in ops:
+        if p < pos:
+            continue
+        while ci < len(cls) and cls[ci] < p + n + 1:
+            ci += 1
+        if ci == len(cls):
+            break
+        q = cls[ci]
+        out.append(text[pos:p])
+        out.append("<%s>%s</%s>" % (tag, text[p + n:q], tag))
+        pos = q + n
+    out.append(text[pos:])
+    return "".join(out)
+
+
 def _inline(text: str) -> str:
     stash: List[str] = []
 
@@ -235,13 +288,8 @@ def _inline(text: str) -> str:
         return keep("<a%s>" % attrs) + m.group(1) + keep("</a>")
 
     text = _LINK.sub(link, text)
-    text = re.sub(r"\*\*(?=\S)(.+?)(?<=\S)\*\*", r"<strong>\1</strong>", text, flags=re.S)
-    text = re.sub(r"(?<![\w])__(?=\S)(.+?)(?<=\S)__(?![\w])", r"<strong>\1</strong>",
-                  text, flags=re.S)
-    text = re.sub(r"(?<!\*)\*(?=[^\s*])(.+?)(?<=[^\s*])\*(?!\*)", r"<em>\1</em>", text, flags=re.S)
-    text = re.sub(r"(?<![\w])_(?=[^\s_])(.+?)(?<=[^\s_])_(?![\w])", r"<em>\1</em>",
-                  text, flags=re.S)
-    text = re.sub(r"~~(?=\S)(.+?)(?<=\S)~~", r"<del>\1</del>", text, flags=re.S)
+    for opener, closer, n, tag in _EMPH:
+        text = _emph(text, opener, closer, n, tag)
     text = re.sub(r"(?: {2,}|\\)\n", lambda m: keep("<br>"), text)
     return re.sub(r"\x00(\d+)\x00", lambda m: stash[int(m.group(1))], text)
 
@@ -249,6 +297,13 @@ def _inline(text: str) -> str:
 # ---- blocks ------------------------------------------------------------
 
 _LIST = re.compile(r"^( *)([-*+]|\d{1,9}[.)])( +|$)(.*)$")
+
+
+def _content_col(m) -> int:
+    """Column where the text of the list item matched by `_LIST` starts."""
+    return len(m.group(1)) + len(m.group(2)) + (min(len(m.group(3)), 4) or 1)
+
+
 _HR = re.compile(r"^ {0,3}([-*_])(?:[ \t]*\1){2,}[ \t]*$")
 _ATX = re.compile(r"^ {0,3}(#{1,6})(?:[ \t]+(.*?))?(?:[ \t]+#+)?[ \t]*$")
 _BLOCK_FENCE = re.compile(r"^( {0,3})(`{3,}|~{3,})[ \t]*([^\s`]*)[^`]*$")
@@ -275,6 +330,15 @@ def _starts_block(ln: str) -> bool:
                                               or m.group(2)[:-1] == "1"))
 
 
+def _lazy_ok(inner: List[str]) -> bool:
+    """True when the quote's last line is paragraph text a bare line may continue."""
+    last = inner[-1] if inner else ""
+    if not last.strip() or last.startswith("    ") or _ATX.match(last) or _HR.match(last) \
+            or _HTML_BLOCK.match(last) or _SETEXT.match(last):
+        return False
+    return sum(1 for x in inner if _BLOCK_FENCE.match(x)) % 2 == 0
+
+
 def _is_table(lines: List[str], i: int) -> bool:
     return (i + 1 < len(lines) and "|" in lines[i] and "|" in lines[i + 1]
             and bool(_DELIM.match(lines[i + 1])))
@@ -295,7 +359,7 @@ def _heading(level: int, text: str, seen: Set[str]) -> str:
     return "<h%d%s>%s</h%d>" % (level, ident, _inline(text), level)
 
 
-def _list(lines: List[str], i: int, seen: Set[str]) -> Tuple[str, int]:
+def _list(lines: List[str], i: int, seen: Set[str], depth: int = 0) -> Tuple[str, int]:
     first = _LIST.match(lines[i])
     ind, ordered = len(first.group(1)), first.group(2)[0].isdigit()
     start = int(first.group(2)[:-1]) if ordered else 1
@@ -305,7 +369,7 @@ def _list(lines: List[str], i: int, seen: Set[str]) -> Tuple[str, int]:
         m = _LIST.match(lines[i])
         if not m or len(m.group(1)) != ind or m.group(2)[0].isdigit() != ordered:
             break
-        off = ind + len(m.group(2)) + (min(len(m.group(3)), 4) or 1)
+        off = _content_col(m)
         item = [m.group(4)]
         i += 1
         while i < n:
@@ -340,13 +404,16 @@ def _list(lines: List[str], i: int, seen: Set[str]) -> Tuple[str, int]:
             else:
                 break
         items.append(item)
-    body = "\n".join("<li>%s</li>" % _blocks(it, seen, not loose) for it in items)
+    body = "\n".join("<li>%s</li>" % _blocks(it, seen, not loose, depth + 1) for it in items)
     tag = "ol" if ordered else "ul"
     attr = ' start="%d"' % start if ordered and start != 1 else ""
     return "<%s%s>\n%s\n</%s>" % (tag, attr, body, tag), i
 
 
-def _blocks(lines: List[str], seen: Set[str], tight: bool = False) -> str:
+def _blocks(lines: List[str], seen: Set[str], tight: bool = False, depth: int = 0) -> str:
+    if depth >= MAX_DEPTH:  # too deep: keep the text, drop the structure
+        text = _esc("\n".join(lines).strip())
+        return text if tight else "<p>%s</p>" % text
     out: List[str] = []
     i, n = 0, len(lines)
     while i < n:
@@ -389,13 +456,19 @@ def _blocks(lines: List[str], seen: Set[str], tight: bool = False) -> str:
             continue
         if re.match(r"^ {0,3}>", ln):
             inner: List[str] = []
-            while i < n and re.match(r"^ {0,3}>", lines[i]):
-                inner.append(re.sub(r"^ {0,3}> ?", "", lines[i]))
+            while i < n:
+                if re.match(r"^ {0,3}>", lines[i]):
+                    inner.append(re.sub(r"^ {0,3}> ?", "", lines[i]))
+                elif lines[i].strip() and not _starts_block(lines[i]) \
+                        and _lazy_ok(inner):
+                    inner.append(lines[i])  # lazy continuation of the quoted paragraph
+                else:
+                    break
                 i += 1
-            out.append("<blockquote>\n%s\n</blockquote>" % _blocks(inner, seen))
+            out.append("<blockquote>\n%s\n</blockquote>" % _blocks(inner, seen, False, depth + 1))
             continue
         if _LIST.match(ln):
-            html, i = _list(lines, i, seen)
+            html, i = _list(lines, i, seen, depth)
             out.append(html)
             continue
         if _is_table(lines, i):
@@ -495,7 +568,7 @@ def _md_signals(text: str) -> Dict[str, object]:
     lines: List[_Line] = []
     headings = tables = steps = 0
     fence = ""
-    prev, in_list = "", False  # prev: kind of the previous line
+    prev, in_list, col = "", False, 0  # prev: kind of the previous line
     for i, raw in enumerate(src):
         m = _FENCE.match(raw)
         if fence:
@@ -518,6 +591,10 @@ def _md_signals(text: str) -> Dict[str, object]:
             continue
         line = raw.replace("\t", "    ")
         if line.startswith("    ") and prev in ("blank", "icode") and not in_list:
+            lines.append((line, "code"))
+            prev = "icode"
+            continue
+        if in_list and _indent(line) >= col + 4 and prev in ("blank", "icode"):
             lines.append((line, "code"))
             prev = "icode"
             continue
@@ -550,7 +627,10 @@ def _md_signals(text: str) -> Dict[str, object]:
             prev = "tablerow"
         else:
             prev = "text"
-        in_list = bool(_LIST.match(line)) or (in_list and line.startswith(" "))
+        lm = _LIST.match(line)
+        if lm:
+            col = _content_col(lm)
+        in_list = bool(lm) or (in_list and line.startswith(" "))
         lines.append((line, kind))
     return _score(lines, headings, tables, steps)
 
