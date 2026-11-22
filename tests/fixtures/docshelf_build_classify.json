@@ -1,5 +1,5 @@
 {
- "note": "Hand-labelled calibration sample for docshelf-build classify (2026-11-22). Pages from the 0.2.0 trial's llms.txt docvols: langchain = docs.langchain.com build/python.txt, opencode = opencode.ai llms.txt; picked as a spread over each sorted key list (every third langchain page, every other opencode page with signals). label 'reference': an agent looks things up in it (API pages, parameters, options, config keys, error lists, CLI flags, integration pages that are mostly signatures and settings). label 'guide': tutorials, concepts, overviews, how-tos told in steps, marketing, legal, status, changelogs and release notes. A page that is both goes by what most of it is. Labels were read from each cached page, not from the signals; signals are copied from the plan. No page text.",
+ "note": "Hand-labelled calibration sample for docshelf-build classify (2026-11-22). Pages from the 0.2.0 trial's llms.txt docvols: langchain = docs.langchain.com build/python.txt, opencode = opencode.ai llms.txt; picked as a spread over each sorted key list (the langchain plan has a single section, \"Python\", so its spread is by key prefix) (every third langchain page, every other opencode page with signals). label 'reference': an agent looks things up in it (API pages, parameters, options, config keys, error lists, CLI flags, integration pages that are mostly signatures and settings). label 'guide': tutorials, concepts, overviews, how-tos told in steps, marketing, legal, status, changelogs and release notes. A page that is both goes by what most of it is. Labels were read from each cached page, not from the signals; signals are copied from the plan. No page text.",
  "pages": [
   {
    "site": "langchain",
@@ -480,7 +480,7 @@
   {
    "site": "langchain",
    "key": "oss/python/integrations/providers/anthropic",
-   "label": "reference",
+   "label": "guide",
    "signals": {
     "code_ratio": 0.0,
     "headings": 2,
@@ -494,7 +494,7 @@
   {
    "site": "langchain",
    "key": "oss/python/integrations/providers/fireworks",
-   "label": "reference",
+   "label": "guide",
    "signals": {
     "code_ratio": 0.083,
     "headings": 2,
@@ -508,7 +508,7 @@
   {
    "site": "langchain",
    "key": "oss/python/integrations/providers/huggingface",
-   "label": "reference",
+   "label": "guide",
    "signals": {
     "code_ratio": 0.106,
     "headings": 10,
@@ -522,7 +522,7 @@
   {
    "site": "langchain",
    "key": "oss/python/integrations/providers/ollama",
-   "label": "reference",
+   "label": "guide",
    "signals": {
     "code_ratio": 0.0,
     "headings": 2,
@@ -998,7 +998,7 @@
   {
    "site": "langchain",
    "key": "oss/python/langgraph/pregel",
-   "label": "reference",
+   "label": "guide",
    "signals": {
     "code_ratio": 0.096,
     "headings": 9,
