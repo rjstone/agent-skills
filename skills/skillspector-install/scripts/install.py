@@ -14,7 +14,7 @@ import sys
 import tempfile
 import urllib.request
 
-VERSION = "0.1.0"
+VERSION = "0.1.1"
 DEFAULT_REF = "v2.13.6"
 UV_VERSION = "0.11.32"
 SKILLS_CLI = "skills@1.9.0"
@@ -116,14 +116,50 @@ def installed_version(path):
     return m.group(1) if m else None
 
 
+def mcp_extra_installed(uv):
+    """True when `uv tool list --show-extras` shows skillspector with [mcp]."""
+    try:
+        out = subprocess.run(  # nosec B603
+            [uv, "tool", "list", "--show-extras"], capture_output=True, text=True,
+            timeout=120, check=False,
+        ).stdout
+    except (OSError, subprocess.TimeoutExpired):
+        return False
+    for line in out.splitlines():
+        if line.startswith("skillspector "):
+            m = re.search(r"\[extras: ([^\]]*)\]", line)
+            return bool(m) and "mcp" in [e.strip() for e in m.group(1).split(",")]
+    return False
+
+
+def mcp_registered():
+    """True when the claude CLI already has an MCP server named skillspector."""
+    claude = shutil.which("claude")
+    if not claude:
+        return False
+    try:
+        return subprocess.run(  # nosec B603
+            [claude, "mcp", "get", "skillspector"], capture_output=True, text=True,
+            timeout=120, check=False,
+        ).returncode == 0
+    except (OSError, subprocess.TimeoutExpired):
+        return False
+
+
 def install_scanner(args, uv):
     want = args.ref.lstrip("v")
     path, _ = scanner_path(uv, args.dry_run)
     have = installed_version(path)
-    if have == want and not args.force and not args.install_mcp:
+    has_extra = bool(have) and mcp_extra_installed(uv)
+    # A reinstall without [mcp] would break an MCP server registered earlier.
+    keep_mcp = not args.install_mcp and (has_extra or mcp_registered())
+    want_mcp = args.install_mcp or keep_mcp
+    if have == want and not args.force and (has_extra or not want_mcp):
         log(f"skillspector {have} already installed at {path}; skipping (--force reinstalls)")
-        return path
-    extra = "[mcp]" if args.install_mcp else ""
+        return path or "skillspector"
+    if keep_mcp:
+        log("keeping the [mcp] extra (installed before, or an MCP server named skillspector exists)")
+    extra = "[mcp]" if want_mcp else ""
     spec = f"skillspector{extra} @ git+{REPO}@{args.ref}"
     cmd = [uv, "tool", "install", "--python", args.python]
     if have or args.force:
@@ -161,11 +197,7 @@ def install_mcp(args, scanner):
     if not claude:
         raise StepError("claude CLI not found; add the MCP server to your agent by hand: "
                         f"command `{scanner} mcp` (stdio)")
-    exists = False
-    if not args.dry_run:
-        exists = subprocess.run(  # nosec B603
-            [claude, "mcp", "get", "skillspector"], capture_output=True, text=True, check=False
-        ).returncode == 0
+    exists = False if args.dry_run else mcp_registered()
     if exists and not args.force:
         log("MCP server `skillspector` already configured; skipping (--force replaces it)")
         return
