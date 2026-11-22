@@ -13,16 +13,21 @@ SOURCE.
 ## The loop
 
 1. `plan SOURCE --name NAME` prints the index tree and page counts. A large
-   site (over 300 full pages warns) is worth narrowing before building:
-   plan a sub-index as SOURCE with its own `--name`, or add
-   `--stub 'group/*'`. Patterns are shell globs on page keys, later ones
-   win, and they are kept in the plan (`--reset` clears them).
+   site (over 300 full pages warns) is narrowed by planning a sub-index as
+   SOURCE, with its own `--name`. Use `--stub 'group/*'` for whole groups
+   the user plainly does not want (another language's SDK, a product they
+   do not use). Patterns are shell globs on page keys, later ones win, and
+   they are kept in the plan (`--reset` clears them).
 2. `build NAME` downloads the pages (one request at a time, robots.txt
    honoured) into a page cache (`built-src/NAME` in the docshelf cache) and
    writes the docvol. A page served as HTML is retried at its `.md` URL. A
    page that fails keeps its cached copy, or becomes a stub with the error,
    and the plan records `fetch_error`.
-3. Look things up with docshelf: `search WORDS -d NAME`, `show NAME:PAGE`.
+3. When the user wants reference only (no tutorials or guides), run
+   `classify NAME` next. It reads each fetched page, which sorts better
+   than guessing from paths. The steps are under "Sorting reference from
+   tutorials".
+4. Look things up with docshelf: `search WORDS -d NAME`, `show NAME:PAGE`.
 
 `build SOURCE --name NAME [plan options]` does 1 and 2 in one step. Plan
 options go with `plan` or with a SOURCE, never with `build NAME`.
