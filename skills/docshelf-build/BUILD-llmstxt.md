@@ -53,7 +53,10 @@ loop:
    signals and a short preview from the cache.
 3. Write one line for every listed review page to a file: `full KEY` to
    keep it, `stub KEY [short description]` to drop it. A page without a
-   line stays in review and is listed again.
+   line stays in review and is listed again. After reviewing what you can,
+   `full REST` or `stub REST` sets every page still listed (the key REST,
+   no description; explicit lines win). A description stays until a new one
+   is given.
 4. `classify NAME --apply FILE --model YOUR_MODEL_ID` (`-` reads stdin);
    it stores `"why": "model:<id>"` and reports skipped lines.
 5. `classify NAME` again, until it says nothing is left to review. (Pages

@@ -1804,6 +1804,14 @@ class ClassifyCliTests(unittest.TestCase):
         self.assertIn("line 1:", out)
         self.assertIn("applied 0", out)
 
+    def test_rest_counts_as_applied(self):
+        self.built()
+        path = self.write_choices("full REST\n")
+        code, out, _ = self.run_main("classify", "site", "--apply", path, "--model", "t")
+        self.assertEqual(code, 0)
+        self.assertIn("REST: 3 pages set to full", out)
+        self.assertIn("left for review: 0", out)
+
     def test_replan_keeps_choices(self):
         self.built()
         self.run_main("classify", "site")
@@ -1987,6 +1995,60 @@ class ClassifyApplyTests(unittest.TestCase):
         n, _ = apply_choices(plan, [(1, "stub", "a", None)], "new")
         self.assertEqual(n, 1)
         self.assertEqual(plan["pages"]["a"]["why"], "model:new")
+
+    def rest_plan(self):
+        return {"kind": "llms", "pages": {
+            "a": {"keep": "full", "why": "llms: all", "signals": {}},
+            "b": {"keep": "full", "why": "llms: all", "signals": {}},
+            "r": {"keep": "full", "why": RULES_ID, "signals": {}},
+            "ag": {"keep": "full", "why": "model:old", "signals": {}},
+            "pe": {"keep": "full", "why": "manual", "signals": {}},
+            "ns": {"keep": "full", "why": "llms: all"}}}
+
+    def test_rest_full_sets_only_review_pages(self):
+        plan = self.rest_plan()
+        ch, err = parse_choices("full REST\n")
+        self.assertEqual(err, [])
+        n, msgs = apply_choices(plan, ch, "t")
+        self.assertEqual(n, 2)
+        self.assertEqual(msgs, ["REST: 2 pages set to full"])
+        for k in ("a", "b"):
+            self.assertEqual(plan["pages"][k]["why"], "model:t")
+        self.assertEqual(plan["pages"]["r"]["why"], RULES_ID)
+        self.assertEqual(plan["pages"]["ag"]["why"], "model:old")
+        self.assertEqual(plan["pages"]["pe"]["why"], "manual")
+        self.assertEqual(plan["pages"]["ns"]["why"], "llms: all")
+
+    def test_rest_stub_and_explicit_lines_win_in_either_order(self):
+        for text in ("full a\nstub REST\n", "stub REST\nfull a\n"):
+            plan = self.rest_plan()
+            ch, _ = parse_choices(text)
+            n, _ = apply_choices(plan, ch, "t")
+            self.assertEqual(n, 2)
+            self.assertEqual(plan["pages"]["a"]["keep"], "full")
+            self.assertEqual(plan["pages"]["b"]["keep"], "stub")
+
+    def test_rest_with_description_is_an_error(self):
+        ch, err = parse_choices("stub REST dropped\nfull a\n")
+        self.assertEqual(err, ["line 1: REST takes no description"])
+        self.assertEqual(ch, [(2, "full", "a", None)])
+
+    def test_real_page_named_rest_still_means_bulk(self):
+        plan = self.rest_plan()
+        plan["pages"]["REST"] = {"keep": "full", "why": "llms: all", "signals": {}}
+        ch, _ = parse_choices("stub REST\n")
+        apply_choices(plan, ch, "t")
+        self.assertEqual(plan["pages"]["REST"]["keep"], "stub")
+        self.assertEqual(plan["pages"]["a"]["keep"], "stub")
+
+    def test_last_write_wins_and_description_stays(self):
+        plan = {"kind": "llms", "pages": {"a/b": {"keep": "full", "why": "llms: all"}}}
+        ch, _ = parse_choices("stub a/b First\nfull a/b\n")
+        n, _ = apply_choices(plan, ch, "t")
+        self.assertEqual(n, 2)
+        page = plan["pages"]["a/b"]
+        self.assertEqual((page["keep"], page["why"], page["description"]),
+                         ("full", "model:t", "First"))
 
 
 if __name__ == "__main__":

@@ -129,6 +129,7 @@ def review_lines(plan: Dict, get_raw: Callable[[str], Optional[Tuple[str, str]]]
 
 def parse_choices(text: str) -> Tuple[List[Tuple[int, str, str, Optional[str]]], List[str]]:
     """Parse an agent's choices: `full KEY` or `stub KEY [description]` per line.
+    The key REST (upper case, no description) means every page still in review.
     Returns (line number, keep, key, description or None) tuples and errors."""
     choices: List[Tuple[int, str, str, Optional[str]]] = []
     errors: List[str] = []
@@ -141,17 +142,26 @@ def parse_choices(text: str) -> Tuple[List[Tuple[int, str, str, Optional[str]]],
             errors.append("line %d: expected 'full KEY' or 'stub KEY [description]'" % n)
             continue
         desc = parts[2].strip() if len(parts) > 2 else ""
+        if parts[1] == "REST" and desc:
+            errors.append("line %d: REST takes no description" % n)
+            continue
         choices.append((n, parts[0], parts[1], desc or None))
     return choices, errors
 
 
 def apply_choices(plan: Dict, choices, model_id: str) -> Tuple[int, List[str]]:
     """Apply parsed choices to the plan; the last line for a key wins.
-    Pages decided by a person are refused. Returns (applied, messages)."""
+    Pages decided by a person are refused. A REST line is applied last, to the
+    pages still in review (even if a page is really named REST); a later line
+    without a description keeps the earlier one. Returns (applied, messages)."""
     pages = plan.get("pages", {})
     applied = 0
     messages: List[str] = []
+    rest = None
     for n, keep, key, desc in choices:
+        if key == "REST":
+            rest = keep
+            continue
         page = pages.get(key)
         if page is None:
             messages.append("line %d: %s: unknown page" % (n, key))
@@ -166,4 +176,11 @@ def apply_choices(plan: Dict, choices, model_id: str) -> Tuple[int, List[str]]:
         if desc is not None:
             page["description"] = desc
         applied += 1
+    if rest is not None:
+        todo = [p for p in pages.values() if bucket(p) == "review"]
+        for page in todo:
+            page["keep"] = rest
+            page["why"] = "model:" + model_id
+        applied += len(todo)
+        messages.append("REST: %d pages set to %s" % (len(todo), rest))
     return applied, messages
