@@ -5,7 +5,7 @@ import os
 import urllib.parse
 from typing import Callable, List, NamedTuple, Optional, Tuple
 
-from build_archive import find_archive
+from build_archive import find_source_archive
 from build_fetch import FetchError, looks_html, normalize_source, open_url_source
 from build_llms import parse_index
 
@@ -55,14 +55,6 @@ def _candidates(src: str) -> Tuple[List[str], List[str], bool]:
     return [os.path.join(folder, "objects.inv")], llms, False
 
 
-def _quiet_get(fetch, url: str) -> Tuple[int, bytes]:
-    """(status, body) of a GET through the Source; (0, b"") on any failure."""
-    try:
-        return fetch._get(url)
-    except FetchError:
-        return 0, b""
-
-
 def detect(src: str, opener=None, sleep: Optional[Callable[[float], None]] = None) -> Detection:
     """Look for objects.inv and llms.txt at src (a URL or local path) and
     pick the build type: Sphinx first, then llms.txt, else none."""
@@ -109,7 +101,7 @@ def detect(src: str, opener=None, sleep: Optional[Callable[[float], None]] = Non
         source = where
     archive = None
     if kind == "sphinx" and fetch is not None:
-        archive = find_archive(source, lambda u: _quiet_get(fetch, u), fetch.head_url)
+        archive = find_source_archive(fetch, source)
     return Detection(kind, source, found, tried, archive)
 
 

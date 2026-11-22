@@ -11,7 +11,7 @@ from typing import Callable, List, Optional
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
-from build_archive import _find_build, fetch_archive, find_archive, unpack  # noqa: E402
+from build_archive import fetch_archive, find_build, find_source_archive, unpack  # noqa: E402
 from build_detect import describe, detect, offline  # noqa: E402
 from build_classify import apply_choices, counts, parse_choices, review_lines, run_rules  # noqa: E402
 from build_core import (NAME_RE, VERSION, CLIError, built_dir, cache_dir, plans_dir, src_dir,  # noqa: E402
@@ -62,20 +62,6 @@ def _summary_tail(path: str) -> None:
     print("plan: %s (edit \"keep\" and set \"why\": \"manual\" to pin a page)" % path)
 
 
-def _quiet_get(source, url: str):
-    """(status, body) of a GET through the Source; (0, b"") on any failure."""
-    try:
-        return source._get(url)
-    except FetchError:
-        return 0, b""
-
-
-def _find_archive(source):
-    if not source.is_url:
-        return None
-    return find_archive(source.base, lambda u: _quiet_get(source, u), source.head_url)
-
-
 def do_plan_llms(cache: str, args, opener, sleep) -> str:
     if args.base_url:
         raise CLIError("--base-url is only for Sphinx sources", 2)
@@ -116,7 +102,7 @@ def do_plan(cache: str, args, opener=None, sleep=None) -> str:
     overrides = list(args.overrides or [])
     plan = make_plan(source.base, sha, header, entries, overrides, old=old,
                      reset=args.reset, base_url=args.base_url)
-    archive = _find_archive(source)
+    archive = find_source_archive(source)
     if archive:
         plan["archive"] = archive
     save_plan(path, plan)
@@ -195,12 +181,11 @@ def _archive_source(cache: str, name: str, plan: dict, source, refetch: bool):
     os.makedirs(dest, exist_ok=True)
     site = os.path.join(dest, "site")
     try:
-        warn("using the HTML archive %s" % plan["archive"])
         path, fresh = fetch_archive(plan["archive"], dest, source, refetch, source.head_url)
         if fresh or not os.path.isdir(site):
             build = unpack(path, site)
         else:
-            build = _find_build(site) or site
+            build = find_build(site) or site
         return open_source(build, base_url=source.base)
     except (FetchError, CLIError) as e:
         warn("archive not used (%s); fetching page by page" % getattr(e, "reason", e))

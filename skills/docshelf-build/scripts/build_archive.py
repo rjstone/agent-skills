@@ -76,6 +76,14 @@ def find_archive(site_url: str, get: Getter, head: Optional[Header] = None) -> O
     return probe if status == 200 else None
 
 
+def find_source_archive(source: Source, site_url: Optional[str] = None) -> Optional[str]:
+    """find_archive for a URL Source (site_url defaults to its base), every
+    request through the Source (robots.txt honoured); None for a local folder."""
+    if not source.is_url:
+        return None
+    return find_archive(site_url or source.base, source.get_quiet, source.head_url)
+
+
 def _sha256(data: bytes) -> str:
     return hashlib.sha256(data).hexdigest()
 
@@ -203,7 +211,7 @@ def _untar(path: str, tmp: str) -> None:
                 total = _copy_capped(src, dest, total)
 
 
-def _find_build(root: str) -> Optional[str]:
+def find_build(root: str) -> Optional[str]:
     best = None
     for dirpath, dirnames, filenames in os.walk(root):
         dirnames.sort()
@@ -238,7 +246,7 @@ def unpack(archive_path: str, out_dir: str) -> str:
                 _untar(archive_path, tmp)
         except (zipfile.BadZipFile, tarfile.TarError, EOFError, OSError) as e:
             raise CLIError("cannot unpack the archive: %s" % e, 2)
-        build = _find_build(tmp)
+        build = find_build(tmp)
         if build is None:
             raise CLIError("no build (objects.inv or index.html) in the archive", 2)
         rel = os.path.relpath(build, tmp)

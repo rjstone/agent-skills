@@ -35,8 +35,11 @@ archive is the exception: a fast path with a page-by-page fallback.
   `Content-Length` or `Last-Modified` from the stored ones. The build summary
   says how many pages came from the archive and how many over HTTP.
 - **Safe unpacking:** zip (and `.tar.gz`/`.tgz` if a URL ends so): skip
-  absolute names, `..` parts, links and anything not a regular file; abort
-  (exit 2, nothing written) over 500 MB unpacked or 50,000 files.
+  absolute names, `..` parts, links and anything not a regular file; over
+  500 MB unpacked or 50,000 files the unpack fails with nothing written
+  (no `site/`). `build` then skips the archive with a warning and fetches
+  page by page, as it does for an archive that cannot be downloaded or
+  unpacked at all (corrupt, wrong format) (controller ruling, 2026-11-22).
 - **detect:** prints `archive: URL` as an extra line when found; the type
   stays `sphinx`.
 - **Docs:** `BUILD-sphinx.md` one short paragraph; `SKILL.md` no change;

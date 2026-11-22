@@ -160,6 +160,17 @@ class Source:
             raise FetchError(url, _status_text(status))
         return body
 
+    def get_quiet(self, url: str) -> Tuple[int, bytes]:
+        """(status, body) of a GET after the robots.txt check; (0, b"") when
+        robots.txt blocks it, the URL is invalid or the request fails. Never
+        raises."""
+        try:
+            if not self._allowed(url):
+                return 0, b""
+            return self._get(url)
+        except (ValueError, FetchError):
+            return 0, b""
+
     def head_url(self, url: str) -> Tuple[int, Dict[str, str]]:
         """(status, lower-cased headers) of a HEAD after the robots.txt check;
         (0, {}) when robots.txt blocks it, the URL is invalid, or this Source

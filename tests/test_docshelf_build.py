@@ -2567,7 +2567,7 @@ class ArchiveCliTests(unittest.TestCase):
     def opener(self, url):
         self.urls.append(url)
         if url.endswith("/robots.txt"):
-            return 404, b""
+            return self.site.get(url, (404, b""))
         return self.site.get(url, (404, b""))
 
     def run_main(self, *argv):
@@ -2628,6 +2628,73 @@ class ArchiveCliTests(unittest.TestCase):
         self.assertEqual(self.run_main("detect", self.BASE)[1].count("archive"), 0)
         code, out, _ = self.run_main("build", "demo")
         self.assertEqual(len(self.page_urls()), 5)
+
+    def build_with(self, *argv, head=None):
+        """run_main with a HEAD-capable opener (open_source gets head_opener)."""
+        import build_fetch
+        real = build_fetch.open_source
+
+        def patched(*a, **k):
+            return real(*a, head_opener=head, **k)
+        with mock.patch.object(docshelf_build, "open_source", patched):
+            return self.run_main(*argv)
+
+    def assert_page_by_page(self, code, out, err):
+        self.assertEqual(code, 0, err)
+        self.assertIn("archive not used", err)
+        self.assertEqual(len(self.page_urls()), 5)
+        self.assertNotIn("from the archive", out)
+        self.assertFalse(os.path.exists(os.path.join(self.cache, "built-src", "demo",
+                                                     "archive", "site")))
+
+    def test_corrupt_archive_falls_back(self):
+        self.site[self.ZIP] = (200, b"PK\x03\x04 not really a zip")
+        self.run_main("plan", self.BASE, "--name", "demo", "--all")
+        self.urls.clear()
+        self.assert_page_by_page(*self.run_main("build", "demo"))
+
+    def test_over_cap_archive_falls_back(self):
+        import build_archive
+        self.run_main("plan", self.BASE, "--name", "demo", "--all")
+        self.urls.clear()
+        with mock.patch.object(build_archive, "MAX_FILES", 2):
+            self.assert_page_by_page(*self.run_main("build", "demo"))
+
+    def test_failed_archive_download_falls_back(self):
+        self.run_main("plan", self.BASE, "--name", "demo", "--all")
+        self.site[self.ZIP] = (404, b"")
+        self.urls.clear()
+        self.assert_page_by_page(*self.run_main("build", "demo"))
+
+    def test_rebuild_downloads_again_on_changed_headers_only(self):
+        headers = {"content-length": "1", "last-modified": "Mon, 01 Jan 2024 00:00:00 GMT"}
+
+        def head(url):
+            return (200, dict(headers)) if url == self.ZIP else (0, {})
+        self.build_with("build", self.BASE, "--name", "demo", "--all", head=head)
+        headers["content-length"] = str(len(self.site[self.ZIP][1]))  # stored size is real
+        self.urls.clear()
+        self.build_with("build", "demo", head=head)
+        self.assertNotIn(self.ZIP, self.urls)
+        headers["last-modified"] = "Tue, 02 Jan 2024 00:00:00 GMT"
+        self.urls.clear()
+        self.build_with("build", "demo", head=head)
+        self.assertIn(self.ZIP, self.urls)
+        headers["content-length"] = "999999"
+        self.urls.clear()
+        self.build_with("build", "demo", head=head)
+        self.assertIn(self.ZIP, self.urls)
+
+    def test_robots_disallow_means_no_request_to_the_api(self):
+        api = "https://readthedocs.org/api/v3/projects/demo/versions/latest/"
+        self.site["https://readthedocs.org/robots.txt"] = (200, b"User-agent: *\nDisallow: /\n")
+        code, out, err = self.run_main("plan", self.BASE, "--name", "demo", "--all")
+        self.assertEqual(code, 0, err)
+        self.assertNotIn(api, self.urls)
+        self.assertNotIn("archive", out)
+        self.run_main("detect", self.BASE)
+        self.assertNotIn(api, self.urls)
+
 
     def test_remove_deletes_the_archive_folder(self):
         self.run_main("build", self.BASE, "--name", "demo", "--all")
