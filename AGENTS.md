@@ -285,6 +285,19 @@ metadata:
   boundary against hostile code; `references/limits.md` names stronger
   tools (the user, 2026-11-18). Bind sources must be readable by the
   sandbox user (a root-only scratch folder is not).
+- `skillspector-install` - installs NVIDIA SkillSpector (the `skillspector`
+  scanner, via `uv tool install`) and its upstream `skill-inspector` skill
+  (via a pinned `npx skills@X add`) from one pinned tag, with
+  `scripts/install.py` (stdlib; installs uv from its GitHub release if
+  missing, `--install-mcp` adds the `[mcp]` extra and `claude mcp add`).
+  Only the installer is ours: usage lives in `skill-inspector` upstream,
+  which deliberately doesn't install anything, so `SKILL.md` points there.
+  Remove this skill if upstream adds its own installer (the user,
+  2026-11-22). Bump `DEFAULT_REF`, `SKILLS_CLI` and `UV_VERSION` together
+  with `metadata.version`, after a real install and a
+  `skillspector scan skills/skillspector-install --no-llm` (0.1.0: CAUTION,
+  only subprocess calls and no `allowed-tools`, which is left out so the
+  installer's commands still need approval).
 
 ## Testing skills with small models
 
