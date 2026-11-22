@@ -1,0 +1,24 @@
+# SkillSpector baseline for skills/opencode-console (accepted findings).
+# Used by scripts/skillspector_ci.py (CI: .github/workflows/skillspector.yml).
+# Glob rules match rule id, a path relative to the skill folder, and an
+# optional message glob (the finding text). Every rule needs a reason.
+# Accept only findings you checked in context; scope AE1 (coverage gap)
+# rules to one file so a new gap still fails CI. Format: upstream
+# docs/SUPPRESSION.md.
+version: 2
+rules:
+  - id: "AS1"
+    path: "CLI.md"
+    reason: "Our summary of the @opencode/console CLI, which writes harness config (~/.codex/config.toml) when the user runs its setup command; documented, not done by the skill"
+  - id: "AS1"
+    path: "references/harnesses-*.md"
+    reason: "Vendored upstream docs (references/ is downloaded, never hand-edited): harness setup pages name the config files (~/.claude/settings.json, ~/.codex/config.toml) the user edits"
+  - id: "EA5"
+    path: "references/harnesses-*.md"
+    reason: "Vendored upstream docs (references/ is downloaded, never hand-edited): example commands choosing a model (claude --model ..., codex --model ...)"
+  - id: "E4"
+    path: "references/go.md"
+    reason: "Vendored upstream docs (references/ is downloaded, never hand-edited): table of which harnesses send a session header to OpenCode Go"
+  - id: "RA1"
+    path: "CLI.md"
+    reason: "Documents that the @opencode/console binary updates itself and how to turn that off; the skill modifies nothing"

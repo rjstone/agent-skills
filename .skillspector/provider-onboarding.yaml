@@ -1,0 +1,19 @@
+# SkillSpector baseline for skills/provider-onboarding (accepted findings).
+# Used by scripts/skillspector_ci.py (CI: .github/workflows/skillspector.yml).
+# Glob rules match rule id, a path relative to the skill folder, and an
+# optional message glob (the finding text). Every rule needs a reason.
+# Accept only findings you checked in context; scope AE1 (coverage gap)
+# rules to one file so a new gap still fails CI. Format: upstream
+# docs/SUPPRESSION.md.
+version: 2
+rules:
+  - id: "AE1"
+    path: "SKILL.md"
+    message: "*scripts/lookup.py (partial)*"
+    reason: "Coverage gap: SkillSpector's bounded static parser (tool-misuse analyzer) stops on long expressions in this file; scanner limit, not a finding in the file"
+  - id: "PE3"
+    path: "scripts/lookup.py"
+    reason: "Advice text suggesting a .env file for a key variable name; nothing reads .env"
+  - id: "YR1"
+    path: "scripts/lookup.py"
+    reason: "YARA match on unrelated parts: ngrok.io is one entry in SHARED_HOSTS (domain parsing), the env read is MODELS_DEV_URLS, and fetches go to the documented price/model sources"

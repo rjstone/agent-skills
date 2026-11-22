@@ -1,0 +1,70 @@
+# SkillSpector: NVIDIA's security scanner for agent skills. Every skill is
+# scanned statically (--no-llm: no keys, no cost) with its baseline
+# .skillspector/<skill>.yaml (accepted findings, each with a reason), the
+# reports are merged into one SARIF run for the Security tab (category
+# "skillspector"), and the job fails on any HIGH or CRITICAL finding that is
+# not in a baseline, a failed scan, or a baseline for a skill that no longer
+# exists (the user, 2026-11-22). Coverage gaps show up as AE1 findings.
+# The scanner version is the one pinned in skills/skillspector-install.
+# Same commands locally:
+#   python3 skills/skillspector-install/scripts/install.py --skip-skill
+#   python3 scripts/skillspector_ci.py --output skillspector.sarif
+
+name: SkillSpector
+on:
+  push:
+    branches: [ "main" ]
+  pull_request:
+    branches: [ "main" ]
+  schedule:
+    - cron: '41 13 * * 3'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: skillspector-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  skillspector:
+    permissions:
+      contents: read          # actions/checkout
+      security-events: write  # upload-sarif
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Install SkillSpector (pinned by skills/skillspector-install)
+        run: |
+          python3 skills/skillspector-install/scripts/install.py --skip-skill
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+
+      - name: Scan every skill against its baseline
+        id: scan
+        run: |
+          set +e
+          python3 scripts/skillspector_ci.py --output skillspector.sarif
+          echo "code=$?" >> "$GITHUB_OUTPUT"
+
+      - name: Upload results
+        # fork PRs cannot write security events
+        if: >-
+          always() && hashFiles('skillspector.sarif') != '' &&
+          (github.event_name != 'pull_request' ||
+           github.event.pull_request.head.repo.full_name == github.repository)
+        uses: github/codeql-action/upload-sarif@v4
+        with:
+          sarif_file: skillspector.sarif
+          category: skillspector
+
+      - name: Gate (unaccepted HIGH+ findings, failed scans, stale baselines)
+        if: steps.scan.outputs.code != '0'
+        env:
+          CODE: ${{ steps.scan.outputs.code }}
+        run: |
+          echo "::error::SkillSpector gate failed (exit $CODE): see the scan step's log and summary."
+          echo "Fix the finding, or accept it with a reason in .skillspector/<skill>.yaml."
+          exit 1
