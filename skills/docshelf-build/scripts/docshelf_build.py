@@ -11,7 +11,8 @@ from typing import Callable, List, Optional
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
-from build_archive import fetch_archive, find_build, find_source_archive, unpack  # noqa: E402
+from build_archive import (docname_of, fetch_archive, find_build, find_source_archive,  # noqa: E402
+                           is_singlehtml, split_singlehtml, unpack)  # noqa: E402
 from build_detect import describe, detect, offline  # noqa: E402
 from build_classify import apply_choices, counts, parse_choices, review_lines, run_rules  # noqa: E402
 from build_core import (NAME_RE, VERSION, CLIError, built_dir, cache_dir, plans_dir, src_dir,  # noqa: E402
@@ -192,6 +193,28 @@ def _archive_source(cache: str, name: str, plan: dict, source, refetch: bool):
         return None
 
 
+def _split_single_page(local, uris: list, html: dict, errors: dict) -> None:
+    """A single-page (singlehtml) archive holds every document in index.html:
+    replace html/errors in place with the per-page chunks (pages without a
+    marker stay in errors, so they are fetched over HTTP)."""
+    index = html.get("index.html")
+    if index is None or not is_singlehtml(index):
+        return
+    files = sum(1 for _d, _n, fs in os.walk(local.base) for f in fs if f.endswith(".html"))
+    if files >= len(uris):
+        return
+    names = {docname_of(u): u for u in uris}
+    chunks = split_singlehtml(index, list(names))
+    for u in uris:
+        html.pop(u, None)
+    for doc, page in chunks.items():
+        html[names[doc]] = page
+        errors.pop(names[doc], None)
+    for u in uris:
+        if u not in html:
+            errors[u] = "no marker in the single-page archive"
+
+
 def do_build(cache: str, name: str, workers: int, refetch: bool = False, opener=None,
              sleep=None, no_archive: bool = False) -> None:
     path = _plan_path(cache, name)
@@ -216,6 +239,7 @@ def do_build(cache: str, name: str, workers: int, refetch: bool = False, opener=
         local = _archive_source(cache, name, plan, source, refetch)
     if local is not None:
         html, errors = fetch_pages(local, uris)
+        _split_single_page(local, uris, html, errors)
         missing = sorted(errors)
         html_n = len(html)
         errors = {}

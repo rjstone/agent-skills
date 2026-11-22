@@ -2526,6 +2526,102 @@ class ArchiveTests(unittest.TestCase):
             self.ba.fetch_archive("https://h.example/z/", os.path.join(self.tmp, "s"), src, False)
 
 
+class SingleHtmlArchiveTests(unittest.TestCase):
+    """Splitting a Sphinx singlehtml archive (Read the Docs htmlzip) per page."""
+    BASE = "https://demo.readthedocs.io/en/latest/"
+    ZIP = "https://media.example/demo.zip"
+    SINGLE = ("<html><body><div role='main'><h1 id='home'>Home</h1><p>Intro <a href='#sec'>s</a>"
+              " <a href='#document-guide/a'>ga</a> <a href='#home'>h</a></p>"
+              "<div class='toctree-wrapper'>"
+              "<span id='document-cmd/opt'></span><section id='opt-page'><h1>opt</h1>"
+              "<p>Opt text <a href='#sec'>sec</a> <a href='#opt-page'>self</a>"
+              " <a href='#home'>home</a></p></section>"
+              "<span id='document-guide/index'></span><section><h1>Guides</h1><p>G idx</p></section>"
+              "<span id='document-guide/a'></span><section><h1 id='sec'>Sec</h1><p>A text"
+              " <a href='#opt-page'>o</a> <a href='#document-cmd/opt'>opt doc</a></p></section>"
+              "</div></div></body></html>")
+
+    def split(self):
+        import build_archive
+        return build_archive.split_singlehtml(self.SINGLE, ["index", "cmd/opt", "guide/index", "guide/a", "guide/b"])
+
+    def test_split_assigns_chunks_and_the_index_prefix(self):
+        pages = self.split()
+        self.assertEqual(sorted(pages), ["cmd/opt", "guide/a", "guide/index", "index"])  # guide/b: no marker
+        self.assertIn("Intro", pages["index"])
+        self.assertNotIn("Opt text", pages["index"])
+        self.assertIn("Opt text", pages["cmd/opt"])
+        self.assertNotIn("A text", pages["cmd/opt"])
+        self.assertIn("A text", pages["guide/a"])
+        for html in pages.values():
+            self.assertEqual(main_content(html).count("<div"), html.count("<div") - 1)
+            self.assertNotIn('id="document-', html)
+            self.assertNotIn("id='document-", html)
+
+    def test_cross_chunk_links_are_rewritten_and_same_chunk_kept(self):
+        pages = self.split()
+        self.assertIn('href="#home"', pages["index"])
+        self.assertIn('href="guide/a.html#sec"', pages["index"])
+        self.assertIn('href="guide/a.html"', pages["index"])   # #document-guide/a
+        self.assertIn('href="../guide/a.html#sec"', pages["cmd/opt"])
+        self.assertIn('href="#opt-page"', pages["cmd/opt"])
+        self.assertIn('href="../index.html#home"', pages["cmd/opt"])
+        self.assertIn('href="../cmd/opt.html#opt-page"', pages["guide/a"])
+        self.assertIn('href="../cmd/opt.html"', pages["guide/a"])   # #document-cmd/opt
+
+    def build_cli_setup(self):
+        import zipfile
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        self.tmp = os.path.realpath(tmp.name)
+        self.cache = os.path.join(self.tmp, "cache")
+        self.env = {"HOME": self.tmp, "DOCSHELF_CACHE_DIR": self.cache}
+        rows = [(e.name, e.role, "1", e.uri, e.dispname) for e in ENTRIES]
+        inv_bytes = make_inv(rows)
+        zpath = os.path.join(self.tmp, "demo.zip")
+        with zipfile.ZipFile(zpath, "w") as z:
+            z.writestr("demo-latest/objects.inv", inv_bytes)
+            z.writestr("demo-latest/index.html", self.SINGLE)
+        with open(zpath, "rb") as f:
+            zbytes = f.read()
+        api = json.dumps({"downloads": {"htmlzip": self.ZIP}}).encode()
+        self.site = {self.BASE + "objects.inv": (200, inv_bytes),
+                     "https://readthedocs.org/api/v3/projects/demo/versions/latest/": (200, api),
+                     self.ZIP: (200, zbytes),
+                     self.BASE + "guide/b.html": (200, b"<div role='main'><p>LIVE B</p></div>")}
+        self.urls = []
+        self.docvol = os.path.join(self.cache, "built", "demo")
+
+    def opener(self, url):
+        self.urls.append(url)
+        return self.site.get(url, (404, b""))
+
+    def run_main(self, *argv):
+        out, err = io.StringIO(), io.StringIO()
+        with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
+            code = docshelf_build.main(list(argv), env=self.env, opener=self.opener,
+                                       sleep=lambda s: None)
+        return code, out.getvalue(), err.getvalue()
+
+    def test_cli_build_splits_the_archive_and_fetches_the_unmarked_page(self):
+        self.build_cli_setup()
+        self.run_main("plan", self.BASE, "--name", "demo", "--all")
+        self.urls.clear()
+        code, out, err = self.run_main("build", "demo")
+        self.assertEqual(code, 0, err)
+        pages = [u for u in self.urls if u.startswith(self.BASE) and u.endswith(".html")]
+        self.assertEqual(pages, [self.BASE + "guide/b.html"])
+        self.assertIn("4 pages from the archive, 1 over HTTP", out)
+        db = load(self.docvol, "db.json")
+        self.assertIn("Opt text", db["cmd/opt"])
+        self.assertNotIn("A text", db["cmd/opt"])
+        self.assertIn("A text", db["guide/a"])
+        self.assertIn("LIVE B", db["guide/b"])
+        self.assertIn("Intro", db["index"])
+        for html in db.values():
+            self.assertNotIn("document-", html)
+
+
 class ArchiveCliTests(unittest.TestCase):
     """plan/build/detect with a Read the Docs style HTML archive (GET-only fake
     opener, so the archive comes from the API, not the HEAD probe)."""

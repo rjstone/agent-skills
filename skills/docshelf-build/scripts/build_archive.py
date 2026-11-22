@@ -12,15 +12,18 @@ archive.json keeps url, size, last_modified and sha256.
 import hashlib
 import json
 import os
+import posixpath
 import shutil
 import stat
 import tarfile
 import tempfile
 import urllib.parse
 import zipfile
-from typing import Callable, Dict, Optional, Tuple
+from html.parser import HTMLParser
+from typing import Callable, Dict, List, Optional, Tuple
 
 from build_core import CLIError
+from build_html import VOID, _serialize, _tokens
 from build_fetch import Source, _atomic_write, default_head  # noqa: F401 (re-export)
 
 MAX_UNPACKED = 500 * 1024 * 1024
@@ -258,3 +261,121 @@ def unpack(archive_path: str, out_dir: str) -> str:
     finally:
         if tmp:
             shutil.rmtree(tmp, ignore_errors=True)
+
+
+DOC_PREFIX = "document-"
+
+
+class _Markers(HTMLParser):
+    """Offsets (in the source string) of every element whose id starts with
+    'document-': [(offset, docname)]."""
+
+    def __init__(self, text: str):
+        super().__init__(convert_charrefs=True)
+        self.starts = [0]
+        for line in text.split("\n")[:-1]:
+            self.starts.append(self.starts[-1] + len(line) + 1)
+        self.found: List[Tuple[int, str]] = []
+
+    def handle_starttag(self, tag, attrs):
+        for k, v in attrs:
+            if k == "id" and v and v.startswith(DOC_PREFIX):
+                line, col = self.getpos()
+                self.found.append((self.starts[line - 1] + col, v[len(DOC_PREFIX):]))
+                break
+
+    handle_startendtag = handle_starttag
+
+
+def is_singlehtml(html: str) -> bool:
+    """True when the page holds several documents (id="document-..." markers)."""
+    return 'id="%s' % DOC_PREFIX in html or "id='%s" % DOC_PREFIX in html
+
+
+def _balance(tokens: list) -> list:
+    """Tokens with stray end tags dropped and open elements closed."""
+    out, stack = [], []
+    for tok in tokens:
+        kind, t = tok[0], tok[1]
+        if kind == "start" and t not in VOID:
+            stack.append(t)
+        elif kind == "end" and t not in VOID:
+            if t not in stack:
+                continue
+            while stack[-1] != t:
+                out.append(("end", stack.pop(), None))
+            stack.pop()
+        out.append(tok)
+    out.extend(("end", t, None) for t in reversed(stack))
+    return out
+
+
+def split_singlehtml(html: str, docnames: List[str]) -> Dict[str, str]:
+    """Split a Sphinx singlehtml page into one page per document.
+
+    A docname is a page uri without '.html' ('guide/a.html' -> 'guide/a',
+    'x/' -> 'x/index'; the page uri is docname + '.html'). Each document
+    starts at the element with id="document-<docname>" (a '/' in the docname
+    may appear as '-') and runs to the next such marker; 'index' gets the
+    content before the first marker unless it has a marker of its own.
+    Returns {docname: html} for the docnames found, each wrapped in
+    <div role="main"> (what build_html.main_content picks), balanced, its
+    own marker id removed. A link '#id' to an id defined in another chunk
+    becomes '<uri of that page, relative to this one>#id'; '#document-x'
+    becomes page x; ids in the same chunk stay. Linear time."""
+    p = _Markers(html)
+    p.feed(html)
+    p.close()
+    found = p.found
+    ends = [o for o, _ in found[1:]] + [len(html)]
+    chunks: List[Tuple[str, str]] = []
+    if not found or found[0][0] > 0:
+        chunks.append(("index", html[:found[0][0] if found else len(html)]))
+    for (off, name), end in zip(found, ends):
+        chunks.append((name, html[off:end]))
+    wanted: Dict[str, str] = {}
+    for d in docnames:
+        wanted[d] = d
+        wanted.setdefault(d.replace("/", "-"), d)
+    pages: Dict[str, list] = {}
+    for name, raw in chunks:
+        d = wanted.get(name, name)
+        if d in pages:
+            continue
+        toks = _balance(_tokens(raw))
+        if toks and toks[0][0] == "start":
+            toks[0] = ("start", toks[0][1], [(k, v) for k, v in toks[0][2] or []
+                                              if not (k == "id" and (v or "").startswith(DOC_PREFIX))])
+        pages[d] = toks
+    owner: Dict[str, str] = {}
+    for d, toks in pages.items():
+        for kind, _t, attrs in toks:
+            if kind == "start":
+                for k, v in attrs or []:
+                    if k == "id" and v:
+                        owner.setdefault(v, d)
+    out: Dict[str, str] = {}
+    for d, toks in pages.items():
+        here = posixpath.dirname(d + ".html") or "."
+
+        def href(value: str, d=d, here=here) -> str:
+            if not value.startswith("#") or len(value) < 2:
+                return value
+            ident = value[1:]
+            if ident.startswith(DOC_PREFIX):
+                tgt = wanted.get(ident[len(DOC_PREFIX):], ident[len(DOC_PREFIX):])
+                return posixpath.relpath(tgt + ".html", here) if tgt in pages else value
+            tgt = owner.get(ident)
+            if tgt is None or tgt == d:
+                return value
+            return posixpath.relpath(tgt + ".html", here) + value
+        out[d] = '<div role="main">%s</div>' % _serialize(toks, href=href)
+    return {d: out[d] for d in docnames if d in out}
+
+
+def docname_of(uri: str) -> str:
+    """'guide/a.html' -> 'guide/a'; 'x/' -> 'x/index'; '' -> 'index'."""
+    uri = uri.split("#", 1)[0]
+    if uri == "" or uri.endswith("/"):
+        uri += "index"
+    return uri[:-5] if uri.endswith(".html") else uri
