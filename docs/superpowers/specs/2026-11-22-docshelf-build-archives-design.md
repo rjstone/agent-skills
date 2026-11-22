@@ -46,6 +46,18 @@ archive is the exception: a fast path with a page-by-page fallback.
   AGENTS.md entry one sentence; TODO 8.13 done.
 - Version stays 0.4.0 (unmerged, same PR #33).
 
+## Single-page archives (added after the live check, the user, 2026-11-22: option A)
+
+Read the Docs' `htmlzip` is a Sphinx `singlehtml` build: one `index.html`
+holding every document, each starting at an element with
+`id="document-<docname>"` (click, 2026-11-22: 5 of its 6 non-index pages
+marked). When the archive's build folder has a single-page `index.html`
+with such markers, split it: each inventory page whose docname has a marker
+gets the content from its marker up to the next marker; the index page gets
+the content before the first marker. Same-page `#id` links that point at an
+id now living in another split page are rewritten to that page (`page#id`,
+relative as usual). Pages without a marker are fetched over HTTP as before.
+
 ## Non-goals
 
 llms.txt archives, PDF/ePub, archives from other hosts than the site's own
