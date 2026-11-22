@@ -228,7 +228,7 @@
     },
     {
       "name": "skillspector-install",
-      "version": "0.1.0",
+      "version": "0.1.1",
       "files": [
         "SKILL.md",
         "scripts/install.py"
