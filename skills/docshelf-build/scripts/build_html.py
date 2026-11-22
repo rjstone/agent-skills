@@ -2,6 +2,7 @@
 docvol page names, and stub pages for what is not stored."""
 import html as htmllib
 import posixpath
+import re
 import urllib.parse
 from html.parser import HTMLParser
 from typing import Callable, Dict, List, Optional, Tuple
@@ -80,6 +81,20 @@ _SELECTORS: List[Callable[[str, Attrs], bool]] = [
 ]
 
 
+_SCRIPT_URL = re.compile(r"(?:javascript|vbscript|data):", re.I)
+
+
+def _unsafe_attr(name: str, value: Optional[str]) -> bool:
+    """An event handler (on*) or an href/src that runs script or embeds data."""
+    name = name.lower()
+    if name.startswith("on"):
+        return True
+    if name in ("href", "src") and value is not None:
+        cleaned = "".join(c for c in value if not c.isspace() and ord(c) >= 32 and ord(c) != 127)
+        return bool(_SCRIPT_URL.match(cleaned))
+    return False
+
+
 def _serialize(tokens: List[Token], href: Optional[Callable[[str], str]] = None) -> str:
     out: List[str] = []
     skip = 0   # depth inside a dropped element
@@ -103,6 +118,8 @@ def _serialize(tokens: List[Token], href: Optional[Callable[[str], str]] = None)
                 continue
             parts = [t]
             for k, v in attrs:
+                if _unsafe_attr(k, v):
+                    continue
                 if k == "href" and v is not None and href is not None:
                     v = href(v)
                 elif k == "id" and v is not None:

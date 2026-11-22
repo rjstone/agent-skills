@@ -2184,5 +2184,22 @@ class FollowupIndexTests(unittest.TestCase):
         self.assertEqual([p.key for p in tree.pages], ["a/p", "b/q"])
 
 
+class FollowupHtmlTests(unittest.TestCase):
+    def test_on_attributes_dropped(self):
+        html = main_content('<main><p onclick="x" ONLOAD="y" class="c">t</p></main>')
+        self.assertIn('<p class="c">t</p>', html)
+        self.assertNotIn("onclick", html.lower())
+
+    def test_script_urls_dropped(self):
+        html = main_content('<main><a href=" JaVaScRiPt:alert(1)">x</a>'
+                            '<a href="data:text/html,hi">y</a>'
+                            '<a href="java\tscript:alert(1)">w</a>'
+                            '<a href="https://x.io">z</a></main>')
+        self.assertNotIn("alert", html)
+        self.assertNotIn("data:", html)
+        self.assertIn("<a>x</a>", html)
+        self.assertIn('<a href="https://x.io">z</a>', html)
+
+
 if __name__ == "__main__":
     unittest.main()

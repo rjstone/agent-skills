@@ -166,7 +166,7 @@ column is from memory: verify each against real output before building.
       0 / 7.1 / 57.5; LangChain Python `words` 157 / 1274 / 16478,
       `code_ratio` 0 / 0.33 / 0.90, `you_per_1k` 0.5 / 8.5 / 45.2,
       `signature_lines` 0 / 9 / 236 (the user, 2026-11-21).
-- [ ] 8.12 docshelf-build llms.txt follow-ups (0.2.0 reviews and trial):
+- [x] 8.12 docshelf-build llms.txt follow-ups (0.2.0 reviews and trial):
       links to other hosts (discord.gg, x.com) are planned as pages and
       fail; `humans.txt` is followed as a sub-index (0 pages); `.md` retry
       URL ignores a query string; blockquote lazy continuation and a few
@@ -177,6 +177,11 @@ column is from memory: verify each against real output before building.
       `on*=` attributes and `javascript:` hrefs pass through `_serialize`
       (inert in docshelf's text renderer). A local root listing only
       sub-indexes gives an empty `main_host`.
+      Done in 0.3.1: `_serialize` drops `on*` attributes and
+      `javascript:`/`vbscript:`/`data:` href/src values; docvol meta and
+      types code shared (`_meta`, `_types`). Still deferred: the slow link
+      regex on 25000 `[` (0.45 s) and a bare line right after a closed
+      fence inside a quote being absorbed as a lazy paragraph.
 - [ ] 8.10 Finding Sphinx docs for a library: the best way to search for
       a project's `objects.inv` site. Ideas: hosting domains with a search
       API (Read the Docs), or a list of docs-hosting domains to restrict a
