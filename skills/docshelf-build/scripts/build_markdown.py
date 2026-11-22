@@ -217,6 +217,30 @@ _LINK = re.compile(r"\[((?:[^\[\]]|\[[^\]]*\])*)\]\(\s*([^\s()]*(?:\([^\s()]*\)[
 _IMG = re.compile(r"""!\[([^\]]*)\]\(\s*[^)\s]*(?:\s+(?:"[^"]*"|'[^']*'))?\s*\)""")
 
 
+LINK_WINDOW = 2000  # longest `[text](url "title")` recognised (keeps scanning linear)
+
+
+def _sub_links(text: str, repl) -> str:
+    """_LINK.sub(repl, text), trying each `[` within LINK_WINDOW characters
+    only: a stray `[` can no longer make the regex scan to the end of the
+    text, so a run of `[[]` costs O(n * window), not O(n^2)."""
+    out: List[str] = []
+    pos = i = 0
+    while True:
+        i = text.find("[", i)
+        if i < 0:
+            break
+        m = _LINK.match(text, i, min(len(text), i + LINK_WINDOW))
+        if m:
+            out.append(text[pos:i])
+            out.append(repl(m))
+            pos = i = m.end()
+        else:
+            i += 1
+    out.append(text[pos:])
+    return "".join(out)
+
+
 # (opener, closer, delimiter length, tag): opener and closer are regex fragments tested
 # at one position each, so `_emph` pairs them in one linear pass
 _EMPH = [
@@ -287,7 +311,7 @@ def _inline(text: str) -> str:
             attrs += ' title="%s"' % _attr_val(title)
         return keep("<a%s>" % attrs) + m.group(1) + keep("</a>")
 
-    text = _LINK.sub(link, text)
+    text = _sub_links(text, link)
     for opener, closer, n, tag in _EMPH:
         text = _emph(text, opener, closer, n, tag)
     text = re.sub(r"(?: {2,}|\\)\n", lambda m: keep("<br>"), text)
@@ -330,11 +354,20 @@ def _starts_block(ln: str) -> bool:
                                               or m.group(2)[:-1] == "1"))
 
 
-def _lazy_ok(last: str, open_fence: bool) -> bool:
-    """True when the quote's last line is paragraph text a bare line may continue."""
+def _lazy_ok(inner: List[str], open_fence: bool) -> bool:
+    """True when the quote's last line is paragraph text a bare line may
+    continue: not a blank, indented code, heading, rule, HTML block, fence
+    line (opening or closing) or table row."""
+    last = inner[-1]
     if open_fence or not last.strip() or last.startswith("    ") or _ATX.match(last) or _HR.match(last) \
-            or _HTML_BLOCK.match(last) or _SETEXT.match(last):
+            or _HTML_BLOCK.match(last) or _SETEXT.match(last) or _BLOCK_FENCE.match(last):
         return False
+    if "|" in last:  # a table row: the run of `|` lines above it holds a delimiter row
+        j = len(inner) - 1
+        while j >= 0 and "|" in inner[j]:
+            if _DELIM.match(inner[j]) and j > 0 and "|" in inner[j - 1]:
+                return False
+            j -= 1
     return True
 
 
@@ -462,7 +495,7 @@ def _blocks(lines: List[str], seen: Set[str], tight: bool = False, depth: int = 
                     if _BLOCK_FENCE.match(inner[-1]):
                         open_fence = not open_fence
                 elif lines[i].strip() and not _starts_block(lines[i]) \
-                        and _lazy_ok(inner[-1], open_fence):
+                        and _lazy_ok(inner, open_fence):
                     inner.append(lines[i])  # lazy continuation of the quoted paragraph
                 else:
                     break

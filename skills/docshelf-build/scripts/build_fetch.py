@@ -30,17 +30,36 @@ class FetchError(Exception):
         self.uri, self.reason = uri, reason
 
 
+REDIRECTS = (301, 302, 303, 307, 308)
+MAX_REDIRECTS = 5
+TOO_MANY_REDIRECTS = 310  # pseudo status: not retried, see _status_text
+
+
+class _NoRedirect(urllib.request.HTTPRedirectHandler):
+    """Hand a redirect back to the caller as an HTTPError, so Source can
+    re-check robots.txt for the host it points to before following it."""
+
+    def redirect_request(self, *args, **kwargs):
+        return None
+
+
+_URL_OPENER = urllib.request.build_opener(_NoRedirect)
+
+
 def default_opener(url: str) -> Tuple[int, bytes]:
     """GET url with docshelf-build's User-Agent: (HTTP status, body); status 0
-    for a network failure. Only http and https."""
+    for a network failure. Only http and https. Redirects are not followed:
+    a 301/302/303/307/308 answers (status, the Location value as bytes)."""
     if urllib.parse.urlsplit(url).scheme not in ("http", "https"):
         raise ValueError("not an http(s) URL: %s" % url)
     req = urllib.request.Request(url, headers={"User-Agent": USER_AGENT})
     try:
         # scheme checked above, so no file: or custom schemes
-        with urllib.request.urlopen(req, timeout=TIMEOUT) as r:  # nosec B310
+        with _URL_OPENER.open(req, timeout=TIMEOUT) as r:  # nosec B310
             return getattr(r, "status", 200), r.read()
     except urllib.error.HTTPError as e:
+        if e.code in REDIRECTS:
+            return e.code, (e.headers.get("Location") or "").encode("utf-8", "replace")
         return e.code, b""
     except http.client.InvalidURL as e:
         raise ValueError(str(e))
@@ -49,15 +68,18 @@ def default_opener(url: str) -> Tuple[int, bytes]:
 
 
 def default_head(url: str) -> Tuple[int, Dict[str, str]]:
-    """HEAD url: (status, lower-cased headers); status 0 on a network failure."""
+    """HEAD url: (status, lower-cased headers); status 0 on a network failure.
+    Redirects are not followed: the answer carries the `location` header."""
     if urllib.parse.urlsplit(url).scheme not in ("http", "https"):
         raise ValueError("not an http(s) URL: %s" % url)
     req = urllib.request.Request(url, method="HEAD", headers={"User-Agent": USER_AGENT})
     try:
         # scheme checked above, so no file: or custom schemes
-        with urllib.request.urlopen(req, timeout=TIMEOUT) as r:  # nosec B310
+        with _URL_OPENER.open(req, timeout=TIMEOUT) as r:  # nosec B310
             return getattr(r, "status", 200), {k.lower(): v for k, v in r.headers.items()}
     except urllib.error.HTTPError as e:
+        if e.code in REDIRECTS:
+            return e.code, {"location": e.headers.get("Location") or ""}
         return e.code, {}
     except http.client.InvalidURL as e:
         raise ValueError(str(e))
@@ -128,11 +150,32 @@ class Source:
         except OSError as e:
             raise FetchError(uri, "missing in the source folder (%s)" % e.strerror)
 
-    def _open(self, url: str) -> Tuple[int, bytes]:
-        """One opener call; a malformed URL (ValueError, UnicodeError from
-        idna, http.client.InvalidURL) is a FetchError that is not retried."""
+    def _follow(self, url: str, call: Callable, location: Callable, check: bool, empty):
+        """call(url) -> (status, payload), following up to MAX_REDIRECTS
+        redirects. Each target is checked against its own host's robots.txt
+        when `check` (FetchError when blocked); a non-http(s) target, or too
+        many hops, ends in a status that is not retried."""
+        for _ in range(MAX_REDIRECTS + 1):
+            status, payload = call(url)
+            if status not in REDIRECTS:
+                return status, payload
+            loc = location(payload)
+            if not loc:
+                return status, payload
+            url = urllib.parse.urljoin(url, loc)
+            if urllib.parse.urlsplit(url).scheme not in ("http", "https"):
+                return 400, empty
+            if check and not self._allowed(url):
+                raise FetchError(url, "blocked by robots.txt")
+        return TOO_MANY_REDIRECTS, empty
+
+    def _open(self, url: str, check: bool = True) -> Tuple[int, bytes]:
+        """One GET, redirects followed (see _follow); a malformed URL
+        (ValueError, UnicodeError from idna, http.client.InvalidURL) is a
+        FetchError that is not retried."""
         try:
-            return self.opener(url)
+            return self._follow(url, self.opener, lambda b: b.decode("utf-8", "replace").strip(),
+                                check, b"")
         except (ValueError, UnicodeError, http.client.InvalidURL):
             raise FetchError(url, "invalid URL")
 
@@ -180,8 +223,9 @@ class Source:
         try:
             if not self._allowed(url):
                 return 0, {}
-            return self.head_opener(url)
-        except ValueError:
+            return self._follow(url, self.head_opener, lambda h: (h.get("location") or "").strip(),
+                                True, {})
+        except (ValueError, FetchError):
             return 0, {}
 
     def _allowed(self, url: str) -> bool:
@@ -192,7 +236,7 @@ class Source:
         with self._lock:
             rp = self._robots.get(origin)
             if rp is None:
-                status, body = self._open(origin + "/robots.txt")
+                status, body = self._open(origin + "/robots.txt", check=False)
                 rp = urllib.robotparser.RobotFileParser()
                 if status in (401, 403):
                     rp.disallow_all = True
@@ -205,6 +249,8 @@ class Source:
 
 
 def _status_text(status: int) -> str:
+    if status == TOO_MANY_REDIRECTS:
+        return "too many redirects"
     return "network error" if status == 0 else "HTTP %d" % status
 
 

@@ -200,8 +200,10 @@ def _split_single_page(local, uris: list, html: dict, errors: dict) -> None:
     index = html.get("index.html")
     if index is None or not is_singlehtml(index):
         return
-    files = sum(1 for _d, _n, fs in os.walk(local.base) for f in fs if f.endswith(".html"))
-    if files >= len(uris):
+    # a real single-page archive lacks (nearly) every page but index.html; extra
+    # files (genindex, search, _modules/) say nothing about that
+    others = [u for u in uris if u != "index.html"]
+    if not others or sum(1 for u in others if u in errors) * 2 < len(others):
         return
     names = {docname_of(u): u for u in uris}
     chunks = split_singlehtml(index, list(names))
