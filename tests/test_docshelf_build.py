@@ -39,7 +39,8 @@ from build_fetch import (FetchError, PageCache, fetch_llms, fetch_llms_page, fet
 from build_html import headings, main_content, rewrite_links, rewrite_url_links, stub_html  # noqa: E402
 from build_docvol import check_name, derive_name, role_label, write_docvol, write_llms_docvol  # noqa: E402
 import docshelf_build  # noqa: E402
-from build_classify import RULES_ID, rule_choice  # noqa: E402
+from build_classify import (RULES_ID, bucket, counts, may_decide, preview, review_lines,  # noqa: E402
+                            rule_choice, run_rules)
 from build_llms import LlmsPage, Tree, is_llms_source, parse_index, read_tree, url_key  # noqa: E402
 from build_markdown import front_matter, md_to_html, page_signals, slugify  # noqa: E402
 
@@ -1721,6 +1722,94 @@ class ClassifyRulesTests(unittest.TestCase):
             agree = sum((c == "full") == (lab == "reference") for c, lab in decided)
             self.assertGreaterEqual(agree / max(1, len(decided)), 0.95, site)
             self.assertGreater(len(decided), 0, site)
+
+
+class ClassifyPlanTests(unittest.TestCase):
+    REF = {"words": 900, "code_ratio": 0.6, "you_per_1k": 1.0, "steps": 0,
+           "signature_lines": 40, "headings": 12, "tables": 3}
+    GUIDE = {"words": 1500, "code_ratio": 0.05, "you_per_1k": 25.0, "steps": 8,
+             "signature_lines": 0, "headings": 6, "tables": 0}
+    THIN = {"words": 40, "code_ratio": 0.0, "you_per_1k": 0.0, "steps": 0,
+            "signature_lines": 0, "headings": 0, "tables": 0}
+
+    def pg(self, why="llms: all", keep="full", signals=None, **extra):
+        page = {"keep": keep, "title": "T", "section": None, "description": None,
+                "why": why, "uri": "u", "signals": dict(self.REF if signals is None else signals)}
+        page.update(extra)
+        return page
+
+    def test_may_decide(self):
+        self.assertTrue(may_decide(self.pg()))
+        self.assertTrue(may_decide(self.pg(why="model:rules-1")))
+        self.assertFalse(may_decide(self.pg(why="manual")))
+        self.assertFalse(may_decide(self.pg(why="override: a/*")))
+        self.assertFalse(may_decide(self.pg(why="model:agent")))
+        page = self.pg()
+        del page["signals"]
+        self.assertFalse(may_decide(page))
+
+    def test_run_rules_idempotent(self):  # RF 4
+        plan = {"kind": "llms", "pages": {"a": self.pg(keep="stub"),
+                                          "b": self.pg(signals=self.GUIDE),
+                                          "c": self.pg(signals=self.THIN, why="model:rules-1",
+                                                       keep="stub")}}
+        run_rules(plan)
+        self.assertEqual([plan["pages"][k]["keep"] for k in "abc"], ["full", "stub", "full"])
+        self.assertEqual([plan["pages"][k]["why"] for k in "abc"],
+                         ["model:rules-1", "model:rules-1", "llms: all"])
+        before = json.loads(json.dumps(plan))
+        run_rules(plan)
+        self.assertEqual(plan, before)
+
+    def test_run_rules_leaves_people_and_agents(self):
+        plan = {"kind": "llms", "pages": {
+            "a": self.pg(why="manual", keep="stub"),
+            "b": self.pg(why="model:agent", keep="full", signals=self.GUIDE)}}
+        before = json.loads(json.dumps(plan))
+        run_rules(plan)
+        self.assertEqual(plan, before)
+
+    def test_counts_add_up(self):  # RF 1
+        nosig = self.pg()
+        del nosig["signals"]
+        plan = {"kind": "llms", "pages": {
+            "a": self.pg(why="model:rules-1", keep="full"),
+            "b": self.pg(why="model:rules-1", keep="stub", signals=self.GUIDE),
+            "c": self.pg(why="manual", keep="stub"),
+            "d": self.pg(why="model:agent"),
+            "e": self.pg(signals=self.THIN),
+            "f": nosig}}
+        c = counts(plan)
+        self.assertEqual(c, {"reference": 1, "stub": 1, "person": 1, "agent": 1,
+                             "review": 1, "no signals": 1})
+        self.assertEqual(sum(c.values()), 6)
+        self.assertEqual(bucket(self.pg(why="override: x")), "person")
+
+    def test_preview_markdown(self):
+        text = "---\ntitle: X\n---\n# X\n\nUse <Tabs>the thing</Tabs> here.\n"
+        self.assertEqual(preview(text, "md"), "Use the thing here.")
+
+    def test_preview_html_and_empty(self):  # RF 3
+        html = "<html><body><main><h1>T</h1><p>Body text</p></main></body></html>"
+        self.assertEqual(preview(html, "html"), "Body text")
+        self.assertEqual(preview("", "md"), "")
+        self.assertEqual(preview("---\ntitle: X\n---\n", "md"), "")
+        self.assertEqual(preview("x" * 500, "md", 10), "x" * 10)
+
+    def test_review_lines_format_and_paging(self):
+        sig = dict(self.THIN, words=300, code_ratio=0.33, you_per_1k=5.0, signature_lines=2,
+                   steps=1, tables=0)
+        plan = {"kind": "llms", "pages": {
+            "k1": self.pg(signals=sig, title="One", section="Sec"),
+            "skip": self.pg(why="manual"),
+            "k2": self.pg(signals=sig, title="Two")}}
+        raw = {"k1": ("# One\n\nHello there.", "md")}
+        get = raw.get
+        self.assertEqual(review_lines(plan, get, 0, 1), [
+            "k1   [Sec] One", "  words=300 code=0.33 you=5.0 sig=2 steps=1 tables=0",
+            "  > Hello there."])
+        self.assertEqual(review_lines(plan, get, 1, 5), [
+            "k2   Two", "  words=300 code=0.33 you=5.0 sig=2 steps=1 tables=0"])
 
 
 if __name__ == "__main__":
