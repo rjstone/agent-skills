@@ -125,3 +125,45 @@ def review_lines(plan: Dict, get_raw: Callable[[str], Optional[Tuple[str, str]]]
         if snippet:
             out.append("  > " + snippet)
     return out
+
+
+def parse_choices(text: str) -> Tuple[List[Tuple[int, str, str, Optional[str]]], List[str]]:
+    """Parse an agent's choices: `full KEY` or `stub KEY [description]` per line.
+    Returns (line number, keep, key, description or None) tuples and errors."""
+    choices: List[Tuple[int, str, str, Optional[str]]] = []
+    errors: List[str] = []
+    for n, raw in enumerate(text.split("\n"), 1):
+        line = raw.replace("\r", "").strip()
+        if not line or line.startswith("#"):
+            continue
+        parts = line.split(None, 2)
+        if len(parts) < 2 or parts[0] not in ("full", "stub"):
+            errors.append("line %d: expected 'full KEY' or 'stub KEY [description]'" % n)
+            continue
+        desc = parts[2].strip() if len(parts) > 2 else ""
+        choices.append((n, parts[0], parts[1], desc or None))
+    return choices, errors
+
+
+def apply_choices(plan: Dict, choices, model_id: str) -> Tuple[int, List[str]]:
+    """Apply parsed choices to the plan; the last line for a key wins.
+    Pages decided by a person are refused. Returns (applied, messages)."""
+    pages = plan.get("pages", {})
+    applied = 0
+    messages: List[str] = []
+    for n, keep, key, desc in choices:
+        page = pages.get(key)
+        if page is None:
+            messages.append("line %d: %s: unknown page" % (n, key))
+            continue
+        why = page.get("why") or ""
+        if why == "manual" or why.startswith("override:"):
+            who = "manual" if why == "manual" else "override"
+            messages.append("line %d: %s: decided by a person (%s), skipped" % (n, key, who))
+            continue
+        page["keep"] = keep
+        page["why"] = "model:" + model_id
+        if desc is not None:
+            page["description"] = desc
+        applied += 1
+    return applied, messages

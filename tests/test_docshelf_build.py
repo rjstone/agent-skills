@@ -39,7 +39,7 @@ from build_fetch import (FetchError, PageCache, fetch_llms, fetch_llms_page, fet
 from build_html import headings, main_content, rewrite_links, rewrite_url_links, stub_html  # noqa: E402
 from build_docvol import check_name, derive_name, role_label, write_docvol, write_llms_docvol  # noqa: E402
 import docshelf_build  # noqa: E402
-from build_classify import (RULES_ID, bucket, counts, may_decide, preview, review_lines,  # noqa: E402
+from build_classify import (RULES_ID, apply_choices, parse_choices, bucket, counts, may_decide, preview, review_lines,  # noqa: E402
                             rule_choice, run_rules)
 from build_llms import LlmsPage, Tree, is_llms_source, parse_index, read_tree, url_key  # noqa: E402
 from build_markdown import front_matter, md_to_html, page_signals, slugify  # noqa: E402
@@ -1810,6 +1810,45 @@ class ClassifyPlanTests(unittest.TestCase):
             "  > Hello there."])
         self.assertEqual(review_lines(plan, get, 1, 5), [
             "k2   Two", "  words=300 code=0.33 you=5.0 sig=2 steps=1 tables=0"])
+
+
+class ClassifyApplyTests(unittest.TestCase):
+    def test_parse_basic_and_crlf(self):
+        ch, err = parse_choices("full a/b\r\nstub c/d  Short note here  \r\n\n# x\n")
+        self.assertEqual(ch, [(1, "full", "a/b", None), (2, "stub", "c/d", "Short note here")])
+        self.assertEqual(err, [])
+
+    def test_parse_errors(self):
+        ch, err = parse_choices("keep a\nfull\nstub\n")
+        self.assertEqual(ch, [])
+        self.assertEqual(len(err), 3)
+        for i, e in enumerate(err, 1):
+            self.assertTrue(e.startswith("line %d:" % i))
+
+    def test_key_with_hash(self):
+        ch, err = parse_choices("full a#b")
+        self.assertEqual(ch, [(1, "full", "a#b", None)])
+
+    def test_apply(self):
+        plan = {"kind": "llms", "pages": {
+            "a": {"keep": "full", "why": RULES_ID},
+            "b": {"keep": "full", "why": "manual"},
+            "c": {"keep": "stub", "why": "override: c*"}}}
+        ch, _ = parse_choices("stub a Guide\nfull b\nfull c\nfull zz\n")
+        n, msgs = apply_choices(plan, ch, "tester")
+        self.assertEqual(n, 1)
+        self.assertEqual(msgs, ["line 2: b: decided by a person (manual), skipped",
+                                "line 3: c: decided by a person (override), skipped",
+                                "line 4: zz: unknown page"])
+        self.assertEqual(plan["pages"]["a"]["keep"], "stub")
+        self.assertEqual(plan["pages"]["a"]["why"], "model:tester")
+        self.assertEqual(plan["pages"]["a"]["description"], "Guide")
+
+    def test_apply_overwrites_agent(self):
+        plan = {"kind": "llms", "pages": {"a": {"keep": "full", "why": "model:old"}}}
+        n, _ = apply_choices(plan, [(1, "stub", "a", None)], "new")
+        self.assertEqual(n, 1)
+        self.assertEqual(plan["pages"]["a"]["why"], "model:new")
 
 
 if __name__ == "__main__":
