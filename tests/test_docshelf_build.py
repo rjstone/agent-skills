@@ -2437,6 +2437,53 @@ class ArchiveTests(unittest.TestCase):
         out, build = self.unpack(path)
         self.assertEqual(os.listdir(build), ["objects.inv"])
 
+    def test_head_through_source_honours_robots(self):
+        calls, heads = [], []
+
+        def opener(url):
+            calls.append(url)
+            if url.endswith("robots.txt"):
+                return 200, b"User-agent: *\nDisallow: /_/\nDisallow: /blocked/\n"
+            return 200, b"PK-data"
+
+        def head(url):
+            heads.append(url)
+            return 200, {"content-length": "7"}
+        src = open_url_source(opener=opener, sleep=lambda s: None, delay=0, head_opener=head)
+        self.assertEqual(src.head_url("https://h.example/blocked/"), (0, {}))
+        self.assertEqual(heads, [])
+        self.assertEqual(src.head_url("https://h.example/ok/")[0], 200)
+        # probe at a blocked path: no request to the archive URL
+        self.assertIsNone(self.ba.find_archive("https://h.example/en/latest/",
+                                               lambda u: (404, b""), head=src.head_url))
+        self.assertEqual([h for h in heads if "/_/" in h or "/blocked/" in h], [])
+        # change check: blocked head means no head request, archive kept
+        dest = os.path.join(self.tmp, "src")
+        os.makedirs(dest)
+        with open(os.path.join(dest, "archive.zip"), "wb") as f:
+            f.write(b"PK-data")
+        with open(os.path.join(dest, "archive.json"), "w") as f:
+            json.dump({"url": "https://h.example/blocked/", "file": "archive.zip", "size": 7}, f)
+        n = len(calls)
+        self.assertFalse(self.ba.fetch_archive("https://h.example/blocked/", dest, src, False,
+                                               head=src.head_url)[1])
+        self.assertEqual([h for h in heads if "/blocked/" in h], [])
+        self.assertEqual(len(calls), n)
+
+    def test_unpack_tar_member_cap_counts_dirs(self):
+        import tarfile
+        path = os.path.join(self.tmp, "d.tar.gz")
+        with tarfile.open(path, "w:gz") as t:
+            for i in range(6):
+                d = tarfile.TarInfo("d%d" % i)
+                d.type = tarfile.DIRTYPE
+                t.addfile(d)
+        with mock.patch.object(self.ba, "MAX_FILES", 5):
+            with self.assertRaises(CLIError) as cm:
+                self.unpack(path)
+        self.assertEqual(cm.exception.code, 2)
+        self.assertFalse(os.path.exists(os.path.join(self.tmp, "site")))
+
     def fetch_setup(self, body=b"PK-data"):
         calls = []
 

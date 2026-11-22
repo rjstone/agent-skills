@@ -4,27 +4,24 @@ of a site: every failure here means "no archive", and the caller falls back
 to page-by-page fetching. Stdlib only.
 
 Change check: the HTTP layer's opener is GET-only, so fetch_archive takes an
-optional `head` callable (default_head below, a real HEAD request). Without
+optional `head` callable (Source.head_url: a HEAD through the Source, so robots.txt is honoured). Without
 it an existing archive is reused until --refetch; with it a different
 Content-Length or Last-Modified from the stored ones triggers a download.
 archive.json keeps url, size, last_modified and sha256.
 """
 import hashlib
-import http.client
 import json
 import os
 import shutil
 import stat
 import tarfile
 import tempfile
-import urllib.error
 import urllib.parse
-import urllib.request
 import zipfile
 from typing import Callable, Dict, Optional, Tuple
 
 from build_core import CLIError
-from build_fetch import Source, TIMEOUT, USER_AGENT, _atomic_write
+from build_fetch import Source, _atomic_write, default_head  # noqa: F401 (re-export)
 
 MAX_UNPACKED = 500 * 1024 * 1024
 MAX_FILES = 50000
@@ -32,23 +29,6 @@ RTD_API = "https://readthedocs.org/api/v3/projects/%s/versions/%s/"
 
 Getter = Callable[[str], Tuple[int, bytes]]
 Header = Callable[[str], Tuple[int, Dict[str, str]]]
-
-
-def default_head(url: str) -> Tuple[int, Dict[str, str]]:
-    """HEAD url: (status, lower-cased headers); status 0 on a network failure."""
-    if urllib.parse.urlsplit(url).scheme not in ("http", "https"):
-        raise ValueError("not an http(s) URL: %s" % url)
-    req = urllib.request.Request(url, method="HEAD", headers={"User-Agent": USER_AGENT})
-    try:
-        # scheme checked above, so no file: or custom schemes
-        with urllib.request.urlopen(req, timeout=TIMEOUT) as r:  # nosec B310
-            return getattr(r, "status", 200), {k.lower(): v for k, v in r.headers.items()}
-    except urllib.error.HTTPError as e:
-        return e.code, {}
-    except http.client.InvalidURL as e:
-        raise ValueError(str(e))
-    except (urllib.error.URLError, OSError):
-        return 0, {}
 
 
 def _site_parts(site_url: str) -> Tuple[str, str, Optional[str], str, str]:
@@ -198,9 +178,12 @@ def _unzip(path: str, tmp: str) -> None:
 
 
 def _untar(path: str, tmp: str) -> None:
-    total = files = 0
+    total = files = seen = 0
     with tarfile.open(path, "r:*") as t:
         for member in t:
+            seen += 1
+            if seen > MAX_FILES:
+                raise _cap_error("over %d entries" % MAX_FILES)
             parts = _safe_parts(member.name)
             if not parts:
                 continue
