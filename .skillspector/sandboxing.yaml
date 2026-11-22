@@ -1,0 +1,24 @@
+# SkillSpector baseline for skills/sandboxing (accepted findings).
+# Used by scripts/skillspector_ci.py (CI: .github/workflows/skillspector.yml).
+# Glob rules match rule id, a path relative to the skill folder, and an
+# optional message glob (the finding text). Every rule needs a reason.
+# Accept only findings you checked in context; scope AE1 (coverage gap)
+# rules to one file so a new gap still fails CI. Format: upstream
+# docs/SUPPRESSION.md.
+version: 2
+rules:
+  - id: "E2"
+    path: "scripts/sandbox.py"
+    reason: "Reads the environment to check and strip it: the sandbox starts with env -i/--clearenv and passes only allowed variables"
+  - id: "E2"
+    path: "scripts/leak_test.py"
+    reason: "Adds a marker variable to the environment so the leak test can check it does NOT reach the sandbox"
+  - id: "PE3"
+    path: "SKILL.md"
+    reason: "States that the sandbox has no /etc/passwd; nothing reads it"
+  - id: "TM1"
+    path: "scripts/*.py"
+    reason: "Probe deletes its own test file in the sandbox's scratch /work folder after checking it is writable"
+  - id: "TM2"
+    path: "scripts/leak_test.py"
+    reason: "Same probe: touch then rm -f of its own test file in /work"

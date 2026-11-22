@@ -1,0 +1,17 @@
+# SkillSpector baseline for skills/pygameturbo (accepted findings).
+# Used by scripts/skillspector_ci.py (CI: .github/workflows/skillspector.yml).
+# Glob rules match rule id, a path relative to the skill folder, and an
+# optional message glob (the finding text). Every rule needs a reason.
+# Accept only findings you checked in context; scope AE1 (coverage gap)
+# rules to one file so a new gap still fails CI. Format: upstream
+# docs/SUPPRESSION.md.
+version: 2
+rules:
+  - id: "AE1"
+    path: "SKILL.md"
+    message: "*references/references/keyboard.rst (partial)*"
+    reason: "Coverage gap: SkillSpector's bounded static parser (tool-misuse analyzer) stops on long expressions in this file; scanner limit, not a finding in the file (vendored .rst docs)"
+  - id: "AE1"
+    path: "SKILL.md"
+    message: "*references/references/scratch.rst (partial)*"
+    reason: "Coverage gap: SkillSpector's bounded static parser (tool-misuse analyzer) stops on long expressions in this file; scanner limit, not a finding in the file (vendored .rst docs)"

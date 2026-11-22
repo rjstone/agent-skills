@@ -1,0 +1,49 @@
+# SkillSpector baseline for skills/opencode-build (accepted findings).
+# Used by scripts/skillspector_ci.py (CI: .github/workflows/skillspector.yml).
+# Glob rules match rule id, a path relative to the skill folder, and an
+# optional message glob (the finding text). Every rule needs a reason.
+# Accept only findings you checked in context; scope AE1 (coverage gap)
+# rules to one file so a new gap still fails CI. Format: upstream
+# docs/SUPPRESSION.md.
+version: 2
+rules:
+  - id: "AE1"
+    path: "SKILL.md"
+    message: "*references/client.local.md (partial)*"
+    reason: "Coverage gap: SkillSpector's bounded static parser (tool-misuse analyzer) stops on long expressions in this file; scanner limit, not a finding in the file"
+  - id: "AE1"
+    path: "SKILL.md"
+    message: "*references/client.md (partial)*"
+    reason: "Coverage gap: SkillSpector's bounded static parser (tool-misuse analyzer) stops on long expressions in this file; scanner limit, not a finding in the file"
+  - id: "AE1"
+    path: "SKILL.md"
+    message: "*references/plugins-cli.md (partial)*"
+    reason: "Coverage gap: SkillSpector's bounded static parser (tool-misuse analyzer) stops on long expressions in this file; scanner limit, not a finding in the file"
+  - id: "AE1"
+    path: "SKILL.md"
+    message: "*references/plugins-effect.md (partial)*"
+    reason: "Coverage gap: SkillSpector's bounded static parser (tool-misuse analyzer) stops on long expressions in this file; scanner limit, not a finding in the file"
+  - id: "AE1"
+    path: "SKILL.md"
+    message: "*references/plugins-gui.md (partial)*"
+    reason: "Coverage gap: SkillSpector's bounded static parser (tool-misuse analyzer) stops on long expressions in this file; scanner limit, not a finding in the file"
+  - id: "AE1"
+    path: "SKILL.md"
+    message: "*references/plugins-migrate-v1.md (partial)*"
+    reason: "Coverage gap: SkillSpector's bounded static parser (tool-misuse analyzer) stops on long expressions in this file; scanner limit, not a finding in the file"
+  - id: "AE1"
+    path: "SKILL.md"
+    message: "*references/plugins-server.md (partial)*"
+    reason: "Coverage gap: SkillSpector's bounded static parser (tool-misuse analyzer) stops on long expressions in this file; scanner limit, not a finding in the file"
+  - id: "AS2"
+    path: "references/plugins-effect.md"
+    reason: "Vendored upstream docs (references/ is downloaded, never hand-edited): API text 'List MCP servers'"
+  - id: "AS2"
+    path: "references/plugins-server.md"
+    reason: "Vendored upstream docs (references/ is downloaded, never hand-edited): API text 'List MCP servers'"
+  - id: "PE3"
+    path: "references/plugins-migrate-v1.md"
+    reason: "Vendored upstream docs (references/ is downloaded, never hand-edited): an example plugin that BLOCKS reads of .env files"
+  - id: "E2"
+    path: "scripts/plugin_probe.py"
+    reason: "Copies the environment only to start a local opencode child process with temporary XDG_* folders; nothing is sent anywhere"
