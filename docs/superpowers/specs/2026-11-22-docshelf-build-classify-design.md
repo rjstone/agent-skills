@@ -138,8 +138,8 @@ existing `model:` choice; `BUILD-llmstxt.md` says to add patterns with
   `--offset`. After an `--apply` those pages leave the review set, so the
   loop is: `classify NAME` (offset 0), apply, `classify NAME` again.
   `--offset` is for looking ahead without applying; the "more:" hint is
-  printed only when nothing has been applied to this batch yet, and the
-  "next:" text says to rerun `classify NAME` after applying.
+  printed when more review pages follow the batch, and the "next:" text
+  says to rerun `classify NAME` after applying.
 - A review page the agent leaves alone stays `keep: full` (fetch too
   much). Writing `full KEY` records the agent's decision and removes it
   from review.
