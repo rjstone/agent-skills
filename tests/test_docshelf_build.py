@@ -2227,7 +2227,7 @@ class FollowupHtmlTests(unittest.TestCase):
         self.assertIn('<a href="https://x.io">z</a>', html)
 
 
-class FinalFixTests(unittest.TestCase):
+class MainHostFixTests(unittest.TestCase):
     def test_main_host_from_root_pages(self):
         root = ("# D\n- [A](https://docs.b.io/a.md)\n- [B](https://docs.b.io/b.md)\n"
                 "- [C](https://docs.b.io/c.md)\n- [Chat](https://discord.gg/x)\n")
