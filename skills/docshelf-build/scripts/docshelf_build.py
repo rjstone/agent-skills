@@ -11,12 +11,13 @@ from typing import Callable, List, Optional
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
+from build_archive import _find_build, fetch_archive, find_archive, unpack  # noqa: E402
 from build_detect import describe, detect, offline  # noqa: E402
 from build_classify import apply_choices, counts, parse_choices, review_lines, run_rules  # noqa: E402
 from build_core import (NAME_RE, VERSION, CLIError, built_dir, cache_dir, plans_dir, src_dir,  # noqa: E402
                         warn)
 from build_docvol import check_name, derive_name, write_docvol, write_llms_docvol  # noqa: E402
-from build_fetch import (PageCache, fetch_llms, fetch_pages, index_getter,  # noqa: E402
+from build_fetch import (FetchError, PageCache, fetch_llms, fetch_pages, index_getter,  # noqa: E402
                          open_source, open_url_source)
 from build_inventory import parse_inventory  # noqa: E402
 from build_llms import is_llms_source, read_tree  # noqa: E402
@@ -61,6 +62,20 @@ def _summary_tail(path: str) -> None:
     print("plan: %s (edit \"keep\" and set \"why\": \"manual\" to pin a page)" % path)
 
 
+def _quiet_get(source, url: str):
+    """(status, body) of a GET through the Source; (0, b"") on any failure."""
+    try:
+        return source._get(url)
+    except FetchError:
+        return 0, b""
+
+
+def _find_archive(source):
+    if not source.is_url:
+        return None
+    return find_archive(source.base, lambda u: _quiet_get(source, u), source.head_url)
+
+
 def do_plan_llms(cache: str, args, opener, sleep) -> str:
     if args.base_url:
         raise CLIError("--base-url is only for Sphinx sources", 2)
@@ -101,6 +116,9 @@ def do_plan(cache: str, args, opener=None, sleep=None) -> str:
     overrides = list(args.overrides or [])
     plan = make_plan(source.base, sha, header, entries, overrides, old=old,
                      reset=args.reset, base_url=args.base_url)
+    archive = _find_archive(source)
+    if archive:
+        plan["archive"] = archive
     save_plan(path, plan)
     _print(summarize(plan, old))
     _summary_tail(path)
@@ -170,8 +188,27 @@ def do_build_llms(cache: str, name: str, plan: dict, path: str, workers: int, re
     _fail_lines(errors, len(meta["reused"]))
 
 
+def _archive_source(cache: str, name: str, plan: dict, source, refetch: bool):
+    """A local Source on the unpacked archive of the plan, or None (with a
+    warning) when it cannot be fetched or unpacked."""
+    dest = os.path.join(src_dir(cache), name, "archive")
+    os.makedirs(dest, exist_ok=True)
+    site = os.path.join(dest, "site")
+    try:
+        warn("using the HTML archive %s" % plan["archive"])
+        path, fresh = fetch_archive(plan["archive"], dest, source, refetch, source.head_url)
+        if fresh or not os.path.isdir(site):
+            build = unpack(path, site)
+        else:
+            build = _find_build(site) or site
+        return open_source(build, base_url=source.base)
+    except (FetchError, CLIError) as e:
+        warn("archive not used (%s); fetching page by page" % getattr(e, "reason", e))
+        return None
+
+
 def do_build(cache: str, name: str, workers: int, refetch: bool = False, opener=None,
-             sleep=None) -> None:
+             sleep=None, no_archive: bool = False) -> None:
     path = _plan_path(cache, name)
     if not os.path.isfile(path):
         raise CLIError("no plan for %s; run: docshelf-build plan SOURCE --name %s" % (name, name), 2)
@@ -183,12 +220,29 @@ def do_build(cache: str, name: str, workers: int, refetch: bool = False, opener=
     sha, header, entries = _read_inventory(source)
     if sha != plan["inventory_sha256"]:
         old, plan = plan, make_plan(plan["source"], sha, header, entries, [], old=plan)
+        if old.get("archive"):
+            plan["archive"] = old["archive"]
         save_plan(path, plan)
         print("the inventory changed since the plan:")
         _print(summarize(plan, old))
     uris = [p["uri"] for p in plan["pages"].values() if p["keep"] == "full"]
-    warn("fetching %d pages from %s" % (len(uris), source.base))
-    html, errors = fetch_pages(source, uris)
+    local = None
+    if plan.get("archive") and source.is_url and not no_archive and uris:
+        local = _archive_source(cache, name, plan, source, refetch)
+    if local is not None:
+        html, errors = fetch_pages(local, uris)
+        missing = sorted(errors)
+        html_n = len(html)
+        errors = {}
+        if missing:
+            warn("fetching %d pages missing from the archive from %s"
+                 % (len(missing), source.base))
+            more, errors = fetch_pages(source, missing)
+            html.update(more)
+        print("%d pages from the archive, %d over HTTP" % (html_n, len(missing)))
+    else:
+        warn("fetching %d pages from %s" % (len(uris), source.base))
+        html, errors = fetch_pages(source, uris)
     if uris and len(errors) == len(uris):
         first = sorted(errors)[0]
         raise CLIError("every page failed to download (e.g. %s: %s); nothing written, "
@@ -333,7 +387,9 @@ def _parser() -> argparse.ArgumentParser:
     b.add_argument("--workers", type=int, default=1, help="parallel fetches, 1-4 (default 1)")
     b.add_argument("--refetch", action="store_true",
                    help="download pages again instead of using the page cache "
-                        "(llms.txt sources; Sphinx builds have no page cache)")
+                        "(llms.txt sources), or the site's HTML archive again")
+    b.add_argument("--no-archive", action="store_true",
+                   help="Sphinx: fetch pages one by one even when the site has an HTML archive")
     d = sub.add_parser("detect", help="which build type a site supports (objects.inv "
                        "or llms.txt), and the SOURCE to plan")
     d.add_argument("source", metavar="URL_OR_PATH")
@@ -377,7 +433,7 @@ def main(argv: Optional[List[str]] = None, env=None, opener=None,
                                    "%s run: plan SOURCE --name %s ..." % (args.source,
                                                                          args.source), 2)
                 name = args.source
-            do_build(cache, name, args.workers, args.refetch, opener, sleep)
+            do_build(cache, name, args.workers, args.refetch, opener, sleep, args.no_archive)
         elif args.command == "detect":
             found = detect(args.source, opener=opener, sleep=sleep)
             if found.kind is None:

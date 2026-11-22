@@ -278,7 +278,9 @@ metadata:
   `build_detect.py`: `objects.inv` or `llms.txt`, Sphinx preferred when
   both exist) and points to one `BUILD-<type>.md` beside it, so an agent
   reads only its own type's procedure; a new source type adds a
-  `BUILD-<type>.md` and a `detect` rule (the user, 2026-11-22).
+  `BUILD-<type>.md` and a `detect` rule (the user, 2026-11-22). A site's
+  HTML archive (`build_archive.py`) is a delivery shortcut for Sphinx pages,
+  not a type (the user, 2026-11-22).
 - `sandboxing` - run a nested agent CLI or test harness in a bubblewrap
   sandbox (Linux) that hides the caller's environment, processes and files:
   `scripts/sandbox.py` (`env -i` + bwrap `--clearenv`, `/work` as `HOME`,

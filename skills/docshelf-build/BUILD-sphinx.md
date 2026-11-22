@@ -35,5 +35,12 @@ it instead of to nothing.
 A warning that no page has a domain role means the site is all prose: keep
 the groups you need with `--full`, or the docvol is stubs only.
 
-Sphinx builds have no page cache: a rebuild downloads the full pages again.
+When the site publishes an HTML archive (Read the Docs "htmlzip"), `plan`
+and `detect` print `archive: URL` and `build` uses it automatically: it
+downloads the archive once (kept under the cache's `built-src/NAME/archive/`),
+reads the full pages from it, and fetches over HTTP only the pages the
+archive lacks (`N pages from the archive, M over HTTP`). `--no-archive`
+fetches every page one by one; `--refetch` downloads the archive again (a
+changed size or date does too). Without an archive, Sphinx builds have no
+page cache: a rebuild downloads the full pages again.
 Exit code 3 means SOURCE has no Sphinx inventory.

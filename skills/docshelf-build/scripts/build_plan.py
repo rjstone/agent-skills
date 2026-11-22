@@ -116,6 +116,8 @@ def summarize(plan: dict, old: Optional[dict]) -> List[str]:
     biggest = sorted(groups, key=lambda g: (-sum(groups[g].values()), g))
     for g in biggest[:5]:
         lines.append("  %s: %d full, %d stub" % (g, groups[g]["full"], groups[g]["stub"]))
+    if plan.get("archive"):
+        lines.append("archive: %s" % plan["archive"])
     lines.extend(_added_dropped(pages, old))
     if full == 0 and biggest:
         top = next((g for g in biggest if any("/" in k for k in pages if _group(k) == g)),

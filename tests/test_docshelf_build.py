@@ -2526,5 +2526,116 @@ class ArchiveTests(unittest.TestCase):
             self.ba.fetch_archive("https://h.example/z/", os.path.join(self.tmp, "s"), src, False)
 
 
+class ArchiveCliTests(unittest.TestCase):
+    """plan/build/detect with a Read the Docs style HTML archive (GET-only fake
+    opener, so the archive comes from the API, not the HEAD probe)."""
+    BASE = "https://demo.readthedocs.io/en/latest/"
+    ZIP = "https://media.example/demo.zip"
+
+    def setUp(self):
+        import zipfile
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        self.tmp = os.path.realpath(tmp.name)
+        self.cache = os.path.join(self.tmp, "cache")
+        self.env = {"HOME": self.tmp, "DOCSHELF_CACHE_DIR": self.cache}
+        rows = [(e.name, e.role, "1", e.uri, e.dispname) for e in ENTRIES]
+        inv_bytes = make_inv(rows)
+        pages = {"index.html": DOCVOL_HTML["index.html"],
+                 "cmd/opt.html": DOCVOL_HTML["cmd/opt.html"]}
+        for p in ("guide/index.html", "guide/a.html", "guide/b.html"):
+            pages[p] = "<div role='main'><p>Guide text %s</p></div>" % p
+        self.pages = pages
+        zpath = os.path.join(self.tmp, "demo.zip")
+        with zipfile.ZipFile(zpath, "w") as z:
+            z.writestr("demo-latest/objects.inv", inv_bytes)
+            for rel, html in pages.items():
+                if rel != "guide/b.html":
+                    z.writestr("demo-latest/" + rel, html)
+        with open(zpath, "rb") as f:
+            zbytes = f.read()
+        api = json.dumps({"downloads": {"htmlzip": self.ZIP}}).encode()
+        self.site = {self.BASE + "objects.inv": (200, inv_bytes),
+                     "https://readthedocs.org/api/v3/projects/demo/versions/latest/":
+                     (200, api), self.ZIP: (200, zbytes)}
+        for rel, html in pages.items():
+            self.site[self.BASE + rel] = (200, html.replace("<p>", "<p>LIVE ").encode())
+        self.urls = []
+        self.plan_path = os.path.join(self.cache, "built-plans", "demo.json")
+        self.docvol = os.path.join(self.cache, "built", "demo")
+
+    def opener(self, url):
+        self.urls.append(url)
+        if url.endswith("/robots.txt"):
+            return 404, b""
+        return self.site.get(url, (404, b""))
+
+    def run_main(self, *argv):
+        out, err = io.StringIO(), io.StringIO()
+        with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
+            code = docshelf_build.main(list(argv), env=self.env, opener=self.opener,
+                                       sleep=lambda s: None)
+        return code, out.getvalue(), err.getvalue()
+
+    def page_urls(self):
+        return [u for u in self.urls if u.startswith(self.BASE) and u.endswith(".html")]
+
+    def test_plan_and_detect_print_the_archive(self):
+        code, out, err = self.run_main("plan", self.BASE, "--name", "demo", "--all")
+        self.assertEqual(code, 0, err)
+        self.assertIn("archive: " + self.ZIP, out)
+        self.assertEqual(load_plan(self.plan_path)["archive"], self.ZIP)
+        code, out, _ = self.run_main("detect", self.BASE)
+        self.assertEqual(code, 0)
+        self.assertIn("archive: " + self.ZIP, out)
+
+    def test_build_fetches_only_the_page_missing_from_the_archive(self):
+        self.run_main("plan", self.BASE, "--name", "demo", "--all")
+        self.urls.clear()
+        code, out, err = self.run_main("build", "demo")
+        self.assertEqual(code, 0, err)
+        self.assertEqual(self.page_urls(), [self.BASE + "guide/b.html"])
+        self.assertIn("4 pages from the archive, 1 over HTTP", out)
+        db = load(self.docvol, "db.json")
+        self.assertIn("Guide text guide/a.html", db["guide/a"])
+        self.assertIn("LIVE", db["guide/b"])
+        self.assertNotIn("LIVE", db["guide/a"])
+
+    def test_rebuild_does_not_download_the_archive_again(self):
+        self.run_main("build", self.BASE, "--name", "demo", "--all")
+        self.urls.clear()
+        self.assertEqual(self.run_main("build", "demo")[0], 0)
+        self.assertNotIn(self.ZIP, self.urls)
+        self.urls.clear()
+        self.assertEqual(self.run_main("build", "demo", "--refetch")[0], 0)
+        self.assertIn(self.ZIP, self.urls)
+
+    def test_no_archive_fetches_every_page(self):
+        self.run_main("plan", self.BASE, "--name", "demo", "--all")
+        self.urls.clear()
+        code, out, err = self.run_main("build", "demo", "--no-archive")
+        self.assertEqual(code, 0, err)
+        self.assertEqual(len(self.page_urls()), 5)
+        self.assertNotIn(self.ZIP, self.urls)
+        self.assertNotIn("from the archive", out)
+
+    def test_no_archive_on_the_site_changes_nothing(self):
+        del self.site["https://readthedocs.org/api/v3/projects/demo/versions/latest/"]
+        code, out, err = self.run_main("plan", self.BASE, "--name", "demo", "--all")
+        self.assertEqual(code, 0, err)
+        self.assertNotIn("archive", out)
+        self.assertNotIn("archive", load_plan(self.plan_path))
+        self.assertEqual(self.run_main("detect", self.BASE)[1].count("archive"), 0)
+        code, out, _ = self.run_main("build", "demo")
+        self.assertEqual(len(self.page_urls()), 5)
+
+    def test_remove_deletes_the_archive_folder(self):
+        self.run_main("build", self.BASE, "--name", "demo", "--all")
+        folder = os.path.join(self.cache, "built-src", "demo", "archive")
+        self.assertTrue(os.path.isdir(folder))
+        self.assertEqual(self.run_main("remove", "demo")[0], 0)
+        self.assertFalse(os.path.exists(folder))
+
+
 if __name__ == "__main__":
     unittest.main()
