@@ -10,13 +10,12 @@
 
 ## Skills
 
-- [ ] `opencode-console`: on hold (the user, 2026-11-08). Checked 2026-11-08:
-      the Console docs have no API for reading or writing Go/Zen account data
-      (usage, balance, billing and budgets are web-UI only; usage export is a
-      CSV button). They document only the inference endpoints
-      (`https://opencode.ai/inference/...`), the model lists
-      (`GET /inference/v1/models`, `/inference/go/v1/models`), API key types
-      and SCIM user sync. Revisit if an account API appears.
+- [ ] `opencode-console`: the skill exists (configuring a workspace, the
+      Console MCP server, CLI and inference endpoints). Still missing upstream
+      (checked 2026-11-08, still true in the skill 2026-11-22): a REST API for
+      members, usage, budgets and billing. Usage is readable only through the
+      Console MCP tools (`get_usage`, `get_member_usage`). Revisit if a REST
+      account API appears.
 - [ ] Docs-cache skills copy their refresh script (each skill must stand
       alone when installed). If they drift, generate the copies from one
       template instead of hand-editing each.
@@ -128,7 +127,8 @@ column is from memory: verify each against real output before building.
 - [x] 8.1 `objects.inv` importer: done 2026-11-21 as the `docshelf-build`
       skill 0.1.0 (#29) plus docshelf 0.9.0 (#30). Deferred minors from
       its final review: robots.txt 5xx/network counts as allow-all and
-      `objects.inv` is not checked against robots.txt; the final file
+      the first `objects.inv` request is not checked against robots.txt
+      (0.4.1 checks only its redirect targets); the final file
       swap is not Ctrl-C-safe; `build docs` in a folder with `docs/` is
       taken as a SOURCE; docshelf `remove` cannot remove a damaged built
       docvol; `install` of a built name from the project list prints the
@@ -182,11 +182,10 @@ column is from memory: verify each against real output before building.
       and main-host detection), Markdown (linear emphasis, lazy quotes,
       depth cap, MDX heuristics), HTML/docvol (`on*` attributes and
       `javascript:`/`vbscript:`/`data:` href/src dropped, `_meta`/`_types`
-      shared). Still deferred: the slow link
-      regex on 25000 `[` (0.45 s) and a bare line right after a closed
-      fence inside a quote being absorbed as a lazy paragraph. Also
-      deferred: the lazy-quote check treats a table row as paragraph text;
-      `xlink:href` and `<object data>` are not scheme-checked.
+      shared). The slow link regex, a bare line after a fence inside a
+      quote, and a table row inside a quote taken as lazy text were fixed
+      in 0.4.1 (#37). Still deferred: `xlink:href` and `<object data>` are
+      not scheme-checked.
 - [ ] 8.10 Finding Sphinx docs for a library: the best way to search for
       a project's `objects.inv` site. Ideas: hosting domains with a search
       API (Read the Docs), or a list of docs-hosting domains to restrict a
