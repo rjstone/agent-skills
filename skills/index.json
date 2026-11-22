@@ -42,7 +42,7 @@
     },
     {
       "name": "docshelf-build",
-      "version": "0.4.0",
+      "version": "0.4.1",
       "files": [
         "BUILD-llmstxt.md",
         "BUILD-sphinx.md",
