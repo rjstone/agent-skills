@@ -187,6 +187,11 @@ column is from memory: verify each against real output before building.
       one archive (zip or tgz: Read the Docs "Downloads" HTML zip, a
       project's release docs tarball), fetch that once instead of page by
       page, and have `detect` report it (the user, 2026-11-22).
+- [ ] 8.14 docshelf-build rules-1 is weaker out of sample on LangChain:
+      holdout 11/14 decided pages agree (calibration 23/23), and
+      `integrations/providers/aws` is stubbed though labelled reference. A
+      rules-2 could be tuned on calibration + holdout with a fresh holdout
+      (2026-11-22).
 - Ignore Dash-only extras: `dashtoc`, playground URLs, docset feeds
   (`dash-feed://`), per-docset JavaScript and full-text-search switches.
 

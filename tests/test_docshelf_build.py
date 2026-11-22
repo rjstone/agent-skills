@@ -1858,16 +1858,34 @@ class ClassifyRulesTests(unittest.TestCase):
     def test_missing_signal_keys_reviewed(self):  # RF 1
         self.assertEqual(rule_choice({}), "review")
 
-    def test_fixture_agreement_per_site(self):
+    def _fixture_pages(self, split, site):
         with open(os.path.join(HERE, "fixtures", "docshelf_build_classify.json")) as f:
             data = json.load(f)
+        return [p for p in data["pages"] if p["site"] == site and p.get("split") == split]
+
+    def _decided(self, pages):
+        out = [(rule_choice(p["signals"]), p["label"]) for p in pages]
+        return [(c, lab) for c, lab in out if c != "review"]
+
+    def test_fixture_agreement_per_site(self):
         for site in ("langchain", "opencode"):
-            pages = [p for p in data["pages"] if p["site"] == site]
-            decided = [(rule_choice(p["signals"]), p["label"]) for p in pages]
-            decided = [(c, lab) for c, lab in decided if c != "review"]
+            decided = self._decided(self._fixture_pages("calibration", site))
             agree = sum((c == "full") == (lab == "reference") for c, lab in decided)
             self.assertGreaterEqual(agree / max(1, len(decided)), 0.95, site)
             self.assertGreater(len(decided), 0, site)
+
+    def test_holdout_agreement(self):
+        # Floors are a regression guard at today's out-of-sample figures, not a target.
+        for site, floor in (("langchain", 0.75), ("opencode", 0.95)):
+            decided = self._decided(self._fixture_pages("holdout", site))
+            self.assertGreater(len(decided), 0, site)
+            agree = sum((c == "full") == (lab == "reference") for c, lab in decided)
+            self.assertGreaterEqual(agree / len(decided), floor, site)
+        stubbed = sum(
+            1 for site in ("langchain", "opencode")
+            for p in self._fixture_pages("holdout", site)
+            if p["label"] == "reference" and rule_choice(p["signals"]) == "stub")
+        self.assertLessEqual(stubbed, 1)
 
 
 class ClassifyPlanTests(unittest.TestCase):
