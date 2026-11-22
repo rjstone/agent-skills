@@ -116,6 +116,8 @@ def summarize(plan: dict, old: Optional[dict]) -> List[str]:
     biggest = sorted(groups, key=lambda g: (-sum(groups[g].values()), g))
     for g in biggest[:5]:
         lines.append("  %s: %d full, %d stub" % (g, groups[g]["full"], groups[g]["stub"]))
+    if plan.get("archive"):
+        lines.append("archive: %s" % plan["archive"])
     lines.extend(_added_dropped(pages, old))
     if full == 0 and biggest:
         top = next((g for g in biggest if any("/" in k for k in pages if _group(k) == g)),
@@ -124,6 +126,10 @@ def summarize(plan: dict, old: Optional[dict]) -> List[str]:
                      "rule keeps nothing in full; for prose reference use --full '%s/*' "
                      "(or another group above)" % top)
     return lines
+
+
+def _host_of(url: str) -> str:
+    return (urlsplit(url).hostname or "").lower()
 
 
 def make_llms_plan(source: str, tree: Tree, overrides: List[Tuple[str, str]],
@@ -137,7 +143,10 @@ def make_llms_plan(source: str, tree: Tree, overrides: List[Tuple[str, str]],
     for page in sorted(tree.pages, key=lambda x: x.key):
         prev = old_pages.get(page.key)
         usable = prev if prev and (not reset or prev.get("why") == "manual") else None
-        keep, why = _choose(page.key, "full", "llms: all", stored, cli, usable)
+        rule_keep, rule_why = "full", "llms: all"
+        if _host_of(page.url) != tree.main_host:
+            rule_keep, rule_why = "stub", "llms: other host"
+        keep, why = _choose(page.key, rule_keep, rule_why, stored, cli, usable)
         entry = {"keep": keep, "title": page.title, "section": page.section,
                  "description": page.description or (prev or {}).get("description"),
                  "why": why, "uri": page.url}
@@ -148,6 +157,8 @@ def make_llms_plan(source: str, tree: Tree, overrides: List[Tuple[str, str]],
         for field in CARRIED:
             if prev and field in prev:
                 entry[field] = prev[field]
+        if why == "llms: other host":
+            entry.pop("fetch_error", None)
         pages[page.key] = entry
     return {"format": FORMAT, "kind": "llms", "source": source, "base_url": None,
             "main_host": tree.main_host, "index_sha256": tree.sha256, "indexes": tree.indexes,
@@ -197,6 +208,12 @@ def summarize_llms(plan: dict, old: Optional[dict]) -> List[str]:
             lines.append("%s%s%s" % ("  " * (d + 1), shown,
                                      "" if info is None else " (%s)" % info))
     lines.extend(_added_dropped(pages, old))
+    others = Counter(_host_of(p["uri"]) for p in pages.values()
+                     if p.get("why") == "llms: other host" and p.get("uri"))
+    if others:
+        top = max(others, key=lambda h: (others[h], h))
+        lines.append("warning: %d pages on other hosts are stubs (e.g. %s); keep them "
+                     "with --full '%s/*'" % (sum(others.values()), top, top))
     if full > 300:
         lines.append("warning: %d full pages; narrow with a sub-index as SOURCE (see the tree) "
                      "or --stub globs" % full)

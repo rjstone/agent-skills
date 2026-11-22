@@ -21,6 +21,7 @@ RETRY_DELAYS = (1, 2, 4)        # seconds before retry 1, 2, 3
 MAX_WORKERS = 4
 
 Opener = Callable[[str], Tuple[int, bytes]]
+HeadOpener = Callable[[str], Tuple[int, Dict[str, str]]]
 
 
 class FetchError(Exception):
@@ -47,6 +48,23 @@ def default_opener(url: str) -> Tuple[int, bytes]:
         return 0, b""
 
 
+def default_head(url: str) -> Tuple[int, Dict[str, str]]:
+    """HEAD url: (status, lower-cased headers); status 0 on a network failure."""
+    if urllib.parse.urlsplit(url).scheme not in ("http", "https"):
+        raise ValueError("not an http(s) URL: %s" % url)
+    req = urllib.request.Request(url, method="HEAD", headers={"User-Agent": USER_AGENT})
+    try:
+        # scheme checked above, so no file: or custom schemes
+        with urllib.request.urlopen(req, timeout=TIMEOUT) as r:  # nosec B310
+            return getattr(r, "status", 200), {k.lower(): v for k, v in r.headers.items()}
+    except urllib.error.HTTPError as e:
+        return e.code, {}
+    except http.client.InvalidURL as e:
+        raise ValueError(str(e))
+    except (urllib.error.URLError, OSError):
+        return 0, {}
+
+
 def normalize_source(src: str) -> Tuple[str, bool]:
     """(base, is_url): a URL ending in "/" (a trailing page name such as
     index.html dropped), or an absolute folder path."""
@@ -70,6 +88,7 @@ class Source:
         self.opener, self.workers, self.delay, self.sleep = opener, workers, delay, sleep
         self._robots: Dict[str, urllib.robotparser.RobotFileParser] = {}
         self._lock = threading.Lock()
+        self.head_opener: Optional[HeadOpener] = None
 
     def live_url(self, uri: str) -> Optional[str]:
         return urllib.parse.urljoin(self.live_base, uri) if self.live_base else None
@@ -141,6 +160,30 @@ class Source:
             raise FetchError(url, _status_text(status))
         return body
 
+    def get_quiet(self, url: str) -> Tuple[int, bytes]:
+        """(status, body) of a GET after the robots.txt check; (0, b"") when
+        robots.txt blocks it, the URL is invalid or the request fails. Never
+        raises."""
+        try:
+            if not self._allowed(url):
+                return 0, b""
+            return self._get(url)
+        except (ValueError, FetchError):
+            return 0, b""
+
+    def head_url(self, url: str) -> Tuple[int, Dict[str, str]]:
+        """(status, lower-cased headers) of a HEAD after the robots.txt check;
+        (0, {}) when robots.txt blocks it, the URL is invalid, or this Source
+        has no HEAD opener (a GET-only fake opener)."""
+        if self.head_opener is None:
+            return 0, {}
+        try:
+            if not self._allowed(url):
+                return 0, {}
+            return self.head_opener(url)
+        except ValueError:
+            return 0, {}
+
     def _allowed(self, url: str) -> bool:
         """robots.txt of the URL's own host, fetched once per scheme://netloc
         (for a Sphinx source that is the host of base)."""
@@ -167,11 +210,14 @@ def _status_text(status: int) -> str:
 
 def open_source(src: str, base_url: Optional[str] = None, workers: int = 1,
                 delay: float = 0.5, opener: Optional[Opener] = None,
-                sleep: Optional[Callable[[float], None]] = None) -> Source:
+                sleep: Optional[Callable[[float], None]] = None,
+                head_opener: Optional[HeadOpener] = None) -> Source:
     base, is_url = normalize_source(src)
     live = base if is_url else (normalize_source(base_url)[0] if base_url else None)
-    return Source(base, is_url, live, opener or default_opener,
-                  max(1, min(workers, MAX_WORKERS)), delay, sleep or time.sleep)
+    s = Source(base, is_url, live, opener or default_opener,
+               max(1, min(workers, MAX_WORKERS)), delay, sleep or time.sleep)
+    s.head_opener = head_opener or (default_head if opener is None else None)
+    return s
 
 
 def fetch_pages(source: Source, uris: List[str]) -> Tuple[Dict[str, str], Dict[str, str]]:
@@ -198,10 +244,13 @@ def fetch_pages(source: Source, uris: List[str]) -> Tuple[Dict[str, str], Dict[s
 
 
 def open_url_source(workers: int = 1, delay: float = 0.5, opener: Optional[Opener] = None,
-                    sleep: Optional[Callable[[float], None]] = None) -> Source:
+                    sleep: Optional[Callable[[float], None]] = None,
+                    head_opener: Optional[HeadOpener] = None) -> Source:
     """A Source for fetching absolute URLs (llms.txt builds): no base."""
-    return Source("", True, None, opener or default_opener,
-                  max(1, min(workers, MAX_WORKERS)), delay, sleep or time.sleep)
+    s = Source("", True, None, opener or default_opener,
+               max(1, min(workers, MAX_WORKERS)), delay, sleep or time.sleep)
+    s.head_opener = head_opener or (default_head if opener is None else None)
+    return s
 
 
 def index_getter(source: Source) -> Callable[[str], str]:
@@ -222,7 +271,7 @@ def looks_html(body: str) -> bool:
 
 def fetch_llms_page(source: Source, url: str) -> Tuple[str, str]:
     """(text, "md"|"html") for a listed page. An HTML answer is retried once
-    at url + ".md" (unless url already ends .md/.mdx); the HTML is kept when
+    at the URL path + ".md", query kept, fragment dropped (unless url already ends .md/.mdx); the HTML is kept when
     the retry fails or is HTML too."""
     text = source.get_url(url).decode("utf-8", "replace")
     if not looks_html(text):
@@ -230,7 +279,10 @@ def fetch_llms_page(source: Source, url: str) -> Tuple[str, str]:
     if urllib.parse.urlsplit(url).path.lower().endswith((".md", ".mdx")):
         return text, "html"
     try:
-        alt = source.get_url(url.rstrip("/") + ".md").decode("utf-8", "replace")
+        parts = urllib.parse.urlsplit(url)
+        alt_url = urllib.parse.urlunsplit(
+            (parts.scheme, parts.netloc, parts.path.rstrip("/") + ".md", parts.query, ""))
+        alt = source.get_url(alt_url).decode("utf-8", "replace")
     except FetchError:
         return text, "html"
     return (text, "html") if looks_html(alt) else (alt, "md")

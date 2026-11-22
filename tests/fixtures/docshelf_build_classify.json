@@ -1,5 +1,5 @@
 {
- "note": "Hand-labelled sample for docshelf-build classify (2026-11-22), in two splits. Pages from the 0.2.0 trial's llms.txt docvols: langchain = docs.langchain.com build/python.txt, opencode = opencode.ai llms.txt. split 'calibration' (124 pages): picked as a spread over each sorted key list (the langchain plan has a single section, \"Python\", so its spread is by key prefix) (every third langchain page, every other opencode page with signals); the rules' thresholds were tuned on these. split 'holdout' (84 pages, added 2026-11-22 and labelled by a different reader; never used for tuning): every remaining opencode page with signals, and every fourth of the remaining langchain pages with signals (sorted keys, starting from the second). label 'reference': an agent looks things up in it (API pages, parameters, options, config keys, error lists, CLI flags, integration pages that are mostly signatures and settings). label 'guide': tutorials, concepts, overviews, how-tos told in steps, marketing, legal, status, changelogs and release notes. A page that is both goes by what most of it is. Labels were read from each cached page, not from the signals; signals are copied from the plan. Pages are sorted by site, then split, then key. No page text.",
+ "note": "Hand-labelled sample for docshelf-build classify (2026-11-22), in three splits. Pages from the 0.2.0 trial's llms.txt docvols: langchain = docs.langchain.com build/python.txt, opencode = opencode.ai llms.txt. split 'calibration' (124 pages): picked as a spread over each sorted key list (the langchain plan has a single section, \"Python\", so its spread is by key prefix) (every third langchain page, every other opencode page with signals); rules-1 was tuned on these only (then checked on holdout, then on unseen data); rules-2 on calibration + holdout. split 'holdout' (84 pages, added 2026-11-22 and labelled by a different reader; not used for rules-1 tuning, but rules-2 was tuned on calibration + holdout): every remaining opencode page with signals, and every fourth of the remaining langchain pages with signals (sorted keys, starting from the second). split 'fresh' (62 pages, added 2026-11-22 and labelled by a reader who never saw the rules' thresholds; the only data rules-2 never saw, so the one clean out-of-sample measure): langchain-ts = docs.langchain.com TypeScript sub-index (oss/javascript and langsmith/javascript pages), 62 pages spread evenly over its 236 sorted keys with signals. label 'reference': an agent looks things up in it (API pages, parameters, options, config keys, error lists, CLI flags, integration pages that are mostly signatures and settings). label 'guide': tutorials, concepts, overviews, how-tos told in steps, marketing, legal, status, changelogs and release notes. A page that is both goes by what most of it is. Labels were read from each cached page, not from the signals; signals are copied from the plan. Pages are sorted by site, then split, then key. No page text.",
  "pages": [
   {
    "site": "langchain",
@@ -1799,6 +1799,936 @@
     "tables": 0,
     "words": 531,
     "you_per_1k": 3.8
+   }
+  },
+  {
+   "site": "langchain-ts",
+   "key": "langsmith/javascript/managed-deep-agents-agent-definition",
+   "label": "reference",
+   "split": "fresh",
+   "signals": {
+    "code_ratio": 0.493,
+    "headings": 7,
+    "signature_lines": 7,
+    "steps": 0,
+    "tables": 2,
+    "words": 1848,
+    "you_per_1k": 6.0
+   }
+  },
+  {
+   "site": "langchain-ts",
+   "key": "langsmith/javascript/managed-deep-agents-channels-http",
+   "label": "guide",
+   "split": "fresh",
+   "signals": {
+    "code_ratio": 0.446,
+    "headings": 10,
+    "signature_lines": 26,
+    "steps": 0,
+    "tables": 1,
+    "words": 1958,
+    "you_per_1k": 5.1
+   }
+  },
+  {
+   "site": "langchain-ts",
+   "key": "langsmith/javascript/managed-deep-agents-context-hub",
+   "label": "guide",
+   "split": "fresh",
+   "signals": {
+    "code_ratio": 0.111,
+    "headings": 7,
+    "signature_lines": 0,
+    "steps": 3,
+    "tables": 3,
+    "words": 1060,
+    "you_per_1k": 8.5
+   }
+  },
+  {
+   "site": "langchain-ts",
+   "key": "langsmith/javascript/managed-deep-agents-design-agent",
+   "label": "guide",
+   "split": "fresh",
+   "signals": {
+    "code_ratio": 0.052,
+    "headings": 5,
+    "signature_lines": 0,
+    "steps": 6,
+    "tables": 2,
+    "words": 1682,
+    "you_per_1k": 13.1
+   }
+  },
+  {
+   "site": "langchain-ts",
+   "key": "langsmith/javascript/managed-deep-agents-local-development",
+   "label": "guide",
+   "split": "fresh",
+   "signals": {
+    "code_ratio": 0.058,
+    "headings": 5,
+    "signature_lines": 0,
+    "steps": 5,
+    "tables": 1,
+    "words": 590,
+    "you_per_1k": 10.2
+   }
+  },
+  {
+   "site": "langchain-ts",
+   "key": "langsmith/javascript/managed-deep-agents-middleware",
+   "label": "guide",
+   "split": "fresh",
+   "signals": {
+    "code_ratio": 0.408,
+    "headings": 4,
+    "signature_lines": 5,
+    "steps": 0,
+    "tables": 1,
+    "words": 594,
+    "you_per_1k": 6.7
+   }
+  },
+  {
+   "site": "langchain-ts",
+   "key": "langsmith/javascript/managed-deep-agents-project-structure",
+   "label": "reference",
+   "split": "fresh",
+   "signals": {
+    "code_ratio": 0.367,
+    "headings": 4,
+    "signature_lines": 0,
+    "steps": 0,
+    "tables": 1,
+    "words": 819,
+    "you_per_1k": 7.3
+   }
+  },
+  {
+   "site": "langchain-ts",
+   "key": "langsmith/javascript/managed-deep-agents-schedules",
+   "label": "guide",
+   "split": "fresh",
+   "signals": {
+    "code_ratio": 0.377,
+    "headings": 17,
+    "signature_lines": 10,
+    "steps": 0,
+    "tables": 1,
+    "words": 1966,
+    "you_per_1k": 6.1
+   }
+  },
+  {
+   "site": "langchain-ts",
+   "key": "langsmith/javascript/managed-deep-agents-subagents",
+   "label": "guide",
+   "split": "fresh",
+   "signals": {
+    "code_ratio": 0.293,
+    "headings": 15,
+    "signature_lines": 6,
+    "steps": 3,
+    "tables": 6,
+    "words": 2114,
+    "you_per_1k": 3.8
+   }
+  },
+  {
+   "site": "langchain-ts",
+   "key": "oss/javascript/concepts/context",
+   "label": "guide",
+   "split": "fresh",
+   "signals": {
+    "code_ratio": 0.037,
+    "headings": 4,
+    "signature_lines": 0,
+    "steps": 2,
+    "tables": 1,
+    "words": 837,
+    "you_per_1k": 11.9
+   }
+  },
+  {
+   "site": "langchain-ts",
+   "key": "oss/javascript/concepts/providers-and-models",
+   "label": "guide",
+   "split": "fresh",
+   "signals": {
+    "code_ratio": 0.36,
+    "headings": 8,
+    "signature_lines": 12,
+    "steps": 0,
+    "tables": 2,
+    "words": 910,
+    "you_per_1k": 16.5
+   }
+  },
+  {
+   "site": "langchain-ts",
+   "key": "oss/javascript/contributing/implement-langchain",
+   "label": "guide",
+   "split": "fresh",
+   "signals": {
+    "code_ratio": 0.0,
+    "headings": 0,
+    "signature_lines": 0,
+    "steps": 0,
+    "tables": 0,
+    "words": 729,
+    "you_per_1k": 6.9
+   }
+  },
+  {
+   "site": "langchain-ts",
+   "key": "oss/javascript/contributing/standard-tests-langchain",
+   "label": "guide",
+   "split": "fresh",
+   "signals": {
+    "code_ratio": 0.256,
+    "headings": 4,
+    "signature_lines": 2,
+    "steps": 0,
+    "tables": 0,
+    "words": 571,
+    "you_per_1k": 21.0
+   }
+  },
+  {
+   "site": "langchain-ts",
+   "key": "oss/javascript/deepagents/async-subagents",
+   "label": "guide",
+   "split": "fresh",
+   "signals": {
+    "code_ratio": 0.631,
+    "headings": 27,
+    "signature_lines": 35,
+    "steps": 0,
+    "tables": 4,
+    "words": 2857,
+    "you_per_1k": 3.5
+   }
+  },
+  {
+   "site": "langchain-ts",
+   "key": "oss/javascript/deepagents/content-builder",
+   "label": "guide",
+   "split": "fresh",
+   "signals": {
+    "code_ratio": 0.0,
+    "headings": 5,
+    "signature_lines": 0,
+    "steps": 4,
+    "tables": 0,
+    "words": 6555,
+    "you_per_1k": 8.1
+   }
+  },
+  {
+   "site": "langchain-ts",
+   "key": "oss/javascript/deepagents/dynamic-subagents",
+   "label": "guide",
+   "split": "fresh",
+   "signals": {
+    "code_ratio": 0.148,
+    "headings": 11,
+    "signature_lines": 15,
+    "steps": 0,
+    "tables": 0,
+    "words": 5263,
+    "you_per_1k": 18.8
+   }
+  },
+  {
+   "site": "langchain-ts",
+   "key": "oss/javascript/deepagents/frontend/sandbox",
+   "label": "guide",
+   "split": "fresh",
+   "signals": {
+    "code_ratio": 0.635,
+    "headings": 19,
+    "signature_lines": 142,
+    "steps": 3,
+    "tables": 1,
+    "words": 2078,
+    "you_per_1k": 3.8
+   }
+  },
+  {
+   "site": "langchain-ts",
+   "key": "oss/javascript/deepagents/human-in-the-loop",
+   "label": "guide",
+   "split": "fresh",
+   "signals": {
+    "code_ratio": 0.821,
+    "headings": 10,
+    "signature_lines": 48,
+    "steps": 0,
+    "tables": 1,
+    "words": 847,
+    "you_per_1k": 10.6
+   }
+  },
+  {
+   "site": "langchain-ts",
+   "key": "oss/javascript/deepagents/multimodal",
+   "label": "guide",
+   "split": "fresh",
+   "signals": {
+    "code_ratio": 0.489,
+    "headings": 4,
+    "signature_lines": 1,
+    "steps": 0,
+    "tables": 0,
+    "words": 753,
+    "you_per_1k": 9.3
+   }
+  },
+  {
+   "site": "langchain-ts",
+   "key": "oss/javascript/deepagents/profiles",
+   "label": "reference",
+   "split": "fresh",
+   "signals": {
+    "code_ratio": 0.294,
+    "headings": 7,
+    "signature_lines": 3,
+    "steps": 0,
+    "tables": 1,
+    "words": 1088,
+    "you_per_1k": 9.2
+   }
+  },
+  {
+   "site": "langchain-ts",
+   "key": "oss/javascript/deepagents/sandboxes",
+   "label": "guide",
+   "split": "fresh",
+   "signals": {
+    "code_ratio": 0.688,
+    "headings": 19,
+    "signature_lines": 84,
+    "steps": 2,
+    "tables": 0,
+    "words": 2109,
+    "you_per_1k": 17.1
+   }
+  },
+  {
+   "site": "langchain-ts",
+   "key": "oss/javascript/deepagents/tools",
+   "label": "guide",
+   "split": "fresh",
+   "signals": {
+    "code_ratio": 0.844,
+    "headings": 4,
+    "signature_lines": 63,
+    "steps": 0,
+    "tables": 1,
+    "words": 608,
+    "you_per_1k": 8.2
+   }
+  },
+  {
+   "site": "langchain-ts",
+   "key": "oss/javascript/integrations/chat/bedrock_converse",
+   "label": "reference",
+   "split": "fresh",
+   "signals": {
+    "code_ratio": 0.491,
+    "headings": 10,
+    "signature_lines": 1,
+    "steps": 0,
+    "tables": 2,
+    "words": 638,
+    "you_per_1k": 20.4
+   }
+  },
+  {
+   "site": "langchain-ts",
+   "key": "oss/javascript/integrations/chat/index",
+   "label": "reference",
+   "split": "fresh",
+   "signals": {
+    "code_ratio": 0.0,
+    "headings": 5,
+    "signature_lines": 0,
+    "steps": 0,
+    "tables": 3,
+    "words": 2442,
+    "you_per_1k": 4.1
+   }
+  },
+  {
+   "site": "langchain-ts",
+   "key": "oss/javascript/integrations/decision_models/google_generative_ai",
+   "label": "reference",
+   "split": "fresh",
+   "signals": {
+    "code_ratio": 0.532,
+    "headings": 11,
+    "signature_lines": 14,
+    "steps": 0,
+    "tables": 2,
+    "words": 1280,
+    "you_per_1k": 10.9
+   }
+  },
+  {
+   "site": "langchain-ts",
+   "key": "oss/javascript/integrations/embeddings/bedrock",
+   "label": "reference",
+   "split": "fresh",
+   "signals": {
+    "code_ratio": 0.633,
+    "headings": 12,
+    "signature_lines": 8,
+    "steps": 0,
+    "tables": 1,
+    "words": 651,
+    "you_per_1k": 27.6
+   }
+  },
+  {
+   "site": "langchain-ts",
+   "key": "oss/javascript/integrations/llms/index",
+   "label": "reference",
+   "split": "fresh",
+   "signals": {
+    "code_ratio": 0.0,
+    "headings": 1,
+    "signature_lines": 0,
+    "steps": 0,
+    "tables": 1,
+    "words": 571,
+    "you_per_1k": 7.0
+   }
+  },
+  {
+   "site": "langchain-ts",
+   "key": "oss/javascript/integrations/providers/anthropic",
+   "label": "guide",
+   "split": "fresh",
+   "signals": {
+    "code_ratio": 0.233,
+    "headings": 2,
+    "signature_lines": 3,
+    "steps": 0,
+    "tables": 0,
+    "words": 256,
+    "you_per_1k": 23.4
+   }
+  },
+  {
+   "site": "langchain-ts",
+   "key": "oss/javascript/integrations/providers/openai",
+   "label": "reference",
+   "split": "fresh",
+   "signals": {
+    "code_ratio": 0.107,
+    "headings": 8,
+    "signature_lines": 0,
+    "steps": 0,
+    "tables": 1,
+    "words": 835,
+    "you_per_1k": 2.4
+   }
+  },
+  {
+   "site": "langchain-ts",
+   "key": "oss/javascript/integrations/sandboxes/index",
+   "label": "reference",
+   "split": "fresh",
+   "signals": {
+    "code_ratio": 0.0,
+    "headings": 0,
+    "signature_lines": 0,
+    "steps": 0,
+    "tables": 0,
+    "words": 402,
+    "you_per_1k": 2.5
+   }
+  },
+  {
+   "site": "langchain-ts",
+   "key": "oss/javascript/integrations/tools/google",
+   "label": "reference",
+   "split": "fresh",
+   "signals": {
+    "code_ratio": 0.632,
+    "headings": 8,
+    "signature_lines": 26,
+    "steps": 0,
+    "tables": 0,
+    "words": 624,
+    "you_per_1k": 9.6
+   }
+  },
+  {
+   "site": "langchain-ts",
+   "key": "oss/javascript/langchain/agents",
+   "label": "guide",
+   "split": "fresh",
+   "signals": {
+    "code_ratio": 0.792,
+    "headings": 17,
+    "signature_lines": 236,
+    "steps": 0,
+    "tables": 1,
+    "words": 2042,
+    "you_per_1k": 9.3
+   }
+  },
+  {
+   "site": "langchain-ts",
+   "key": "oss/javascript/langchain/deep-agent-from-scratch",
+   "label": "guide",
+   "split": "fresh",
+   "signals": {
+    "code_ratio": 0.75,
+    "headings": 9,
+    "signature_lines": 93,
+    "steps": 8,
+    "tables": 2,
+    "words": 1864,
+    "you_per_1k": 19.3
+   }
+  },
+  {
+   "site": "langchain-ts",
+   "key": "oss/javascript/langchain/frontend/controlled-generative-ui",
+   "label": "guide",
+   "split": "fresh",
+   "signals": {
+    "code_ratio": 0.0,
+    "headings": 7,
+    "signature_lines": 0,
+    "steps": 0,
+    "tables": 0,
+    "words": 736,
+    "you_per_1k": 27.2
+   }
+  },
+  {
+   "site": "langchain-ts",
+   "key": "oss/javascript/langchain/frontend/headless-tools",
+   "label": "guide",
+   "split": "fresh",
+   "signals": {
+    "code_ratio": 0.634,
+    "headings": 7,
+    "signature_lines": 23,
+    "steps": 4,
+    "tables": 0,
+    "words": 676,
+    "you_per_1k": 7.4
+   }
+  },
+  {
+   "site": "langchain-ts",
+   "key": "oss/javascript/langchain/frontend/integrations/copilotkit",
+   "label": "guide",
+   "split": "fresh",
+   "signals": {
+    "code_ratio": 0.734,
+    "headings": 14,
+    "signature_lines": 59,
+    "steps": 9,
+    "tables": 0,
+    "words": 1568,
+    "you_per_1k": 19.1
+   }
+  },
+  {
+   "site": "langchain-ts",
+   "key": "oss/javascript/langchain/frontend/markdown-messages",
+   "label": "guide",
+   "split": "fresh",
+   "signals": {
+    "code_ratio": 0.563,
+    "headings": 7,
+    "signature_lines": 29,
+    "steps": 3,
+    "tables": 1,
+    "words": 783,
+    "you_per_1k": 6.4
+   }
+  },
+  {
+   "site": "langchain-ts",
+   "key": "oss/javascript/langchain/frontend/reasoning-tokens",
+   "label": "guide",
+   "split": "fresh",
+   "signals": {
+    "code_ratio": 0.731,
+    "headings": 11,
+    "signature_lines": 32,
+    "steps": 2,
+    "tables": 0,
+    "words": 668,
+    "you_per_1k": 9.0
+   }
+  },
+  {
+   "site": "langchain-ts",
+   "key": "oss/javascript/langchain/get-help",
+   "label": "guide",
+   "split": "fresh",
+   "signals": {
+    "code_ratio": 0.0,
+    "headings": 5,
+    "signature_lines": 0,
+    "steps": 0,
+    "tables": 0,
+    "words": 306,
+    "you_per_1k": 19.6
+   }
+  },
+  {
+   "site": "langchain-ts",
+   "key": "oss/javascript/langchain/install",
+   "label": "guide",
+   "split": "fresh",
+   "signals": {
+    "code_ratio": 0.421,
+    "headings": 0,
+    "signature_lines": 0,
+    "steps": 0,
+    "tables": 0,
+    "words": 235,
+    "you_per_1k": 29.8
+   }
+  },
+  {
+   "site": "langchain-ts",
+   "key": "oss/javascript/langchain/mcp/connections",
+   "label": "guide",
+   "split": "fresh",
+   "signals": {
+    "code_ratio": 0.468,
+    "headings": 6,
+    "signature_lines": 18,
+    "steps": 0,
+    "tables": 1,
+    "words": 1175,
+    "you_per_1k": 6.0
+   }
+  },
+  {
+   "site": "langchain-ts",
+   "key": "oss/javascript/langchain/middleware/built-in",
+   "label": "reference",
+   "split": "fresh",
+   "signals": {
+    "code_ratio": 0.434,
+    "headings": 19,
+    "signature_lines": 42,
+    "steps": 3,
+    "tables": 1,
+    "words": 5500,
+    "you_per_1k": 3.8
+   }
+  },
+  {
+   "site": "langchain-ts",
+   "key": "oss/javascript/langchain/multi-agent/custom-workflow",
+   "label": "guide",
+   "split": "fresh",
+   "signals": {
+    "code_ratio": 0.174,
+    "headings": 4,
+    "signature_lines": 15,
+    "steps": 0,
+    "tables": 0,
+    "words": 1008,
+    "you_per_1k": 13.9
+   }
+  },
+  {
+   "site": "langchain-ts",
+   "key": "oss/javascript/langchain/multi-agent/router",
+   "label": "guide",
+   "split": "fresh",
+   "signals": {
+    "code_ratio": 0.241,
+    "headings": 8,
+    "signature_lines": 6,
+    "steps": 0,
+    "tables": 0,
+    "words": 856,
+    "you_per_1k": 8.2
+   }
+  },
+  {
+   "site": "langchain-ts",
+   "key": "oss/javascript/langchain/multi-agent/skills-sql-assistant",
+   "label": "guide",
+   "split": "fresh",
+   "signals": {
+    "code_ratio": 0.154,
+    "headings": 15,
+    "signature_lines": 17,
+    "steps": 0,
+    "tables": 0,
+    "words": 4530,
+    "you_per_1k": 8.2
+   }
+  },
+  {
+   "site": "langchain-ts",
+   "key": "oss/javascript/langchain/overview",
+   "label": "guide",
+   "split": "fresh",
+   "signals": {
+    "code_ratio": 0.776,
+    "headings": 2,
+    "signature_lines": 9,
+    "steps": 0,
+    "tables": 0,
+    "words": 633,
+    "you_per_1k": 19.0
+   }
+  },
+  {
+   "site": "langchain-ts",
+   "key": "oss/javascript/langchain/runtime",
+   "label": "guide",
+   "split": "fresh",
+   "signals": {
+    "code_ratio": 0.703,
+    "headings": 6,
+    "signature_lines": 16,
+    "steps": 5,
+    "tables": 0,
+    "words": 489,
+    "you_per_1k": 16.4
+   }
+  },
+  {
+   "site": "langchain-ts",
+   "key": "oss/javascript/langchain/structured-output",
+   "label": "reference",
+   "split": "fresh",
+   "signals": {
+    "code_ratio": 0.724,
+    "headings": 6,
+    "signature_lines": 60,
+    "steps": 0,
+    "tables": 0,
+    "words": 1090,
+    "you_per_1k": 7.3
+   }
+  },
+  {
+   "site": "langchain-ts",
+   "key": "oss/javascript/langchain/test/integration-testing",
+   "label": "guide",
+   "split": "fresh",
+   "signals": {
+    "code_ratio": 0.5,
+    "headings": 12,
+    "signature_lines": 27,
+    "steps": 0,
+    "tables": 1,
+    "words": 929,
+    "you_per_1k": 7.5
+   }
+  },
+  {
+   "site": "langchain-ts",
+   "key": "oss/javascript/langchain/voice-agent",
+   "label": "guide",
+   "split": "fresh",
+   "signals": {
+    "code_ratio": 0.441,
+    "headings": 17,
+    "signature_lines": 34,
+    "steps": 3,
+    "tables": 0,
+    "words": 1680,
+    "you_per_1k": 4.2
+   }
+  },
+  {
+   "site": "langchain-ts",
+   "key": "oss/javascript/langgraph/application-structure",
+   "label": "guide",
+   "split": "fresh",
+   "signals": {
+    "code_ratio": 0.279,
+    "headings": 7,
+    "signature_lines": 0,
+    "steps": 7,
+    "tables": 0,
+    "words": 597,
+    "you_per_1k": 18.4
+   }
+  },
+  {
+   "site": "langchain-ts",
+   "key": "oss/javascript/langgraph/deploy",
+   "label": "guide",
+   "split": "fresh",
+   "signals": {
+    "code_ratio": 0.0,
+    "headings": 3,
+    "signature_lines": 0,
+    "steps": 2,
+    "tables": 0,
+    "words": 999,
+    "you_per_1k": 26.0
+   }
+  },
+  {
+   "site": "langchain-ts",
+   "key": "oss/javascript/langgraph/frontend/graph-execution",
+   "label": "guide",
+   "split": "fresh",
+   "signals": {
+    "code_ratio": 0.582,
+    "headings": 11,
+    "signature_lines": 37,
+    "steps": 4,
+    "tables": 1,
+    "words": 1147,
+    "you_per_1k": 10.5
+   }
+  },
+  {
+   "site": "langchain-ts",
+   "key": "oss/javascript/langgraph/graph-api-control-flow",
+   "label": "guide",
+   "split": "fresh",
+   "signals": {
+    "code_ratio": 0.498,
+    "headings": 10,
+    "signature_lines": 124,
+    "steps": 3,
+    "tables": 0,
+    "words": 2580,
+    "you_per_1k": 5.8
+   }
+  },
+  {
+   "site": "langchain-ts",
+   "key": "oss/javascript/langgraph/graph-api-visualize",
+   "label": "guide",
+   "split": "fresh",
+   "signals": {
+    "code_ratio": 0.663,
+    "headings": 3,
+    "signature_lines": 18,
+    "steps": 0,
+    "tables": 0,
+    "words": 281,
+    "you_per_1k": 10.7
+   }
+  },
+  {
+   "site": "langchain-ts",
+   "key": "oss/javascript/langgraph/observability",
+   "label": "guide",
+   "split": "fresh",
+   "signals": {
+    "code_ratio": 0.532,
+    "headings": 6,
+    "signature_lines": 6,
+    "steps": 0,
+    "tables": 0,
+    "words": 575,
+    "you_per_1k": 27.8
+   }
+  },
+  {
+   "site": "langchain-ts",
+   "key": "oss/javascript/langgraph/quickstart",
+   "label": "guide",
+   "split": "fresh",
+   "signals": {
+    "code_ratio": 0.287,
+    "headings": 19,
+    "signature_lines": 27,
+    "steps": 6,
+    "tables": 0,
+    "words": 1899,
+    "you_per_1k": 7.9
+   }
+  },
+  {
+   "site": "langchain-ts",
+   "key": "oss/javascript/langgraph/studio",
+   "label": "guide",
+   "split": "fresh",
+   "signals": {
+    "code_ratio": 0.346,
+    "headings": 9,
+    "signature_lines": 1,
+    "steps": 0,
+    "tables": 0,
+    "words": 926,
+    "you_per_1k": 36.7
+   }
+  },
+  {
+   "site": "langchain-ts",
+   "key": "oss/javascript/langgraph/use-graph-api",
+   "label": "guide",
+   "split": "fresh",
+   "signals": {
+    "code_ratio": 0.496,
+    "headings": 2,
+    "signature_lines": 21,
+    "steps": 0,
+    "tables": 0,
+    "words": 750,
+    "you_per_1k": 12.0
+   }
+  },
+  {
+   "site": "langchain-ts",
+   "key": "oss/javascript/learn",
+   "label": "guide",
+   "split": "fresh",
+   "signals": {
+    "code_ratio": 0.0,
+    "headings": 8,
+    "signature_lines": 0,
+    "steps": 0,
+    "tables": 0,
+    "words": 716,
+    "you_per_1k": 9.8
+   }
+  },
+  {
+   "site": "langchain-ts",
+   "key": "oss/javascript/migrate/langgraph-v1",
+   "label": "guide",
+   "split": "fresh",
+   "signals": {
+    "code_ratio": 0.435,
+    "headings": 7,
+    "signature_lines": 9,
+    "steps": 6,
+    "tables": 1,
+    "words": 497,
+    "you_per_1k": 12.1
+   }
+  },
+  {
+   "site": "langchain-ts",
+   "key": "oss/javascript/releases/langchain-v1",
+   "label": "guide",
+   "split": "fresh",
+   "signals": {
+    "code_ratio": 0.379,
+    "headings": 11,
+    "signature_lines": 8,
+    "steps": 0,
+    "tables": 1,
+    "words": 1136,
+    "you_per_1k": 8.8
    }
   },
   {

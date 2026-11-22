@@ -282,21 +282,26 @@ metadata:
   Agents want dense reference, not tutorials (the user, 2026-11-21; spec
   and plan under `docs/superpowers/`). 0.2.0 adds `llms.txt` sources
   (`build_llms.py`, `build_markdown.py`): nested `.txt` sub-indexes
-  followed to depth 3 (same host only, never `*-full.txt`), every listed
-  page kept in full (fetch too much, sort later), raw pages cached in
+  followed to depth 3 (index or main docs host only, never `*-full.txt`), every listed
+  page on the main host kept in full, other-host pages stubs (0.4.0; fetch
+  too much, sort later), raw pages cached in
   `<cache>/built-src/<name>/` so rebuilds and re-sorts need no page
   downloads, page keys from the URL path (stable whichever index is the
   SOURCE), per-page `signals` in the plan for a later classifier whose
   `why: "model:<id>"` choices survive re-planning (the user, 2026-11-21).
   0.3.0 adds `classify NAME` (`build_classify.py`): rules decide the clear
-  pages from the signals (`why: "model:rules-1"`, checked against a labelled
-  fixture) and an agent decides the rest through `--apply` (the user,
-  2026-11-22; spec under `docs/superpowers/specs/`).
+  pages from the signals (`why: "model:rules-1"` in 0.3.0, checked
+  against a labelled fixture) and an agent decides the rest through `--apply` (the user,
+  2026-11-22; spec under `docs/superpowers/specs/`). 0.4.0 replaces the
+  rules with `model:rules-2` (tuned on calibration + holdout, fresh split
+  frozen; an old `model:rules-1` page is re-decided).
   `SKILL.md` only finds the site type (`detect URL_OR_PATH`,
   `build_detect.py`: `objects.inv` or `llms.txt`, Sphinx preferred when
   both exist) and points to one `BUILD-<type>.md` beside it, so an agent
   reads only its own type's procedure; a new source type adds a
-  `BUILD-<type>.md` and a `detect` rule (the user, 2026-11-22).
+  `BUILD-<type>.md` and a `detect` rule (the user, 2026-11-22). A site's
+  HTML archive (`build_archive.py`) is a delivery shortcut for Sphinx pages,
+  not a type (the user, 2026-11-22).
 - `sandboxing` - run a nested agent CLI or test harness in a bubblewrap
   sandbox (Linux) that hides the caller's environment, processes and files:
   `scripts/sandbox.py` (`env -i` + bwrap `--clearenv`, `/work` as `HOME`,

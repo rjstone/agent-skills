@@ -113,6 +113,14 @@ def is_llms_source(arg: str) -> bool:
     return arg.lower().endswith(".txt") and os.path.isfile(arg)
 
 
+WELL_KNOWN_TXT = ("robots.txt", "humans.txt", "security.txt", "ads.txt", "app-ads.txt")
+
+
+def _is_well_known(url: str) -> bool:
+    """A site-metadata .txt file (robots.txt ...), never an index."""
+    return urlsplit(url).path.rsplit("/", 1)[-1].lower() in WELL_KNOWN_TXT
+
+
 def _host(url: str) -> str:
     return (urlsplit(url).hostname or "").lower()
 
@@ -173,25 +181,32 @@ def read_tree(source: str, get_text: Callable[[str], str],
         root_text = get_text(source)
     raw.append(root_text)
     root_title, root_links = parse_index(root_text, source)
-    if local:
+    hosts = Counter(_host(lk.url) for lk in root_links
+                    if not urlsplit(lk.url).path.lower().endswith(".txt"))
+    index_host = "" if local else _host(source)
+    if not hosts and local:  # only sub-indexes listed: their host is the site's
         hosts = Counter(_host(lk.url) for lk in root_links
-                        if not urlsplit(lk.url).path.lower().endswith(".txt"))
-        main_host = hosts.most_common(1)[0][0] if hosts else ""
+                        if not _is_well_known(lk.url))
+    if hosts:  # the most common page host; a tie goes to the index's own host
+        main_host = max(hosts, key=lambda h: (hosts[h], h == index_host))
     else:
-        main_host = _host(source)
+        main_host = index_host
+    follow_hosts = {main_host, index_host}
 
     def walk(url: str, title: str, links: List[Link], parent: Optional[str],
              section: Optional[str], depth: int) -> None:
         entry = {"url": url, "title": title, "pages": 0, "parent": parent, "note": None}
         indexes.append(entry)
         for lk in links:
+            if _is_well_known(lk.url):
+                continue
             if urlsplit(lk.url).path.lower().endswith(".txt"):
                 if lk.url in visited:
                     continue
                 visited.add(lk.url)
                 sub = {"url": lk.url, "title": lk.title, "pages": None,
                        "parent": url, "note": None}
-                if _host(lk.url) != main_host:
+                if _host(lk.url) not in follow_hosts:
                     sub["note"] = "other host, not followed"
                     indexes.append(sub)
                 elif urlsplit(lk.url).path.rsplit("/", 1)[-1].lower().endswith("-full.txt"):

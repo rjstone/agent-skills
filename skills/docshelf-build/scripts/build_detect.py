@@ -5,6 +5,7 @@ import os
 import urllib.parse
 from typing import Callable, List, NamedTuple, Optional, Tuple
 
+from build_archive import find_source_archive
 from build_fetch import FetchError, looks_html, normalize_source, open_url_source
 from build_llms import parse_index
 
@@ -17,6 +18,7 @@ class Detection(NamedTuple):
     source: Optional[str]          # the SOURCE to give plan/build
     found: List[Tuple[str, str]]   # (kind, where) of every usable index found
     tried: List[Tuple[str, str]]   # (URL or path, why it was not used)
+    archive: Optional[str] = None  # URL of the site's HTML archive (Sphinx URL only)
 
 
 def _is_llms(text: str, where: str) -> bool:
@@ -97,7 +99,10 @@ def detect(src: str, opener=None, sleep: Optional[Callable[[float], None]] = Non
             source = source.rstrip(os.sep) or os.sep
     else:
         source = where
-    return Detection(kind, source, found, tried)
+    archive = None
+    if kind == "sphinx" and fetch is not None:
+        archive = find_source_archive(fetch, source)
+    return Detection(kind, source, found, tried, archive)
 
 
 def offline(d: Detection) -> bool:
@@ -110,4 +115,6 @@ def describe(d: Detection) -> List[str]:
     lines = ["type: %s" % d.kind, "source: %s" % d.source, "read: %s" % DOCS[d.kind]]
     for kind, where in d.found[1:]:
         lines.append("also: %s (%s)" % (kind, where))
+    if d.archive:
+        lines.append("archive: %s" % d.archive)
     return lines

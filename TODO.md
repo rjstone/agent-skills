@@ -166,7 +166,7 @@ column is from memory: verify each against real output before building.
       0 / 7.1 / 57.5; LangChain Python `words` 157 / 1274 / 16478,
       `code_ratio` 0 / 0.33 / 0.90, `you_per_1k` 0.5 / 8.5 / 45.2,
       `signature_lines` 0 / 9 / 236 (the user, 2026-11-21).
-- [ ] 8.12 docshelf-build llms.txt follow-ups (0.2.0 reviews and trial):
+- [x] 8.12 docshelf-build llms.txt follow-ups (0.2.0 reviews and trial):
       links to other hosts (discord.gg, x.com) are planned as pages and
       fail; `humans.txt` is followed as a sub-index (0 pages); `.md` retry
       URL ignores a query string; blockquote lazy continuation and a few
@@ -177,20 +177,33 @@ column is from memory: verify each against real output before building.
       `on*=` attributes and `javascript:` hrefs pass through `_serialize`
       (inert in docshelf's text renderer). A local root listing only
       sub-indexes gives an empty `main_host`.
+      Done across 0.3.1 and 0.4.0: index/fetch (other-host pages become
+      stubs, `humans.txt` skipped, `.md` retry keeps the query, local-root
+      and main-host detection), Markdown (linear emphasis, lazy quotes,
+      depth cap, MDX heuristics), HTML/docvol (`on*` attributes and
+      `javascript:`/`vbscript:`/`data:` href/src dropped, `_meta`/`_types`
+      shared). Still deferred: the slow link
+      regex on 25000 `[` (0.45 s) and a bare line right after a closed
+      fence inside a quote being absorbed as a lazy paragraph. Also
+      deferred: the lazy-quote check treats a table row as paragraph text;
+      `xlink:href` and `<object data>` are not scheme-checked.
 - [ ] 8.10 Finding Sphinx docs for a library: the best way to search for
       a project's `objects.inv` site. Ideas: hosting domains with a search
       API (Read the Docs), or a list of docs-hosting domains to restrict a
       general web search to (`readthedocs.io`, `github.io`, ...); maybe
       PyPI `project_urls` "Documentation" (the user, 2026-11-21, PR #29
       review).
-- [ ] 8.13 docshelf-build bulk downloads: when a site offers its docs as
-      one archive (zip or tgz: Read the Docs "Downloads" HTML zip, a
-      project's release docs tarball), fetch that once instead of page by
-      page, and have `detect` report it (the user, 2026-11-22).
-- [ ] 8.14 docshelf-build rules-1 is weaker out of sample on LangChain:
-      holdout 11/14 decided pages agree (calibration 23/23), and
-      `integrations/providers/aws` is stubbed though labelled reference. A
-      rules-2 could be tuned on calibration + holdout with a fresh holdout
+- [x] 8.13 docshelf-build bulk downloads: when a site offers its docs as
+      one archive, fetch that once instead of page by page, and have
+      `detect` report it (the user, 2026-11-22). Done for the Read the Docs
+      "Downloads" HTML zip (discovery is Read the Docs only; unpacking
+      handles zip and tar.gz, but other tarballs are not discovered).
+- [x] 8.14 Done in docshelf-build 0.4.0: rules-2 (`model:rules-2`) tuned on
+      calibration + holdout: agreement 26/26 langchain, 30/30 opencode, no
+      reference page stubbed (thresholds: full needs you <= 3 and tables >= 2;
+      stub needs you >= 14 and tables <= 1; fewer decided, more review).
+      Frozen check on the fresh langchain-ts split (never tuned on): 14 of 62
+      decided, 13 agree (0.93), 1 reference page stubbed, 48 left to review
       (2026-11-22).
 - Ignore Dash-only extras: `dashtoc`, playground URLs, docset feeds
   (`dash-feed://`), per-docset JavaScript and full-text-search switches.

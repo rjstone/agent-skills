@@ -4,8 +4,12 @@ For sites that publish `llms.txt`, a Markdown list of page links (Mintlify,
 Astro Starlight and others). SOURCE is the `llms.txt` URL that `detect`
 prints; a sub-index URL or a local `.txt` file also works.
 
-Every listed page is kept in full; nothing becomes a stub unless you ask
-(`--stub PAT`). Sub-indexes (`.txt` links) on the same host are followed
+Every listed page on the docs' main host (the most common host among the
+root index's page links) is kept in full; pages on other hosts start as
+stubs and are never fetched (keep them with `--full 'HOST/*'`), and
+nothing else becomes a stub unless you ask (`--stub PAT`). An existing plan
+gets the other-host rule when re-planned (`plan SOURCE --name NAME`), not
+on a plain `build NAME`. Sub-indexes (`.txt` links) on the index's host or the docs' main host are followed
 three levels deep; `*-full.txt` dumps are listed but not followed. Page keys
 come from the URL path, so a page has the same key whichever index is the
 SOURCE.
@@ -48,14 +52,15 @@ lines, "you" per 1000 words and similar counts), recorded by `build`. The
 loop:
 
 1. `build NAME` (fills the signals and the page cache).
-2. `classify NAME` applies the rules (`why: "model:rules-1"`), prints one
+2. `classify NAME` applies the rules (`why: "model:rules-2"`), prints one
    count line, then up to 25 review pages (`--offset K`, `--limit N`) with
    signals and a short preview from the cache.
 3. Write one line for every listed review page to a file: `full KEY` to
-   keep it, `stub KEY [short description]` to drop it. A page without a
-   line stays in review and is listed again. After reviewing what you can,
-   `full REST` or `stub REST` sets every page still listed (the key REST,
-   no description; explicit lines win). A description stays until a new one
+   keep it, `stub KEY [short description]` to drop it. Write `stub KEY` only
+   for pages whose preview you have read. A page without a line stays in
+   review and is listed again. After reviewing what you can, `full REST`
+   sets every page still listed full (the key REST, no description;
+   explicit lines win). `stub REST` is refused: a page in doubt stays full. A description stays until a new one
    is given.
 4. `classify NAME --apply FILE --model YOUR_MODEL_ID` (`-` reads stdin);
    it stores `"why": "model:<id>"` and reports skipped lines.

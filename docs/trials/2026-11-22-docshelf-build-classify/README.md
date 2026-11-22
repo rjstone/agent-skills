@@ -68,7 +68,53 @@ user wants reference only.
   part of the listing, rather than page by page. The listing was used, but
   the long review tail (about 160 pages) invites bulk decisions.
 
+## Round 3 (0.4.0 before the final-review fixes: rules-2, `full REST` / `stub REST`)
+
+Same prompt and models. Labels now 120 LangChain pages (calibration + holdout).
+
+| Run | Flow | Choices applied | Final plan (rules ref / rules stub / agent / person) | vs labels | Reference pages stubbed | Answer | Time |
+|---|---|---|---|---|---|---|---|
+| luna | sub-index, build, classify x4, one `--apply` with 51 explicit lines plus `stub REST` (139 pages) | 190 | 6 / 44 / 190 / 0 | 99/120 | 19 | correct | 314 s |
+| deepseek | sub-index, build, classify x2, `--apply`, plus 5 scripted edits of the plan file | 187 | 6 / 47 / 187 / 0 | 77/120 | 8 | correct | 319 s |
+| step | root index with `--stub` group patterns (178 pages), build, classify once, no `--apply` (43 left in review, kept full) | 0 | 6 / 14 / 0 / 178 | 91/120 | 13 | correct | 661 s |
+
+- rules-2 decided few pages (6 reference, 14-47 stub) and none of the stubbed
+  reference pages came from it.
+- luna's 19 stubbed reference pages are all agent choices, in a run where
+  one `stub REST` line set 139 of its 190 choices at once (unread pages).
+  That contradicts the spec's rule that a page in doubt stays full. The
+  stubbed reference pages of the other runs came from deepseek's own
+  choices (8) and step's group patterns (13).
+  Fix after this round: `stub REST` removed (an error line); `full REST`
+  kept; the docs say to stub only pages you have read.
+- Two models still bypassed the listing: deepseek edited the plan file with
+  scripts, step cut by path patterns before building.
+
+## Round 4 (0.4.0 final: rules-2, `full REST` only, other-host stubs)
+
+Same prompt and models; labels: 120 LangChain pages.
+
+| Run | Flow | Choices applied | Final plan (rules ref / rules stub / agent) | vs labels | Reference pages stubbed | Answer | Time |
+|---|---|---|---|---|---|---|---|
+| luna | sub-index, build, classify x6, one `--apply` | 187 | 6 / 47 / 186 | 100/120 | 19 | correct | 343 s |
+| deepseek | sub-index, build, classify x2, one `--apply` deciding all 240 pages (rules' choices overwritten) | 240 | 0 / 0 / 240 | 87/120 | 11 | correct | 362 s |
+| step | sub-index, build, classify x3, `--apply` x2 | 192 | 6 / 47 / 187 | 102/120 | 12 | correct | 403 s |
+
+- First round where every model built the sub-index, classified and applied
+  its choices; none cut by path patterns or edited the plan file; no
+  `stub REST` (the docs' "refused" sentence was read).
+- Agreement with the labels is the best so far (87-102 of 120, against
+  77-99 in round 3); docvol sizes 0.6-2.0 MB (db.json).
+- Every stubbed reference page is the model's own explicit choice (why
+  `model:<id>`); none from rules-2. 11-19 per run is still the main
+  weakness: the review listing's three lines are too little for some
+  configuration-heavy pages.
+
 ## Follow-ups
+
+- Wrong stubs by the reviewing model (11-19 per run in round 4): show more of
+  a page (headings, a signature sample) in the review listing, or ask the
+  model to stub only pages with tutorial signals.
 
 - Bulk decisions on a long review tail: a `--limit` default of 25 still
   led two models to script the rest. Possible: sort the review listing by

@@ -1,6 +1,7 @@
 """Rules that sort llms.txt pages into reference (full) and guide (stub) from
-the per-page signals in the plan. Thresholds were calibrated on the labelled
-sample in tests/fixtures/docshelf_build_classify.json (two sites)."""
+the per-page signals in the plan. Thresholds were tuned on the labelled
+sample in tests/fixtures/docshelf_build_classify.json (calibration and holdout
+splits; the fresh split is only a frozen check)."""
 import html
 import re
 from typing import Callable, Dict, List, Optional, Tuple
@@ -8,13 +9,13 @@ from typing import Callable, Dict, List, Optional, Tuple
 from build_html import main_content
 from build_markdown import front_matter
 
-RULES_ID = "model:rules-1"  # the plan's `why` for a rules decision; bump when thresholds change
+RULES_ID = "model:rules-2"  # the plan's `why` for a rules decision; bump when thresholds change
 
 MIN_WORDS = 250        # thinner pages carry too little signal: review
 REF_MAX_YOU = 3.0      # reference prose rarely addresses the reader ("you" per 1000 words)
-REF_MIN_TABLES = 2     # parameter and option tables mark reference
-REF_MIN_SIGNATURES = 10  # many signature-like lines mark reference
-GUIDE_MIN_YOU = 10.0   # tutorial prose talks to the reader
+REF_MIN_TABLES = 2     # parameter and option tables mark reference (a signature-line
+                       # count did not separate guides with code from reference: dropped)
+GUIDE_MIN_YOU = 14.0   # tutorial prose talks to the reader; 10 stubbed reference pages
 GUIDE_MAX_TABLES = 1   # a guide may have a table or so, not several
 
 
@@ -28,8 +29,7 @@ def rule_choice(signals: Dict) -> str:
     if g("words") < MIN_WORDS:
         return "review"
     you, tables = g("you_per_1k"), g("tables")
-    if you <= REF_MAX_YOU and (tables >= REF_MIN_TABLES
-                               or g("signature_lines") >= REF_MIN_SIGNATURES):
+    if you <= REF_MAX_YOU and tables >= REF_MIN_TABLES:
         return "full"
     if you >= GUIDE_MIN_YOU and tables <= GUIDE_MAX_TABLES:
         return "stub"
@@ -42,7 +42,7 @@ def may_decide(page: Dict) -> bool:
     if not isinstance(page.get("signals"), dict):
         return False
     why = page.get("why") or ""
-    if why == "manual" or why.startswith("override:"):
+    if why == "manual" or why.startswith("override:") or why == "llms: other host":
         return False
     return not why.startswith("model:") or why.startswith("model:rules-")
 
@@ -129,7 +129,8 @@ def review_lines(plan: Dict, get_raw: Callable[[str], Optional[Tuple[str, str]]]
 
 def parse_choices(text: str) -> Tuple[List[Tuple[int, str, str, Optional[str]]], List[str]]:
     """Parse an agent's choices: `full KEY` or `stub KEY [description]` per line.
-    The key REST (upper case, no description) means every page still in review.
+    `full REST` (upper case, no description) means every page still in review;
+    `stub REST` is refused: a page in doubt stays full.
     Returns (line number, keep, key, description or None) tuples and errors."""
     choices: List[Tuple[int, str, str, Optional[str]]] = []
     errors: List[str] = []
@@ -142,6 +143,10 @@ def parse_choices(text: str) -> Tuple[List[Tuple[int, str, str, Optional[str]]],
             errors.append("line %d: expected 'full KEY' or 'stub KEY [description]'" % n)
             continue
         desc = parts[2].strip() if len(parts) > 2 else ""
+        if parts[1] == "REST" and parts[0] == "stub":
+            errors.append("line %d: stub REST is not allowed; "
+                          "stub only pages you have read" % n)
+            continue
         if parts[1] == "REST" and desc:
             errors.append("line %d: REST takes no description" % n)
             continue

@@ -58,6 +58,25 @@ def _entry_name(e: InvEntry) -> str:
     return e.name if e.dispname == "-" else e.dispname
 
 
+def _types(entries: List[dict]) -> List[dict]:
+    """The index's type list: name, count and slug per entry type, by name."""
+    counts: Dict[str, int] = {}
+    for x in entries:
+        counts[x["type"]] = counts.get(x["type"], 0) + 1
+    return [{"name": t, "count": counts[t], "slug": t.lower().replace(" ", "_")}
+            for t in sorted(counts)]
+
+
+def _meta(name: str, plan: dict, index: dict, now: float) -> dict:
+    """The meta keys both docvol kinds share."""
+    return {"slug": name, "name": plan.get("project") or name,
+            "release": plan.get("version", ""), "version": plan.get("version", ""),
+            "mtime": int(now),
+            "installedAt": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(now)),
+            "alias": None, "entry_count": len(index["entries"]),
+            "origin": "docshelf-build", "format": DOCVOL_FORMAT, "source": plan["source"]}
+
+
 def _index(plan: dict, entries: List[InvEntry]) -> dict:
     pages = plan["pages"]
     seen, out = set(), []
@@ -78,12 +97,7 @@ def _index(plan: dict, entries: List[InvEntry]) -> dict:
         if e.role == "std:label" and e.dispname == "-":
             continue  # an anonymous label: noise
         add(_entry_name(e), role_label(e.role), key + ("#" + anchor_id(anchor) if anchor else ""))
-    counts: Dict[str, int] = {}
-    for x in out:
-        counts[x["type"]] = counts.get(x["type"], 0) + 1
-    types = [{"name": t, "count": counts[t], "slug": t.lower().replace(" ", "_")}
-             for t in sorted(counts)]
-    return {"entries": out, "types": types}
+    return {"entries": out, "types": _types(out)}
 
 
 def _previous_db(folder: str) -> Dict[str, str]:
@@ -130,13 +144,8 @@ def write_docvol(cache: str, name: str, plan: dict, entries: List[InvEntry],
     folder = os.path.join(built_dir(cache), name)
     reused: List[str] = []
     db = _db(plan, pages_html, errors, _previous_db(folder), reused)
-    meta = {"slug": name, "name": plan.get("project") or name,
-            "release": plan.get("version", ""), "version": plan.get("version", ""),
-            "mtime": int(now),
-            "installedAt": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(now)),
-            "alias": None, "entry_count": len(index["entries"]),
-            "origin": "docshelf-build", "format": DOCVOL_FORMAT, "source": plan["source"],
-            "inventory_sha256": plan["inventory_sha256"], "reused": sorted(reused)}
+    meta = _meta(name, plan, index, now)
+    meta.update({"inventory_sha256": plan["inventory_sha256"], "reused": sorted(reused)})
     _write_files(cache, name, {"index.json": index, "db.json": db, "meta.json": meta})
     return meta
 
@@ -188,11 +197,7 @@ def _llms_index(plan: dict, html_by_key: Dict[str, str]) -> dict:
         if p["keep"] == "full" and key in html_by_key:
             for _, hid, text in headings(html_by_key[key]):
                 out.append({"name": text, "type": kind, "path": key + "#" + hid})
-    counts: Dict[str, int] = {}
-    for x in out:
-        counts[x["type"]] = counts.get(x["type"], 0) + 1
-    return {"entries": out, "types": [{"name": t, "count": counts[t], "slug": t.lower().replace(" ", "_")}
-                                      for t in sorted(counts)]}
+    return {"entries": out, "types": _types(out)}
 
 
 def write_llms_docvol(cache: str, name: str, plan: dict, raw: Dict[str, Tuple[str, str]],
@@ -227,14 +232,9 @@ def write_llms_docvol(cache: str, name: str, plan: dict, raw: Dict[str, Tuple[st
         else:
             db[key] = stub_html(p["title"], p.get("section"), p.get("description"), p["uri"], None)
     index = _llms_index(plan, db)
-    meta = {"slug": name, "name": plan.get("project") or name,
-            "release": plan.get("version", ""), "version": plan.get("version", ""),
-            "mtime": int(now),
-            "installedAt": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(now)),
-            "alias": None, "entry_count": len(index["entries"]),
-            "origin": "docshelf-build", "format": DOCVOL_FORMAT, "source": plan["source"],
-            "source_kind": "llms", "index_sha256": plan["index_sha256"],
-            "reused": sorted(reused)}
+    meta = _meta(name, plan, index, now)
+    meta.update({"source_kind": "llms", "index_sha256": plan["index_sha256"],
+                 "reused": sorted(reused)})
     _write_files(cache, name, {"index.json": index, "db.json": db, "meta.json": meta})
     return meta
 

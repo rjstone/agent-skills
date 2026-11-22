@@ -1412,6 +1412,53 @@ def f(x):
 """
 
 
+class FollowupMarkdownTests(unittest.TestCase):
+    check = MarkdownTests.check
+    norm = staticmethod(MarkdownTests.norm)
+
+    def test_blockquote_lazy(self):
+        self.check("> a\nb\n", "<blockquote><p>a\nb</p></blockquote>")
+
+    def test_mdx_exact_closer(self):
+        html = md_to_html("<Tabs>\n<Tab>x</Tab>\n</Tabs>")
+        self.assertIn("x", html)
+        self.assertNotIn("Tab", html)
+        self.assertNotIn("&lt;", html)
+        # </Tabs> must not count as the closer of an inline <Tab>
+        self.assertIn("&lt;Tab&gt;", md_to_html("see <Tab>x</Tabs> y"))
+
+    def test_list_indented_code(self):
+        html = md_to_html("- item\n\n      <Card />\n")
+        self.assertIn("<pre><code>&lt;Card /&gt;", html)
+
+    def test_emphasis_hostile_is_fast(self):
+        import time
+        for src in ("*a" * 20000, "_" * 50000):
+            t0 = time.monotonic()
+            md_to_html(src)
+            self.assertLess(time.monotonic() - t0, 1.0)
+
+    def test_blockquote_lazy_is_fast(self):
+        import time
+        t0 = time.monotonic()
+        html = md_to_html("> a\n" + "b\n" * 25000)
+        self.assertLess(time.monotonic() - t0, 1.0)
+        self.assertIn("<blockquote>", html)
+
+    def test_emphasis_still_works(self):
+        self.check("*a* **b** _c_ __d__ ~~e~~",
+                   "<p><em>a</em> <strong>b</strong> <em>c</em> <strong>d</strong> <del>e</del></p>")
+
+    def test_deep_nesting_capped(self):
+        html = md_to_html("> " * 500 + "x")
+        self.assertIn("x", html)
+        lst = "\n".join("  " * k + "- " + ("x" if k == 499 else "i") for k in range(500))
+        self.assertIn("x", md_to_html(lst))
+        mdx = "\n".join("<C>" if False else "<Box>" for _ in range(500)) + "\nx\n" \
+            + "\n".join("</Box>" for _ in range(500))
+        self.assertIn("x", md_to_html(mdx))
+
+
 class SignalsTests(unittest.TestCase):
     def test_markdown_signals(self):
         self.assertEqual(page_signals(SIGNALS_MD, "md"), {
@@ -1693,7 +1740,8 @@ class DetectTests(unittest.TestCase):
 CL_INDEX = ("# Site\n## Docs\n- [Ref](https://x.io/ref.md)\n- [Guide](https://x.io/guide.md)\n"
             "- [Thin](https://x.io/thin.md)\n")
 CL_REF = ("# Ref\n\n" + "The option sets the value used by the command. " * 40
-          + "\n\n```\n" + "".join("--flag%d VALUE\n" % i for i in range(12)) + "```\n")
+          + "\n\n```\n" + "".join("--flag%d VALUE\n" % i for i in range(12)) + "```\n"
+          + "\n| a | b |\n|---|---|\n| 1 | 2 |\n\n| c | d |\n|---|---|\n| 3 | 4 |\n")
 CL_GUIDE = "# Guide\n\n" + "First you open it, then you check that you can see what you need. " * 30 + "\n"
 CL_THIN = "# Thin\n\nShort page.\n"
 
@@ -1838,7 +1886,7 @@ class ClassifyCliTests(unittest.TestCase):
 
 class ClassifyRulesTests(unittest.TestCase):
     def test_rules_id(self):
-        self.assertEqual(RULES_ID, "model:rules-1")
+        self.assertEqual(RULES_ID, "model:rules-2")
 
     def test_clear_reference(self):
         self.assertEqual(rule_choice({"words": 900, "code_ratio": 0.6, "you_per_1k": 1.0,
@@ -1867,25 +1915,38 @@ class ClassifyRulesTests(unittest.TestCase):
         out = [(rule_choice(p["signals"]), p["label"]) for p in pages]
         return [(c, lab) for c, lab in out if c != "review"]
 
-    def test_fixture_agreement_per_site(self):
-        for site in ("langchain", "opencode"):
-            decided = self._decided(self._fixture_pages("calibration", site))
-            agree = sum((c == "full") == (lab == "reference") for c, lab in decided)
-            self.assertGreaterEqual(agree / max(1, len(decided)), 0.95, site)
-            self.assertGreater(len(decided), 0, site)
+    def _agreement(self, pages):
+        decided = self._decided(pages)
+        agree = sum((c == "full") == (lab == "reference") for c, lab in decided)
+        return decided, agree
 
-    def test_holdout_agreement(self):
-        # Floors are a regression guard at today's out-of-sample figures, not a target.
-        for site, floor in (("langchain", 0.75), ("opencode", 0.95)):
-            decided = self._decided(self._fixture_pages("holdout", site))
+    def _stubbed_reference(self, pages):
+        return sum(1 for p in pages
+                   if p["label"] == "reference" and rule_choice(p["signals"]) == "stub")
+
+    def test_tuning_bar_calibration_plus_holdout(self):
+        # rules-2 was tuned on these two splits together: the bar per site.
+        stubbed = 0
+        for site in ("langchain", "opencode"):
+            pages = (self._fixture_pages("calibration", site)
+                     + self._fixture_pages("holdout", site))
+            decided, agree = self._agreement(pages)
             self.assertGreater(len(decided), 0, site)
-            agree = sum((c == "full") == (lab == "reference") for c, lab in decided)
-            self.assertGreaterEqual(agree / len(decided), floor, site)
-        stubbed = sum(
-            1 for site in ("langchain", "opencode")
-            for p in self._fixture_pages("holdout", site)
-            if p["label"] == "reference" and rule_choice(p["signals"]) == "stub")
+            self.assertGreaterEqual(agree / len(decided), 0.95, site)
+            stubbed += self._stubbed_reference(pages)
         self.assertLessEqual(stubbed, 1)
+
+    def test_fresh_split_frozen_figures(self):
+        # The fresh split (another site) never took part in tuning. These
+        # floors are a regression guard at the figures measured once after
+        # the thresholds were frozen (14 of 62 decided, 13 agree, 1 reference
+        # page stubbed), not a target.
+        pages = self._fixture_pages("fresh", "langchain-ts")
+        self.assertEqual(len(pages), 62)
+        decided, agree = self._agreement(pages)
+        self.assertGreaterEqual(len(decided), 14)
+        self.assertGreaterEqual(agree / len(decided), 13 / 14 - 0.001)
+        self.assertLessEqual(self._stubbed_reference(pages), 1)
 
 
 class ClassifyPlanTests(unittest.TestCase):
@@ -1920,10 +1981,22 @@ class ClassifyPlanTests(unittest.TestCase):
         run_rules(plan)
         self.assertEqual([plan["pages"][k]["keep"] for k in "abc"], ["full", "stub", "full"])
         self.assertEqual([plan["pages"][k]["why"] for k in "abc"],
-                         ["model:rules-1", "model:rules-1", "llms: all"])
+                         ["model:rules-2", "model:rules-2", "llms: all"])
         before = json.loads(json.dumps(plan))
         run_rules(plan)
         self.assertEqual(plan, before)
+
+    def test_rules1_pages_redecided(self):  # RF 4
+        plan = {"kind": "llms", "pages": {
+            "a": self.pg(why="model:rules-1", keep="stub"),
+            "b": self.pg(why="model:rules-1", keep="full", signals=self.GUIDE),
+            "c": self.pg(why="model:agent", keep="stub"),
+            "d": self.pg(why="manual", keep="stub")}}
+        run_rules(plan)
+        self.assertEqual([plan["pages"][k]["keep"] for k in "abcd"],
+                         ["full", "stub", "stub", "stub"])
+        self.assertEqual([plan["pages"][k]["why"] for k in "abcd"],
+                         ["model:rules-2", "model:rules-2", "model:agent", "manual"])
 
     def test_run_rules_leaves_people_and_agents(self):
         plan = {"kind": "llms", "pages": {
@@ -2037,27 +2110,34 @@ class ClassifyApplyTests(unittest.TestCase):
         self.assertEqual(plan["pages"]["pe"]["why"], "manual")
         self.assertEqual(plan["pages"]["ns"]["why"], "llms: all")
 
-    def test_rest_stub_and_explicit_lines_win_in_either_order(self):
-        for text in ("full a\nstub REST\n", "stub REST\nfull a\n"):
+    def test_rest_stub_is_refused(self):
+        for text in ("stub REST\n", "stub REST\nfull a\n"):
+            ch, err = parse_choices(text)
+            self.assertEqual(err, ["line 1: stub REST is not allowed; "
+                                   "stub only pages you have read"])
+            self.assertTrue(all(c[2] != "REST" for c in ch))
+
+    def test_rest_full_and_explicit_lines_win_in_either_order(self):
+        for text in ("stub a\nfull REST\n", "full REST\nstub a\n"):
             plan = self.rest_plan()
             ch, _ = parse_choices(text)
             n, _ = apply_choices(plan, ch, "t")
             self.assertEqual(n, 2)
-            self.assertEqual(plan["pages"]["a"]["keep"], "full")
-            self.assertEqual(plan["pages"]["b"]["keep"], "stub")
+            self.assertEqual(plan["pages"]["a"]["keep"], "stub")
+            self.assertEqual(plan["pages"]["b"]["keep"], "full")
 
     def test_rest_with_description_is_an_error(self):
-        ch, err = parse_choices("stub REST dropped\nfull a\n")
+        ch, err = parse_choices("full REST dropped\nfull a\n")
         self.assertEqual(err, ["line 1: REST takes no description"])
         self.assertEqual(ch, [(2, "full", "a", None)])
 
     def test_real_page_named_rest_still_means_bulk(self):
         plan = self.rest_plan()
-        plan["pages"]["REST"] = {"keep": "full", "why": "llms: all", "signals": {}}
-        ch, _ = parse_choices("stub REST\n")
+        plan["pages"]["REST"] = {"keep": "stub", "why": "llms: all", "signals": {}}
+        ch, _ = parse_choices("full REST\n")
         apply_choices(plan, ch, "t")
-        self.assertEqual(plan["pages"]["REST"]["keep"], "stub")
-        self.assertEqual(plan["pages"]["a"]["keep"], "stub")
+        self.assertEqual(plan["pages"]["REST"]["keep"], "full")
+        self.assertEqual(plan["pages"]["a"]["keep"], "full")
 
     def test_last_write_wins_and_description_stays(self):
         plan = {"kind": "llms", "pages": {"a/b": {"keep": "full", "why": "llms: all"}}}
@@ -2067,6 +2147,709 @@ class ClassifyApplyTests(unittest.TestCase):
         page = plan["pages"]["a/b"]
         self.assertEqual((page["keep"], page["why"], page["description"]),
                          ("full", "model:t", "First"))
+
+
+class FollowupIndexTests(unittest.TestCase):
+    def setUp(self):
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        self.tmp = os.path.realpath(tmp.name)
+        self.cache = os.path.join(self.tmp, "cache")
+        self.env = {"HOME": self.tmp, "DOCSHELF_CACHE_DIR": self.cache}
+        self.urls = []
+
+    def run_main(self, site, *argv):
+        def opener(url):
+            self.urls.append(url)
+            if url.endswith("/robots.txt"):
+                return 404, b""
+            return site.get(url, (404, b""))
+        out, err = io.StringIO(), io.StringIO()
+        with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
+            code = docshelf_build.main(list(argv), env=self.env, opener=opener,
+                                       sleep=lambda s: None)
+        return code, out.getvalue()
+
+    def fetched(self):
+        return [u for u in self.urls if not u.endswith("robots.txt")]
+
+    def test_other_host_pages_are_stubs(self):
+        site = {"https://x.io/llms.txt": (200, b"# Demo\n- [A](https://x.io/a.md)\n"
+                                          b"- [Chat](https://discord.gg/x)\n"),
+                "https://x.io/a.md": (200, b"# A\n\nText.\n")}
+        self.assertEqual(self.run_main(site, "plan", "https://x.io/llms.txt")[0], 0)
+        plan = load_plan(os.path.join(self.cache, "built-plans", "demo.json"))
+        self.assertEqual(plan["pages"]["a"]["keep"], "full")
+        self.assertEqual(plan["pages"]["discord.gg/x"]["keep"], "stub")
+        self.assertEqual(plan["pages"]["discord.gg/x"]["why"], "llms: other host")
+        self.urls.clear()
+        self.assertEqual(self.run_main(site, "build", "demo")[0], 0)
+        self.assertEqual(self.fetched(), ["https://x.io/llms.txt", "https://x.io/a.md"])
+
+    def test_replan_of_old_plan_keeps_keys_when_all_on_index_host(self):
+        site = {"https://x.io/llms.txt": (200, b"# Demo\n- [A](https://x.io/docs/a.md)\n"
+                                          b"- [B](https://x.io/docs/b.md)\n"),
+                "https://x.io/docs/a.md": (200, b"# A\n\nText.\n"),
+                "https://x.io/docs/b.md": (200, b"# B\n\nText.\n")}
+        self.assertEqual(self.run_main(site, "plan", "https://x.io/llms.txt")[0], 0)
+        path = os.path.join(self.cache, "built-plans", "demo.json")
+        before = load_plan(path)
+        keys = sorted(before["pages"])
+        self.assertEqual(len(keys), 2)
+        self.assertEqual(self.run_main(site, "plan", "https://x.io/llms.txt",
+                                       "--name", "demo")[0], 0)
+        after = load_plan(path)
+        self.assertEqual(sorted(after["pages"]), keys)
+        self.assertTrue(all(p["keep"] == "full" for p in after["pages"].values()))
+
+    def test_well_known_txt_not_followed(self):
+        idx = ("# Demo\n- [Humans](https://x.io/humans.txt)\n"
+               "- [Robots](https://x.io/Robots.txt)\n"
+               "- [Sub](https://x.io/sub/llms-a.txt)\n")
+        got = []
+
+        def get_text(url):
+            got.append(url)
+            return {"https://x.io/llms.txt": idx,
+                    "https://x.io/sub/llms-a.txt": "# Sub\n- [P](https://x.io/p.md)\n"}[url]
+        tree = read_tree("https://x.io/llms.txt", get_text)
+        self.assertEqual(got, ["https://x.io/llms.txt", "https://x.io/sub/llms-a.txt"])
+        self.assertEqual([e["url"] for e in tree.indexes],
+                         ["https://x.io/llms.txt", "https://x.io/sub/llms-a.txt"])
+
+    def test_md_retry_keeps_query(self):
+        op = fake_opener([(200, b"<!doctype html><html>x</html>"), (200, b"# Real")])
+        src = open_url_source(opener=op, sleep=lambda s: None)
+        self.assertEqual(fetch_llms_page(src, "https://x.io/docs/a?lang=py#top"),
+                         ("# Real", "md"))
+        self.assertEqual(op.urls[-1], "https://x.io/docs/a.md?lang=py")
+
+    def test_local_root_only_subindexes_main_host(self):
+        root = "# R\n- [A](https://x.io/a/llms-a.txt)\n- [B](https://x.io/b/llms-b.txt)\n"
+        subs = {"https://x.io/a/llms-a.txt": "# A\n- [P](https://x.io/a/p.md)\n",
+                "https://x.io/b/llms-b.txt": "# B\n- [Q](https://x.io/b/q.md)\n"}
+        tree = read_tree("rel/llms.txt", subs.__getitem__, read_file=lambda p: root)
+        self.assertEqual(tree.main_host, "x.io")
+        self.assertEqual([p.key for p in tree.pages], ["a/p", "b/q"])
+
+
+class FollowupHtmlTests(unittest.TestCase):
+    def test_on_attributes_dropped(self):
+        html = main_content('<main><p onclick="x" ONLOAD="y" class="c">t</p></main>')
+        self.assertIn('<p class="c">t</p>', html)
+        self.assertNotIn("onclick", html.lower())
+
+    def test_script_urls_dropped(self):
+        html = main_content('<main><a href=" JaVaScRiPt:alert(1)">x</a>'
+                            '<a href="data:text/html,hi">y</a>'
+                            '<a href="java\tscript:alert(1)">w</a>'
+                            '<a href="https://x.io">z</a></main>')
+        self.assertNotIn("alert", html)
+        self.assertNotIn("data:", html)
+        self.assertIn("<a>x</a>", html)
+        self.assertIn('<a href="https://x.io">z</a>', html)
+
+
+class MainHostFixTests(unittest.TestCase):
+    def test_main_host_from_root_pages(self):
+        root = ("# D\n- [A](https://docs.b.io/a.md)\n- [B](https://docs.b.io/b.md)\n"
+                "- [C](https://docs.b.io/c.md)\n- [Chat](https://discord.gg/x)\n")
+        tree = read_tree("https://docs.a.io/llms.txt", {"https://docs.a.io/llms.txt": root}.__getitem__)
+        self.assertEqual(tree.main_host, "docs.b.io")
+        plan = make_llms_plan("https://docs.a.io/llms.txt", tree, [])
+        keeps = [p["keep"] for p in plan["pages"].values()]
+        self.assertEqual((keeps.count("full"), keeps.count("stub")), (3, 1))
+        lines = summarize_llms(plan, None)
+        warn = [ln for ln in lines if "other hosts" in ln]
+        self.assertEqual(len(warn), 1)
+        self.assertIn("1 pages on other hosts are stubs (e.g. discord.gg)", warn[0])
+        self.assertIn("--full 'discord.gg/*'", warn[0])
+
+    def test_main_host_falls_back_to_index_host(self):
+        subs = {"https://x.io/llms.txt": "# D\n- [S](https://x.io/s/llms.txt)\n",
+                "https://x.io/s/llms.txt": "# S\n- [P](https://x.io/s/p.md)\n"}
+        tree = read_tree("https://x.io/llms.txt", subs.__getitem__)
+        self.assertEqual(tree.main_host, "x.io")
+
+    def test_main_host_sub_index_on_main_host_followed(self):
+        root = "# D\n- [A](https://docs.b.io/a.md)\n- [S](https://docs.b.io/s/llms.txt)\n"
+        subs = {"https://docs.a.io/llms.txt": root,
+                "https://docs.b.io/s/llms.txt": "# S\n- [P](https://docs.b.io/s/p.md)\n"}
+        tree = read_tree("https://docs.a.io/llms.txt", subs.__getitem__)
+        self.assertEqual([p.key for p in tree.pages], ["a", "s/p"])
+
+    def test_local_root_fallback_with_well_known_txt(self):
+        root = ("# R\n- [H](https://x.io/humans.txt)\n- [A](https://x.io/a/llms-a.txt)\n"
+                "- [B](https://x.io/b/llms-b.txt)\n")
+        subs = {"https://x.io/a/llms-a.txt": "# A\n- [P](https://x.io/a/p.md)\n",
+                "https://x.io/b/llms-b.txt": "# B\n- [Q](https://x.io/b/q.md)\n"}
+        tree = read_tree("rel/llms.txt", subs.__getitem__, read_file=lambda p: root)
+        self.assertEqual(tree.main_host, "x.io")
+        self.assertEqual([p.key for p in tree.pages], ["a/p", "b/q"])
+
+    def test_other_host_stub_never_decided_and_error_cleared(self):
+        self.assertFalse(may_decide({"keep": "stub", "why": "llms: other host",
+                                     "signals": {"words": 800}}))
+        old = {"pages": {"discord.gg/x": {"keep": "full", "why": "llms: all",
+                                          "fetch_error": "boom", "signals": {"words": 1}}}}
+        tree = Tree("D", "x.io", [LlmsPage("discord.gg/x", "https://discord.gg/x", "C", None, None)],
+                    [], "h")
+        page = make_llms_plan("https://x.io/llms.txt", tree, [], old)["pages"]["discord.gg/x"]
+        self.assertEqual((page["keep"], page["why"]), ("stub", "llms: other host"))
+        self.assertNotIn("fetch_error", page)
+
+    def test_serialize_drops_encoded_script_schemes(self):
+        for href in ("&#106;avascript:alert(1)", "&#x6A;avascript:alert(1)",
+                     "java&Tab;script:alert(1)"):
+            html = main_content('<main><a href="%s">x</a></main>' % href)
+            self.assertNotIn("alert", html, href)
+        html = main_content('<main><p src="javascript:alert(1)">x</p></main>')
+        self.assertNotIn("alert", html)
+
+
+class ArchiveTests(unittest.TestCase):
+    def setUp(self):
+        import build_archive
+        self.ba = build_archive
+        self.tmp = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, self.tmp, True)
+
+    def make_zip(self, entries, symlink=None):
+        import zipfile
+        path = os.path.join(self.tmp, "a.zip")
+        with zipfile.ZipFile(path, "w") as z:
+            for name, data in entries:
+                z.writestr(name, data)
+            if symlink:
+                zi = zipfile.ZipInfo(symlink)
+                zi.external_attr = (0o120777 << 16)
+                z.writestr(zi, "/etc/passwd")
+        return path
+
+    def unpack(self, path):
+        out = os.path.join(self.tmp, "site")
+        return out, self.ba.unpack(path, out)
+
+    def test_find_api_htmlzip(self):
+        seen = []
+
+        def get(url):
+            seen.append(url)
+            return 200, json.dumps({"downloads": {"htmlzip": "https://x.example/z/"}}).encode()
+        self.assertEqual(self.ba.find_archive("https://sphinx.readthedocs.io/en/latest/", get),
+                         "https://x.example/z/")
+        self.assertIn("/projects/sphinx/versions/latest/", seen[0])
+
+    def test_find_api_subproject_slug(self):
+        seen = []
+
+        def get(url):
+            seen.append(url)
+            return 200, b"{}"
+        self.assertIsNone(self.ba.find_archive("https://a.readthedocs.io/projects/sub/en/v1/", get))
+        self.assertIn("/projects/sub/versions/v1/", seen[0])
+
+    def test_find_api_without_htmlzip_then_probe_404(self):
+        def get(url):
+            return (200, b'{"downloads": {}}') if "api/v3" in url else (404, b"")
+        self.assertIsNone(self.ba.find_archive("https://p.readthedocs.io/en/latest/", get))
+
+    def test_find_api_unreachable_probe_200(self):
+        def get(url):
+            return (0, b"") if "api/v3" in url else (200, b"PK")
+        self.assertEqual(self.ba.find_archive("https://p.readthedocs.io/en/latest/", get),
+                         "https://p.readthedocs.io/_/downloads/en/latest/htmlzip/")
+
+    def test_find_probe_uses_head_when_given(self):
+        calls = []
+
+        def get(url):
+            calls.append(url)
+            return 404, b""
+        found = self.ba.find_archive("https://docs.example/en/stable/guide/", get,
+                                     head=lambda u: (200, {}))
+        self.assertEqual(found, "https://docs.example/_/downloads/en/stable/htmlzip/")
+        self.assertEqual(calls, [])
+
+    def test_find_api_detail_unknown_project(self):
+        def get(url):
+            return (404, b'{"detail": "Not found."}') if "api/v3" in url else (404, b"")
+        self.assertIsNone(self.ba.find_archive("https://p.readthedocs.io/en/latest/", get))
+
+    def test_unpack_finds_build_one_level_down(self):
+        path = self.make_zip([("proj-html/objects.inv", "x"), ("proj-html/index.html", "i"),
+                              ("proj-html/_static/a.css", "c")])
+        out, build = self.unpack(path)
+        self.assertEqual(build, os.path.join(out, "proj-html"))
+        self.assertTrue(os.path.isfile(os.path.join(build, "_static", "a.css")))
+
+    def test_unpack_index_html_only(self):
+        out, build = self.unpack(self.make_zip([("top/index.html", "i")]))
+        self.assertEqual(build, os.path.join(out, "top"))
+
+    def test_unpack_no_build(self):
+        path = self.make_zip([("readme.txt", "x")])
+        with self.assertRaises(CLIError) as cm:
+            self.unpack(path)
+        self.assertEqual(cm.exception.code, 2)
+        self.assertFalse(os.path.exists(os.path.join(self.tmp, "site")))
+
+    def test_unpack_skips_traversal_absolute_symlink(self):
+        path = self.make_zip([("../evil", "x"), ("/etc/abs", "x"), ("a/../../evil2", "x"),
+                              ("ok/objects.inv", "x")], symlink="ok/link")
+        out, build = self.unpack(path)
+        self.assertEqual(build, os.path.join(out, "ok"))
+        self.assertEqual(os.listdir(build), ["objects.inv"])
+        self.assertFalse(os.path.exists(os.path.join(self.tmp, "evil")))
+        self.assertFalse(os.path.exists("/etc/abs"))
+        self.assertEqual(os.listdir(out), ["ok"])
+
+    def test_unpack_too_many_files(self):
+        path = self.make_zip([("d/f%d.html" % i, "x") for i in range(6)] + [("d/objects.inv", "x")])
+        with mock.patch.object(self.ba, "MAX_FILES", 5):
+            with self.assertRaises(CLIError) as cm:
+                self.unpack(path)
+        self.assertEqual(cm.exception.code, 2)
+        self.assertFalse(os.path.exists(os.path.join(self.tmp, "site")))
+        self.assertEqual([n for n in os.listdir(self.tmp) if n.startswith(".unpack")], [])
+
+    def test_unpack_too_big(self):
+        path = self.make_zip([("d/objects.inv", "x" * 100)])
+        with mock.patch.object(self.ba, "MAX_UNPACKED", 50):
+            with self.assertRaises(CLIError) as cm:
+                self.unpack(path)
+        self.assertEqual(cm.exception.code, 2)
+        self.assertFalse(os.path.exists(os.path.join(self.tmp, "site")))
+
+    def test_unpack_tar_gz(self):
+        import tarfile
+        path = os.path.join(self.tmp, "a.tar.gz")
+        src = os.path.join(self.tmp, "srcfile")
+        with open(src, "w") as f:
+            f.write("x")
+        with tarfile.open(path, "w:gz") as t:
+            t.add(src, arcname="top/objects.inv")
+            t.add(src, arcname="../evil")
+            link = tarfile.TarInfo("top/ln")
+            link.type = tarfile.SYMTYPE
+            link.linkname = "/etc/passwd"
+            t.addfile(link)
+        out, build = self.unpack(path)
+        self.assertEqual(os.listdir(build), ["objects.inv"])
+
+    def test_head_through_source_honours_robots(self):
+        calls, heads = [], []
+
+        def opener(url):
+            calls.append(url)
+            if url.endswith("robots.txt"):
+                return 200, b"User-agent: *\nDisallow: /_/\nDisallow: /blocked/\n"
+            return 200, b"PK-data"
+
+        def head(url):
+            heads.append(url)
+            return 200, {"content-length": "7"}
+        src = open_url_source(opener=opener, sleep=lambda s: None, delay=0, head_opener=head)
+        self.assertEqual(src.head_url("https://h.example/blocked/"), (0, {}))
+        self.assertEqual(heads, [])
+        self.assertEqual(src.head_url("https://h.example/ok/")[0], 200)
+        # probe at a blocked path: no request to the archive URL
+        self.assertIsNone(self.ba.find_archive("https://h.example/en/latest/",
+                                               lambda u: (404, b""), head=src.head_url))
+        self.assertEqual([h for h in heads if "/_/" in h or "/blocked/" in h], [])
+        # change check: blocked head means no head request, archive kept
+        dest = os.path.join(self.tmp, "src")
+        os.makedirs(dest)
+        with open(os.path.join(dest, "archive.zip"), "wb") as f:
+            f.write(b"PK-data")
+        with open(os.path.join(dest, "archive.json"), "w") as f:
+            json.dump({"url": "https://h.example/blocked/", "file": "archive.zip", "size": 7}, f)
+        n = len(calls)
+        self.assertFalse(self.ba.fetch_archive("https://h.example/blocked/", dest, src, False,
+                                               head=src.head_url)[1])
+        self.assertEqual([h for h in heads if "/blocked/" in h], [])
+        self.assertEqual(len(calls), n)
+
+    def test_unpack_tar_member_cap_counts_dirs(self):
+        import tarfile
+        path = os.path.join(self.tmp, "d.tar.gz")
+        with tarfile.open(path, "w:gz") as t:
+            for i in range(6):
+                d = tarfile.TarInfo("d%d" % i)
+                d.type = tarfile.DIRTYPE
+                t.addfile(d)
+        with mock.patch.object(self.ba, "MAX_FILES", 5):
+            with self.assertRaises(CLIError) as cm:
+                self.unpack(path)
+        self.assertEqual(cm.exception.code, 2)
+        self.assertFalse(os.path.exists(os.path.join(self.tmp, "site")))
+
+    def fetch_setup(self, body=b"PK-data"):
+        calls = []
+
+        def opener(url):
+            calls.append(url)
+            return (404, b"") if url.endswith("robots.txt") else (200, body)
+        src = open_url_source(opener=opener, sleep=lambda s: None, delay=0)
+        dest = os.path.join(self.tmp, "src")
+        return calls, src, dest
+
+    def test_fetch_archive_skips_when_unchanged(self):
+        calls, src, dest = self.fetch_setup()
+        url = "https://h.example/z/"
+        path, got = self.ba.fetch_archive(url, dest, src, False)
+        self.assertTrue(got)
+        self.assertEqual(open(path, "rb").read(), b"PK-data")
+        meta = json.load(open(os.path.join(dest, "archive.json")))
+        self.assertEqual(meta["url"], url)
+        self.assertEqual(meta["size"], 7)
+        self.assertEqual(meta["sha256"], hashlib.sha256(b"PK-data").hexdigest())
+        n = len(calls)
+        path2, got2 = self.ba.fetch_archive(url, dest, src, False)
+        self.assertFalse(got2)
+        self.assertEqual(path2, path)
+        self.assertEqual(len(calls), n)
+
+    def test_fetch_archive_refetch_and_changed(self):
+        calls, src, dest = self.fetch_setup()
+        url = "https://h.example/z/"
+        self.ba.fetch_archive(url, dest, src, False, head=lambda u: (200, {"content-length": "7"}))
+        self.assertFalse(self.ba.fetch_archive(
+            url, dest, src, False, head=lambda u: (200, {"content-length": "7"}))[1])
+        self.assertTrue(self.ba.fetch_archive(
+            url, dest, src, False, head=lambda u: (200, {"content-length": "9"}))[1])
+        self.assertTrue(self.ba.fetch_archive(url, dest, src, True)[1])
+
+    def test_fetch_archive_failure_raises(self):
+        src = open_url_source(opener=lambda u: (404, b""), sleep=lambda s: None, delay=0)
+        with self.assertRaises(FetchError):
+            self.ba.fetch_archive("https://h.example/z/", os.path.join(self.tmp, "s"), src, False)
+
+
+class SingleHtmlArchiveTests(unittest.TestCase):
+    """Splitting a Sphinx singlehtml archive (Read the Docs htmlzip) per page."""
+    BASE = "https://demo.readthedocs.io/en/latest/"
+    ZIP = "https://media.example/demo.zip"
+    SINGLE = ("<html><body><div role='main'><h1 id='home'>Home</h1><p>Intro <a href='#sec'>s</a>"
+              " <a href='#document-guide/a'>ga</a> <a href='#home'>h</a></p>"
+              "<div class='toctree-wrapper'>"
+              "<span id='document-cmd/opt'></span><section id='opt-page'><h1>opt</h1>"
+              "<p>Opt text <a href='#sec'>sec</a> <a href='#opt-page'>self</a>"
+              " <a href='#home'>home</a></p></section>"
+              "<span id='document-guide/index'></span><section><h1>Guides</h1><p>G idx</p></section>"
+              "<span id='document-guide/a'></span><section><h1 id='sec'>Sec</h1><p>A text"
+              " <a href='#opt-page'>o</a> <a href='#document-cmd/opt'>opt doc</a></p></section>"
+              "</div></div></body></html>")
+
+    def split(self):
+        import build_archive
+        return build_archive.split_singlehtml(self.SINGLE, ["index", "cmd/opt", "guide/index", "guide/a", "guide/b"])
+
+    def test_split_assigns_chunks_and_the_index_prefix(self):
+        pages = self.split()
+        self.assertEqual(sorted(pages), ["cmd/opt", "guide/a", "guide/index", "index"])  # guide/b: no marker
+        self.assertIn("Intro", pages["index"])
+        self.assertNotIn("Opt text", pages["index"])
+        self.assertIn("Opt text", pages["cmd/opt"])
+        self.assertNotIn("A text", pages["cmd/opt"])
+        self.assertIn("A text", pages["guide/a"])
+        for html in pages.values():
+            self.assertEqual(main_content(html).count("<div"), html.count("<div") - 1)
+            self.assertNotIn('id="document-', html)
+            self.assertNotIn("id='document-", html)
+
+    def test_cross_chunk_links_are_rewritten_and_same_chunk_kept(self):
+        pages = self.split()
+        self.assertIn('href="#home"', pages["index"])
+        self.assertIn('href="guide/a.html#sec"', pages["index"])
+        self.assertIn('href="guide/a.html"', pages["index"])   # #document-guide/a
+        self.assertIn('href="../guide/a.html#sec"', pages["cmd/opt"])
+        self.assertIn('href="#opt-page"', pages["cmd/opt"])
+        self.assertIn('href="../index.html#home"', pages["cmd/opt"])
+        self.assertIn('href="../cmd/opt.html#opt-page"', pages["guide/a"])
+        self.assertIn('href="../cmd/opt.html"', pages["guide/a"])   # #document-cmd/opt
+
+    FULL = ("<!DOCTYPE html><html><head><meta charset='utf-8'><title>T</title>"
+            "<link rel='stylesheet' href='s.css'></head><body><nav>SIDEBAR</nav>"
+            "<ul class='wy-breadcrumbs'><li>CRUMBS</li></ul>"
+            "<div role='main' class='document'><div class='body'><p id='top'>Intro</p>"
+            "<span id='document-a'></span><section><h1 id='x'>A</h1><p>A text"
+            " <a href='index.html#top'>t</a> <a href='index.html#document-b'>b</a></p></section>"
+            "<span id='document-b'></span><section><p>B text <a href='index.html#x'>x</a>"
+            " <a href='./index.html#b-own'>own</a> <a id='b-own'></a></p></section>"
+            "</div></div><footer>Built with Sphinx on readthedocs.org</footer>"
+            "<div class='rst-versions'>FLYOUT</div></body></html>")
+
+    def test_only_the_main_content_lands_in_chunks(self):
+        import build_archive
+        pages = build_archive.split_singlehtml(self.FULL, ["index", "a", "b"])
+        self.assertEqual(sorted(pages), ["a", "b", "index"])
+        for html in pages.values():
+            for bad in ("<link", "<meta", "<title", "SIDEBAR", "CRUMBS", "Built with",
+                        "readthedocs.org", "FLYOUT"):
+                self.assertNotIn(bad, html)
+            self.assertNotIn(bad := "<head", html)
+        self.assertIn("Intro", pages["index"])
+        self.assertIn("B text", pages["b"])
+
+    def test_index_html_fragment_links_count_as_fragment_links(self):
+        import build_archive
+        pages = build_archive.split_singlehtml(self.FULL, ["index", "a", "b"])
+        self.assertIn('href="index.html#top"', pages["a"])
+        self.assertIn('href="b.html"', pages["a"])          # index.html#document-b
+        self.assertIn('href="a.html#x"', pages["b"])
+        self.assertIn('href="#b-own"', pages["b"])          # same chunk: plain fragment
+        self.assertNotIn("document-", "".join(pages.values()))
+
+    def test_corrupt_deflate_data_means_no_archive_and_no_site(self):
+        import build_archive
+        import zipfile
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        zpath = os.path.join(tmp.name, "bad.zip")
+        with zipfile.ZipFile(zpath, "w", zipfile.ZIP_DEFLATED) as z:
+            z.writestr("x/index.html", "<p>hello world</p>" * 500)
+        with open(zpath, "rb") as f:
+            data = bytearray(f.read())
+        for i in range(45, 50):
+            data[i] ^= 0xFF
+        with open(zpath, "wb") as f:
+            f.write(bytes(data))
+        out = os.path.join(tmp.name, "site")
+        with self.assertRaises(CLIError):
+            build_archive.unpack(zpath, out)
+        self.assertFalse(os.path.exists(out))
+        self.assertEqual([n for n in os.listdir(tmp.name) if n.startswith(".unpack")], [])
+
+    def build_cli_setup(self):
+        import zipfile
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        self.tmp = os.path.realpath(tmp.name)
+        self.cache = os.path.join(self.tmp, "cache")
+        self.env = {"HOME": self.tmp, "DOCSHELF_CACHE_DIR": self.cache}
+        rows = [(e.name, e.role, "1", e.uri, e.dispname) for e in ENTRIES]
+        inv_bytes = make_inv(rows)
+        zpath = os.path.join(self.tmp, "demo.zip")
+        with zipfile.ZipFile(zpath, "w") as z:
+            z.writestr("demo-latest/objects.inv", inv_bytes)
+            z.writestr("demo-latest/index.html", self.SINGLE)
+        with open(zpath, "rb") as f:
+            zbytes = f.read()
+        api = json.dumps({"downloads": {"htmlzip": self.ZIP}}).encode()
+        self.site = {self.BASE + "objects.inv": (200, inv_bytes),
+                     "https://readthedocs.org/api/v3/projects/demo/versions/latest/": (200, api),
+                     self.ZIP: (200, zbytes),
+                     self.BASE + "guide/b.html": (200, b"<div role='main'><p>LIVE B</p></div>")}
+        self.urls = []
+        self.docvol = os.path.join(self.cache, "built", "demo")
+
+    def opener(self, url):
+        self.urls.append(url)
+        return self.site.get(url, (404, b""))
+
+    def run_main(self, *argv):
+        out, err = io.StringIO(), io.StringIO()
+        with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
+            code = docshelf_build.main(list(argv), env=self.env, opener=self.opener,
+                                       sleep=lambda s: None)
+        return code, out.getvalue(), err.getvalue()
+
+    def test_cli_build_splits_the_archive_and_fetches_the_unmarked_page(self):
+        self.build_cli_setup()
+        self.run_main("plan", self.BASE, "--name", "demo", "--all")
+        self.urls.clear()
+        code, out, err = self.run_main("build", "demo")
+        self.assertEqual(code, 0, err)
+        pages = [u for u in self.urls if u.startswith(self.BASE) and u.endswith(".html")]
+        self.assertEqual(pages, [self.BASE + "guide/b.html"])
+        self.assertIn("4 pages from the archive, 1 over HTTP", out)
+        db = load(self.docvol, "db.json")
+        self.assertIn("Opt text", db["cmd/opt"])
+        self.assertNotIn("A text", db["cmd/opt"])
+        self.assertIn("A text", db["guide/a"])
+        self.assertIn("LIVE B", db["guide/b"])
+        self.assertIn("Intro", db["index"])
+        for html in db.values():
+            self.assertNotIn("document-", html)
+
+
+class ArchiveCliTests(unittest.TestCase):
+    """plan/build/detect with a Read the Docs style HTML archive (GET-only fake
+    opener, so the archive comes from the API, not the HEAD probe)."""
+    BASE = "https://demo.readthedocs.io/en/latest/"
+    ZIP = "https://media.example/demo.zip"
+
+    def setUp(self):
+        import zipfile
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        self.tmp = os.path.realpath(tmp.name)
+        self.cache = os.path.join(self.tmp, "cache")
+        self.env = {"HOME": self.tmp, "DOCSHELF_CACHE_DIR": self.cache}
+        rows = [(e.name, e.role, "1", e.uri, e.dispname) for e in ENTRIES]
+        inv_bytes = make_inv(rows)
+        pages = {"index.html": DOCVOL_HTML["index.html"],
+                 "cmd/opt.html": DOCVOL_HTML["cmd/opt.html"]}
+        for p in ("guide/index.html", "guide/a.html", "guide/b.html"):
+            pages[p] = "<div role='main'><p>Guide text %s</p></div>" % p
+        self.pages = pages
+        zpath = os.path.join(self.tmp, "demo.zip")
+        with zipfile.ZipFile(zpath, "w") as z:
+            z.writestr("demo-latest/objects.inv", inv_bytes)
+            for rel, html in pages.items():
+                if rel != "guide/b.html":
+                    z.writestr("demo-latest/" + rel, html)
+        with open(zpath, "rb") as f:
+            zbytes = f.read()
+        api = json.dumps({"downloads": {"htmlzip": self.ZIP}}).encode()
+        self.site = {self.BASE + "objects.inv": (200, inv_bytes),
+                     "https://readthedocs.org/api/v3/projects/demo/versions/latest/":
+                     (200, api), self.ZIP: (200, zbytes)}
+        for rel, html in pages.items():
+            self.site[self.BASE + rel] = (200, html.replace("<p>", "<p>LIVE ").encode())
+        self.urls = []
+        self.plan_path = os.path.join(self.cache, "built-plans", "demo.json")
+        self.docvol = os.path.join(self.cache, "built", "demo")
+
+    def opener(self, url):
+        self.urls.append(url)
+        if url.endswith("/robots.txt"):
+            return self.site.get(url, (404, b""))
+        return self.site.get(url, (404, b""))
+
+    def run_main(self, *argv):
+        out, err = io.StringIO(), io.StringIO()
+        with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
+            code = docshelf_build.main(list(argv), env=self.env, opener=self.opener,
+                                       sleep=lambda s: None)
+        return code, out.getvalue(), err.getvalue()
+
+    def page_urls(self):
+        return [u for u in self.urls if u.startswith(self.BASE) and u.endswith(".html")]
+
+    def test_plan_and_detect_print_the_archive(self):
+        code, out, err = self.run_main("plan", self.BASE, "--name", "demo", "--all")
+        self.assertEqual(code, 0, err)
+        self.assertIn("archive: " + self.ZIP, out)
+        self.assertEqual(load_plan(self.plan_path)["archive"], self.ZIP)
+        code, out, _ = self.run_main("detect", self.BASE)
+        self.assertEqual(code, 0)
+        self.assertIn("archive: " + self.ZIP, out)
+
+    def test_build_fetches_only_the_page_missing_from_the_archive(self):
+        self.run_main("plan", self.BASE, "--name", "demo", "--all")
+        self.urls.clear()
+        code, out, err = self.run_main("build", "demo")
+        self.assertEqual(code, 0, err)
+        self.assertEqual(self.page_urls(), [self.BASE + "guide/b.html"])
+        self.assertIn("4 pages from the archive, 1 over HTTP", out)
+        db = load(self.docvol, "db.json")
+        self.assertIn("Guide text guide/a.html", db["guide/a"])
+        self.assertIn("LIVE", db["guide/b"])
+        self.assertNotIn("LIVE", db["guide/a"])
+
+    def test_rebuild_does_not_download_the_archive_again(self):
+        self.run_main("build", self.BASE, "--name", "demo", "--all")
+        self.urls.clear()
+        self.assertEqual(self.run_main("build", "demo")[0], 0)
+        self.assertNotIn(self.ZIP, self.urls)
+        self.urls.clear()
+        self.assertEqual(self.run_main("build", "demo", "--refetch")[0], 0)
+        self.assertIn(self.ZIP, self.urls)
+
+    def test_no_archive_fetches_every_page(self):
+        self.run_main("plan", self.BASE, "--name", "demo", "--all")
+        self.urls.clear()
+        code, out, err = self.run_main("build", "demo", "--no-archive")
+        self.assertEqual(code, 0, err)
+        self.assertEqual(len(self.page_urls()), 5)
+        self.assertNotIn(self.ZIP, self.urls)
+        self.assertNotIn("from the archive", out)
+
+    def test_no_archive_on_the_site_changes_nothing(self):
+        del self.site["https://readthedocs.org/api/v3/projects/demo/versions/latest/"]
+        code, out, err = self.run_main("plan", self.BASE, "--name", "demo", "--all")
+        self.assertEqual(code, 0, err)
+        self.assertNotIn("archive", out)
+        self.assertNotIn("archive", load_plan(self.plan_path))
+        self.assertEqual(self.run_main("detect", self.BASE)[1].count("archive"), 0)
+        code, out, _ = self.run_main("build", "demo")
+        self.assertEqual(len(self.page_urls()), 5)
+
+    def build_with(self, *argv, head=None):
+        """run_main with a HEAD-capable opener (open_source gets head_opener)."""
+        import build_fetch
+        real = build_fetch.open_source
+
+        def patched(*a, **k):
+            return real(*a, head_opener=head, **k)
+        with mock.patch.object(docshelf_build, "open_source", patched):
+            return self.run_main(*argv)
+
+    def assert_page_by_page(self, code, out, err):
+        self.assertEqual(code, 0, err)
+        self.assertIn("archive not used", err)
+        self.assertEqual(len(self.page_urls()), 5)
+        self.assertNotIn("from the archive", out)
+        self.assertFalse(os.path.exists(os.path.join(self.cache, "built-src", "demo",
+                                                     "archive", "site")))
+
+    def test_corrupt_archive_falls_back(self):
+        self.site[self.ZIP] = (200, b"PK\x03\x04 not really a zip")
+        self.run_main("plan", self.BASE, "--name", "demo", "--all")
+        self.urls.clear()
+        self.assert_page_by_page(*self.run_main("build", "demo"))
+
+    def test_over_cap_archive_falls_back(self):
+        import build_archive
+        self.run_main("plan", self.BASE, "--name", "demo", "--all")
+        self.urls.clear()
+        with mock.patch.object(build_archive, "MAX_FILES", 2):
+            self.assert_page_by_page(*self.run_main("build", "demo"))
+
+    def test_failed_archive_download_falls_back(self):
+        self.run_main("plan", self.BASE, "--name", "demo", "--all")
+        self.site[self.ZIP] = (404, b"")
+        self.urls.clear()
+        self.assert_page_by_page(*self.run_main("build", "demo"))
+
+    def test_rebuild_downloads_again_on_changed_headers_only(self):
+        headers = {"content-length": "1", "last-modified": "Mon, 01 Jan 2024 00:00:00 GMT"}
+
+        def head(url):
+            return (200, dict(headers)) if url == self.ZIP else (0, {})
+        self.build_with("build", self.BASE, "--name", "demo", "--all", head=head)
+        headers["content-length"] = str(len(self.site[self.ZIP][1]))  # stored size is real
+        self.urls.clear()
+        self.build_with("build", "demo", head=head)
+        self.assertNotIn(self.ZIP, self.urls)
+        headers["last-modified"] = "Tue, 02 Jan 2024 00:00:00 GMT"
+        self.urls.clear()
+        self.build_with("build", "demo", head=head)
+        self.assertIn(self.ZIP, self.urls)
+        headers["content-length"] = "999999"
+        self.urls.clear()
+        self.build_with("build", "demo", head=head)
+        self.assertIn(self.ZIP, self.urls)
+
+    def test_robots_disallow_means_no_request_to_the_api(self):
+        api = "https://readthedocs.org/api/v3/projects/demo/versions/latest/"
+        self.site["https://readthedocs.org/robots.txt"] = (200, b"User-agent: *\nDisallow: /\n")
+        code, out, err = self.run_main("plan", self.BASE, "--name", "demo", "--all")
+        self.assertEqual(code, 0, err)
+        self.assertNotIn(api, self.urls)
+        self.assertNotIn("archive", out)
+        self.run_main("detect", self.BASE)
+        self.assertNotIn(api, self.urls)
+
+
+    def test_remove_deletes_the_archive_folder(self):
+        self.run_main("build", self.BASE, "--name", "demo", "--all")
+        folder = os.path.join(self.cache, "built-src", "demo", "archive")
+        self.assertTrue(os.path.isdir(folder))
+        self.assertEqual(self.run_main("remove", "demo")[0], 0)
+        self.assertFalse(os.path.exists(folder))
 
 
 if __name__ == "__main__":
