@@ -12,10 +12,6 @@
 
 - [ ] `decisions`: image input and `box` questions (TypeSafe `assets`,
       Perplexity image parts).
-- [ ] `decisions`: from the first code review: warn on a model version
-      change within a family; rate limit retries and fallback hops, with a
-      backoff on 429; Windows (cp1252 stdout, `os.replace` while the setup
-      file is open).
 - [ ] `decisions`: after 2027-05-23, re-check the Vercel sample adapter
       (`scripts/adapters/vercel_evaluate.py`) with a live call, sooner if
       Vercel announces an AI Gateway `/v1/evaluate` change; update its
