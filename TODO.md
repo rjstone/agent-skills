@@ -11,12 +11,15 @@
 ## Skills
 
 - [ ] `decisions`: image input and `box` questions (TypeSafe `assets`,
-      Perplexity image parts); the sample adapters for Vercel and Sage were
-      checked live 2026-11-23 (keep them in step with those APIs)
-      (`vercel_evaluate.py`, `levanto_sage.py`); confirm ASI Cloud's key env
-      var name and price; read TypeSafe, Perplexity and ASI data-policy pages
-      (not reachable from the test environment on 2026-11-23); a `then`
-      mapping for two-step choices if large code lists turn out common.
+      Perplexity image parts).
+- [ ] `decisions`: a `then` mapping in `decide.py` for two-step choices,
+      if large code lists turn out common (a manual pattern for now).
+- [ ] `decisions`: from the first code review: warn on a model version
+      change within a family; rate limit retries and fallback hops, with a
+      backoff on 429; Windows (cp1252 stdout, `os.replace` while the setup
+      file is open).
+- [ ] `decisions`: keep the Vercel and Sage sample adapters in step with
+      those APIs (both checked live 2026-11-23).
 - [ ] `opencode-console`: the skill exists (configuring a workspace, the
       Console MCP server, CLI and inference endpoints). Still missing upstream
       (checked 2026-11-08, still true in the skill 2026-11-22): a REST API for

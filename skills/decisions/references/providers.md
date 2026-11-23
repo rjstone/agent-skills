@@ -63,9 +63,9 @@ Read the current page before the privacy check; these change.
 |---|---|---|
 | OpenRouter | https://openrouter.ai/privacy ; per-provider retention and training: https://openrouter.ai/docs/guides/privacy/provider-logging ; zero data retention routing: https://openrouter.ai/docs/guides/features/zdr | page reachable 2026-11-23 |
 | OpenCode | https://opencode.ai/legal/privacy-policy ; model terms: https://opencode.ai/docs/console/models/ | page reachable 2026-11-23 |
-| TypeSafe | https://typesafe.ai (privacy/terms links) | not checked |
-| Perplexity | https://www.perplexity.ai (legal: privacy policy, API terms) | not checked |
-| ASI Cloud | the provider's site (privacy/terms) | not checked |
+| TypeSafe | https://typesafe.ai/legal/privacy-policy ; terms: https://typesafe.ai/legal/terms ; acceptable use: https://typesafe.ai/legal/acceptable-use-policy | page found 2026-11-23 |
+| Perplexity | API privacy and security (retention, training): https://docs.perplexity.ai/docs/resources/privacy-security ; API terms: https://www.perplexity.ai/hub/legal/perplexity-api-terms-of-service ; data processing addendum: https://www.perplexity.ai/hub/legal/dpa ; privacy notice: https://www.perplexity.ai/hub/legal/privacy-notice | page found 2026-11-23 |
+| Liquid | https://www.liquid.ai/privacy-policy ; terms: https://www.liquid.ai/terms-conditions | page found 2026-11-23 |
 
 ## Other System One hosts (not built in)
 
