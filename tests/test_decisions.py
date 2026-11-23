@@ -29,16 +29,14 @@ class ProviderTableTest(unittest.TestCase):
 
     def test_builtin_providers(self):
         p = decide.PROVIDERS
-        self.assertEqual(set(p), {"typesafe", "openrouter", "opencode", "asi", "perplexity"})
+        self.assertEqual(set(p), {"typesafe", "openrouter", "opencode", "perplexity"})
         self.assertEqual(p["typesafe"]["endpoint"], "https://api.typesafe.ai/v1/systemone")
         self.assertEqual(p["openrouter"]["endpoint"], "https://openrouter.ai/api/v1/systemone")
         self.assertEqual(p["opencode"]["endpoint"],
                          "https://opencode.ai/inference/systemone/v1/systemone")
-        self.assertEqual(p["asi"]["endpoint"], "https://inference.asicloud.cudos.org/v1/systemone")
         self.assertEqual(p["perplexity"]["endpoint"], "https://api.perplexity.ai/v1/decisions")
         self.assertEqual(p["typesafe"]["key_env"], ["TYPESAFE_AI_API_KEY", "TYPESAFE_API_KEY"])
         self.assertEqual(p["perplexity"]["key_env"], ["PERPLEXITY_API_KEY"])
-        self.assertEqual(p["asi"]["key_env"], ["ASI_API_KEY"])
         for name, cfg in p.items():
             self.assertTrue(cfg["verified"], name)
             self.assertTrue(cfg["default_model"], name)

@@ -337,7 +337,8 @@ metadata:
   pre-filter or decision step, for novice and expert users alike.
   `scripts/decide.py` (stdlib, CLI and importable): built-in providers are
   only hosts verified with a live call (opencode, typesafe, openrouter,
-  perplexity, asi); others go in a setup file's `providers` block and are
+  perplexity; ASI Cloud was removed as small and experimental, the user,
+  2026-11-23); others go in a setup file's `providers` block and are
   marked unverified. A JSON setup file in the user's project holds questions,
   `reference` text (sent with every item), model, same-family fallbacks,
   cutoffs, calibration and privacy confirmations. Rules decided by the user

@@ -64,14 +64,6 @@ PROVIDERS = {
         "docs": "https://opencode.ai/docs/console/models/",
         "verified": True,
     },
-    "asi": {
-        "endpoint": "https://inference.asicloud.cudos.org/v1/systemone",
-        "key_env": ["ASI_API_KEY"],
-        "models_url": None,
-        "default_model": "super-decider",
-        "docs": "https://docs.asicloud.cudos.org",
-        "verified": True,
-    },
     "perplexity": {
         "endpoint": "https://api.perplexity.ai/v1/decisions",
         "key_env": ["PERPLEXITY_API_KEY"],

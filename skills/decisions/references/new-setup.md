@@ -69,6 +69,17 @@ paid Jev on TypeSafe or OpenRouter as fallbacks. Provider details, sign-up
 pages and model quirks: [providers.md](providers.md). Fallbacks must be the
 **same model family**; the script refuses others.
 
+Some users have stricter requirements (cost ceilings, data residency or
+retention, no training on their data, a specific model's quality). Then the
+choice of provider and model needs more research than usual, and that
+choice can be the whole result of a session; say so rather than rushing it.
+The `provider-onboarding` skill helps: it compares providers, models,
+prices, endpoints and key setup. One way to install it is
+`npx skills add rjstone/agent-skills --skill provider-onboarding`, but check
+first how this environment installs skills (its own plugin or skill
+manager, a skills folder, a settings page), and **never install a skill
+without asking the user**.
+
 ## 5. Privacy check (required before any real data is sent)
 
 Sending items to a provider the user has no agreement with is the user's

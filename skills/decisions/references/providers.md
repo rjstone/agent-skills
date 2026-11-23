@@ -15,7 +15,6 @@ typical decision is 100-1,500 input tokens.
 | `typesafe` | `https://api.typesafe.ai/v1/systemone` | `TYPESAFE_AI_API_KEY` (or `TYPESAFE_API_KEY`) | `jev-latest` | https://typesafe.ai; https://docs.typesafe.ai |
 | `openrouter` | `https://openrouter.ai/api/v1/systemone` | `OPENROUTER_API_KEY` | `typesafe/jev-1.14` | https://openrouter.ai; many decision models, some `:free` |
 | `perplexity` | `https://api.perplexity.ai/v1/decisions` | `PERPLEXITY_API_KEY` | `pplx-decider-latest` | https://docs.perplexity.ai (same body, different path) |
-| `asi` | `https://inference.asicloud.cudos.org/v1/systemone` | `ASI_API_KEY` (name unverified) | `super-decider` | ASI Cloud; price not published in the catalogs used |
 
 `GET https://api.typesafe.ai/v1/models` lists TypeSafe's names (`jev-latest`,
 `jev-preview`). OpenRouter's `/api/v1/models` does **not** list decision
@@ -71,6 +70,11 @@ to a setup file's `providers` block (marked unverified automatically):
              "key_env": ["LIQUID_API_KEY"], "default_model": "d1.1"}
 }
 ```
+
+Tested live 2026-11-23 but not built in (a small provider; `super-decider`
+is experimental): ASI Cloud, `https://inference.asicloud.cudos.org/v1/systemone`,
+model `super-decider` (answers noul and choice), key env var unconfirmed
+(`ASI_API_KEY` used in testing), price not published in the catalogs used.
 
 Others listed: decisionmodels.io (`https://api.decisionmodels.io/v1` +
 `/systemone`; `s1-fast`, `s1-pro`, `reax-1`), Butler (`cicero`), GreenPT
