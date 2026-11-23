@@ -16,7 +16,27 @@ It does not fit reasoning, writing, multi-step work, or extracting fields.
 For a handful of items, read them yourself. Tell the user which case this is
 before going on.
 
-## 2. Interview and draft the setup
+## 2. Choose the project folder
+
+Settle this before the first file you write (setup file, item lists,
+labels, scripts, results). Ask in the user's terms: "Where should I keep
+this project's files so you still have them later?" The folder must outlast
+this session. It can be:
+
+1. a folder on the user's own computer;
+2. a folder in a long-lived account on a server or virtual machine;
+3. a folder in a git (or other version-control) repository that is pushed
+   or backed up;
+4. temporary storage that disappears when the session ends (a cloud agent's
+   container, a temp folder), **only** after you tell the user that its
+   files will be lost and they agree to download them. Then, at the end of
+   each working stretch, list every file to download and where it is.
+
+Cloud agent workspaces and temp folders are temporary unless you know
+otherwise; when unsure whether storage lasts, ask. Then say it: "I'll keep
+this project's files in `<path>`."
+
+## 3. Interview and draft the setup
 
 Ask, in the user's terms, one or two questions at a time:
 
@@ -25,7 +45,7 @@ Ask, in the user's terms, one or two questions at a time:
 - What reference material defines the domain: code lists, definitions,
   policies, a rubric? Decision models assume **no domain knowledge**.
 
-Then write `<name>.decisions.json` in the user's project. Start from a copy
+Then write `<name>.decisions.json` in the project folder. Start from a copy
 of `<skill>/examples/lead-vetting.decisions.json`: `questions` is an object
 keyed by name, `policy.good_if` a list of conditions (format:
 [setup-file.md](setup-file.md), question writing:
@@ -35,7 +55,7 @@ keyed by name, `policy.good_if` a list of conditions (format:
 **every** request. Set `policy.good_if` to what the user called a good item.
 Show the questions back to the user before any call.
 
-## 3. Provider and model
+## 4. Provider and model
 
 Run `python3 <skill>/scripts/decide.py providers` to see which keys are set.
 Prefer free first, within one model family: OpenCode `jev-1.13-free`, with
@@ -43,7 +63,7 @@ paid Jev on TypeSafe or OpenRouter as fallbacks. Provider details, sign-up
 pages and model quirks: [providers.md](providers.md). Fallbacks must be the
 **same model family**; the script refuses others.
 
-## 4. Privacy check (required before any real data is sent)
+## 5. Privacy check (required before any real data is sent)
 
 Sending items to a provider the user has no agreement with is the user's
 decision, not yours. Assume free or very cheap models keep data indefinitely
@@ -71,7 +91,7 @@ Only after an explicit yes to all three, record it:
 Never record it on the user's behalf. Until it is recorded, `run`, `ask` and
 `calibrate` refuse to send (exit 3); `--test-data` is only for made-up data.
 
-## 5. Calibrate, or confirm the risk of skipping it
+## 6. Calibrate, or confirm the risk of skipping it
 
 Ask the user for labeled examples: items with the right answer, as many as
 they can, covering every class and the borderline cases (20+ is good, a few
@@ -96,13 +116,15 @@ is the bare minimum, more is better). Then:
   for an explicit yes before running on real data; on a no, collect more
   labels instead.
 
-## 6. Remember where the project is
+## 7. Remember where the project is
 
-Suggest saving the setup's location in whatever memory the environment has,
+Suggest saving the project folder and the setup's location in whatever memory the environment has,
 so a later session finds it: a memory tool or memory file, the project's
 `AGENTS.md` / `CLAUDE.md` or README, or the user's notes. One line is enough,
-for example: "Decision-model project: `<path>/leads.decisions.json` (lead
-vetting, calibrated 2026-11-23, provider opencode)". Ask before writing to a
+for example: "Decision-model project: folder `<path>`, setup
+`<path>/leads.decisions.json` (lead vetting, calibrated 2026-11-23, provider
+opencode)". In temporary storage, put this line in the files the user
+downloads (a `README.md` in the project folder) as well. Ask before writing to a
 shared or committed file.
 
 Then continue with SKILL.md step 3 (run and act on the routes).

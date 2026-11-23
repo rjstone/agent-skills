@@ -47,4 +47,4 @@ question).
 
 [`examples/lead-vetting.decisions.json`](../examples/lead-vetting.decisions.json)
 is a starting point: cautious mode, no privacy entry yet (so it refuses real
-data until step 4 of `SKILL.md`).
+data until the privacy step, `new-setup.md` step 5).

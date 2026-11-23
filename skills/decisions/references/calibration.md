@@ -65,6 +65,6 @@ with one bound keeps the other one unset); choice and score answers with confide
 under 0.6 go to review. Every run's summary says cautious mode is on and why.
 
 When the user declines calibration, or it comes out weak, tell them the
-drawbacks plainly (wording in `new-setup.md` step 5) and get their explicit
+drawbacks plainly (wording in `new-setup.md` step 6) and get their explicit
 yes before running on real data. Read every `review` item. Offer calibration
 again once there are reviewed items: those make good labels.

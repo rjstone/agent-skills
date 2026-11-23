@@ -32,11 +32,29 @@ the calibrated probabilities this skill depends on.
   a summary from you never replaces their reading) and accept it; (3)
   whoever is liable and principally responsible for proper handling of the
   data under applicable laws agrees, or the user is that party. Details in
-  [references/new-setup.md](references/new-setup.md) step 4. Never record it
+  [references/new-setup.md](references/new-setup.md) step 5. Never record it
   on the user's behalf.
 - **No run on real data without calibration** unless the user has said yes
-  to the cautious-mode drawbacks (wording in new-setup.md step 5).
+  to the cautious-mode drawbacks (wording in new-setup.md step 6).
 - **Errors and uncertain answers go to `review`,** never dropped.
+- **No file is written before the project folder is settled,** and the
+  folder lasts beyond this session, or the user has agreed to download its
+  files (new-setup.md step 2).
+
+## Say what you're doing
+
+Every time you create, change or move something, tell the user **what** you
+are doing, **where** (the path) and **why**, and **how** when it helps them
+follow. Keep it in plain words for non-technical users, but never skip it:
+
+- "I'll keep this project's files in `<path>` so you still have them later."
+- "I'm writing `vet_leads.py` at `<path>/vet_leads.py`; it sends each lead
+  to the decision model and sorts the answers."
+- "I'm adding the GL code list to `<path>/README.md` so the next session
+  finds it."
+- "I'm sending 40 invoices to OpenCode's free model now; nothing else
+  leaves this computer."
+
 
 ## Workflow
 
@@ -59,16 +77,16 @@ records. Then check two things with the user before running:
 - **Privacy still current:** show each provider's confirmation date and
   policy link. Policies change; if the confirmation is older than about 90
   days (the script warns), or the provider's page shows a newer update,
-  the user re-reads the policy and confirms again (new-setup.md step 4).
+  the user re-reads the policy and confirms again (new-setup.md step 5).
 - **Calibration status:** `mode` and the `calibration` record. Cautious or
-  poor calibration needs the user's yes to the drawbacks (step 5 there).
+  poor calibration needs the user's yes to the drawbacks (step 6 there).
 
 Then go to step 3.
 
 ### 2. New use case
 
 No existing project fits: follow
-[references/new-setup.md](references/new-setup.md) (fit check, interview,
+[references/new-setup.md](references/new-setup.md) (fit check, project folder, interview,
 setup file, provider, privacy check, calibration, remembering the project's
 location). Then go to step 3.
 
@@ -136,6 +154,8 @@ provider failed.
 | Reusing cutoffs after switching model family | Recalibrate; the script drops to cautious mode |
 | Questions without definitions or examples | Put them in `reference`; the model knows nothing of the domain |
 | Starting a new setup when one already exists | Check memory and `*.decisions.json` first (step 1) |
+| Writing files before agreeing where they live, or into storage that disappears | Settle a lasting project folder first; temporary storage only after the user agrees to download the files |
+| Silent file writes or sends | Say what, where and why (and how) each time |
 
 ## References
 
