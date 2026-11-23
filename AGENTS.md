@@ -347,6 +347,12 @@ metadata:
   SkillSpector's parser reads that as shell brace syntax and reports a
   HIGH coverage gap (2026-11-23).
 
+- **No `allowed-tools` in skill frontmatter** (the user, 2026-11-23): tool
+  names differ between harnesses, so a list written for one would be wrong
+  for the others. SkillSpector's LP3 finding ("declares no tool scope") is
+  expected for every skill with scripts; dismiss it in the Security tab
+  rather than adding the field.
+
 ## Testing skills with small models
 
 - Run each model as `opencode run --standalone --archived --auto --format json`

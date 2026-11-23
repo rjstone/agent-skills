@@ -326,8 +326,9 @@ def evaluate(state, questions: dict, *, provider: str | None = None, model: str 
 # --- routing -------------------------------------------------------------------
 
 ROUTES = ("pass", "review", "reject")
-CAUTIOUS = {"noul": {"reject_below": 0.05, "pass_above": 0.90}, "min_confidence": 0.6,
-            "score_reject_below": 0.5, "score_pass_margin": 1.5}
+CAUTIOUS = {"noul": {"reject_below": 0.05, "pass_above": 0.90},  # nosec B105 - routing cutoffs, not passwords
+            "min_confidence": 0.6,
+            "score_reject_below": 0.5, "score_pass_margin": 1.5}  # nosec B105 - routing cutoffs, not passwords
 
 
 def answering_model(meta: dict):
