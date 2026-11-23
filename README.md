@@ -2,6 +2,10 @@
 
 Agent skills for coding agents (Claude Code, opencode, Codex, Cursor and others).
 
+Every attempt has been made at keeping these skills well-behaved, including scanning
+them with `skillspector`, but they are provided under fhe MIT license with
+NO WARRANTY so inspect them carefully before using.
+
 ## Install
 
 With the [skills CLI](https://github.com/vercel-labs/skills) (Node 22.20+), from your project's root:
@@ -9,9 +13,6 @@ With the [skills CLI](https://github.com/vercel-labs/skills) (Node 22.20+), from
 ```bash
 # Pick skills and coding agents interactively
 npx skills add rjstone/agent-skills
-
-# Every skill, for every coding agent the CLI supports, no prompts
-npx skills add rjstone/agent-skills --all
 
 # Only some skills (asks which agents to install for)
 npx skills add rjstone/agent-skills --skill opencode-build opencode-api
@@ -28,7 +29,7 @@ npx skills add rjstone/agent-skills --skill opencode-api -a universal
 npx skills add rjstone/agent-skills --list
 ```
 
-- Installs go into the project; add `-g` to install for your user account instead.
+- Installs go into the project at ghe current directory; add `-g` to install for your user account instead.
 - With more than one agent, the CLI keeps one copy in `./.agents/skills` and
   symlinks the others to it. Add `--copy` for real copies instead, for example
   on Windows without Developer Mode.
@@ -42,7 +43,7 @@ npx skills add rjstone/agent-skills --list
 - **docshelf** - search and read DevDocs documentation and Dash/Zeal docsets offline, with your own notes, from the command line or as an MCP server.
 - **docshelf-build** - build a trimmed docshelf docvol from a documentation site's Sphinx `objects.inv` or `llms.txt` page list, keeping reference pages in full and guides as stubs.
 - **opencode-api** - call opencode's v2 server HTTP API correctly, using its OpenAPI spec cached in the skill.
-- **opencode-build** - write and port opencode v2 plugins and SDK/client code from the current docs, not v1 habits.
+- **opencode-build** - write and port opencode v2 plugins and SDK/client code from the current docs.
 - **opencode-cli** - use and script the opencode v2 command line and TUI from the current docs.
 - **opencode-console** - set up and administer an OpenCode Console workspace, connect coding agents to it, and use its MCP server, CLI and inference endpoints.
 - **pygameturbo** - help with and teach Pygame Turbo (the Pygame Zero fork) games, from its docs vendored in the skill (LGPL-3.0, see the skill's `references/README.md`).
