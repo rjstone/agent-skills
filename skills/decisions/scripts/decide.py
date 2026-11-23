@@ -17,9 +17,13 @@ are never printed. See the skill's SKILL.md for the workflow.
 """
 from __future__ import annotations
 
+import http.client
 import json
+import math
 import os
 import re
+import urllib.error
+import urllib.request
 
 VERSION = "0.1.0"
 
@@ -158,3 +162,135 @@ def build_state(reference: str | None, item):
 
 def build_request(model: str, state, questions: dict) -> dict:
     return {"model": model, "state": state, "questions": questions}
+
+
+# --- calling a provider ------------------------------------------------------
+
+FALLBACK_STATUSES = {401, 402, 403, 429}
+USER_AGENT = f"decide.py/{VERSION}"
+
+
+def post_json(url: str, key: str | None, payload: dict, timeout: float) -> dict:
+    """POST JSON and return the parsed reply. Network trouble, timeouts, 5xx and
+    401/402/403/429 raise kind "fallback"; any other HTTP error raises kind
+    "request" with the provider's message (redacted)."""
+    headers = {"Content-Type": "application/json", "Accept": "application/json",
+               "User-Agent": USER_AGENT}
+    if key:
+        headers["Authorization"] = f"Bearer {key}"
+    req = urllib.request.Request(url, data=json.dumps(payload).encode("utf-8"),
+                                 headers=headers, method="POST")
+    try:
+        with urllib.request.urlopen(req, timeout=timeout) as r:  # nosec B310 - provider URL from table/setup
+            return json.loads(r.read().decode("utf-8", "replace"))
+    except urllib.error.HTTPError as e:
+        try:
+            detail = e.read()[:400].decode("utf-8", "replace")
+        except Exception:
+            detail = ""
+        msg = redact(f"HTTP {e.code}: {detail}", key)
+        if e.code >= 500 or e.code in FALLBACK_STATUSES:
+            raise DecisionError("fallback", msg) from None
+        raise DecisionError("request", msg) from None
+    except (urllib.error.URLError, TimeoutError, OSError, http.client.HTTPException, ValueError) as e:
+        raise DecisionError("fallback", redact(f"{type(e).__name__}: {e}", key)) from None
+
+
+def _prob(x) -> bool:
+    return isinstance(x, (int, float)) and not isinstance(x, bool) and math.isfinite(x) and 0 <= x <= 1
+
+
+def validate_answers(answers, questions: dict) -> None:
+    """Raise kind "fallback" unless every question has a well-formed answer."""
+    if not isinstance(answers, dict):
+        raise DecisionError("fallback", "reply has no answers object")
+    for name, q in questions.items():
+        a = answers.get(name)
+        qtype = q.get("type")
+        if not isinstance(a, dict) or a.get("type") != qtype:
+            raise DecisionError("fallback", f"answer {name!r} missing or not of type {qtype!r}")
+        if qtype == "noul":
+            ok = _prob(a.get("noul"))
+        elif qtype == "choice":
+            probs = a.get("probabilities") or {}
+            ok = (isinstance(a.get("choice"), str) and _prob(a.get("confidence"))
+                  and all(_prob(v) for v in probs.values()))
+        elif qtype == "score":
+            s = a.get("score")
+            ok = (isinstance(s, (int, float)) and not isinstance(s, bool) and math.isfinite(s)
+                  and _prob(a.get("confidence")))
+        else:
+            ok = True
+        if not ok:
+            raise DecisionError("fallback", f"answer {name!r} has an invalid or out-of-range value")
+
+
+def check_privacy(provider: str, setup: dict | None, test_data: bool) -> None:
+    """Refuse to send real data to a provider without a recorded privacy confirmation."""
+    if test_data:
+        return
+    if not setup or provider not in (setup.get("privacy") or {}):
+        raise DecisionError(
+            "privacy",
+            f"no privacy confirmation recorded for provider {provider!r}. Ask the user the three "
+            "privacy questions (references/privacy.md), then run: decide.py privacy SETUP "
+            f"--provider {provider} --policy-url URL --summary TEXT. Use --test-data only for made-up data.")
+
+
+def _hops(setup: dict, provider: str | None, model: str | None, fallbacks) -> list:
+    first = provider or setup.get("provider")
+    if not first:
+        raise DecisionError("config", "no provider given (setup 'provider' or --provider)")
+    cfg = provider_config(first, setup)
+    hops = [(first, model or setup.get("model") or cfg["default_model"])]
+    for fb in (fallbacks if fallbacks is not None else setup.get("fallbacks") or []):
+        fcfg = provider_config(fb["provider"], setup)
+        hops.append((fb["provider"], fb.get("model") or fcfg["default_model"]))
+    fam = family_of(hops[0][1])
+    for name, m in hops[1:]:
+        if family_of(m) != fam:
+            raise DecisionError(
+                "config", f"fallback {name}:{m} is model family {family_of(m)!r}, not {fam!r}; "
+                "calibration does not transfer between families, so fallbacks must share one")
+    return hops
+
+
+def evaluate(state, questions: dict, *, provider: str | None = None, model: str | None = None,
+             fallbacks=None, setup: dict | None = None, timeout: float = 60,
+             test_data: bool = False):
+    """Ask the questions about one state. Returns (answers, meta).
+
+    Tries the primary provider, then each same-family fallback once. Each hop
+    uses its own model; `model` overrides the primary hop only. Without a setup
+    file holding a privacy entry for a provider, only test_data=True may send."""
+    setup = setup or {}
+    hops = _hops(setup, provider, model, fallbacks)
+    check_privacy(hops[0][0], setup or None, test_data)
+    failed = []
+    for i, (name, m) in enumerate(hops):
+        if i and not test_data and name not in (setup.get("privacy") or {}):
+            failed.append(f"{name}: skipped, no privacy confirmation")
+            continue
+        cfg = provider_config(name, setup)
+        key = api_key(cfg)
+        if cfg.get("key_env") and not key:
+            failed.append(f"{name}: skipped, no key (set {' or '.join(cfg['key_env'])})")
+            continue
+        payload = build_request(m, state, questions)
+        try:
+            for attempt in range(2):
+                reply = post_json(cfg["endpoint"], key, payload, timeout)
+                if isinstance(reply, dict) and "answers" in reply:
+                    break
+                if attempt:
+                    raise DecisionError("fallback", "reply without answers (twice)")
+            validate_answers(reply["answers"], questions)
+        except DecisionError as e:
+            if e.kind != "fallback":
+                raise
+            failed.append(f"{name}: {e}")
+            continue
+        meta = {"provider": name, "model_requested": m, "model_returned": reply.get("model"),
+                "usage": reply.get("usage") or {}, "hops": failed}
+        return reply["answers"], meta
+    raise DecisionError("fallback", "all providers failed: " + "; ".join(failed))
