@@ -161,6 +161,7 @@ skills/decisions/
   references/calibration.md   labels, coverage, metrics, cutoffs, cautious mode
   references/privacy.md       rule of thumb, the three confirmations, reading a policy
   references/setup-file.md    the setup file format, with one full example
+  references/advanced.md      a few common patterns beyond the basics; links to TypeSafe docs
 tests/test_decisions.py       unit tests against a local fake server
 ```
 
@@ -318,8 +319,8 @@ the checklist.
   reference re-scores. `--no-cache` to skip.
 - Answer validation: non-finite or out-of-range numbers count as a failed
   answer.
-- Images: the provider table says where images go (`assets` map with the
-  TypeSafe header, or image parts inside `state`); v1 implements both.
+- Text only in v1 (the user, 2026-11-23). No image input and no `box`
+  questions; the provider table has no image fields yet.
 - User-Agent: a generic client name, no personal details.
 
 ### Sample adapters
@@ -331,6 +332,35 @@ untested against the live services in v1, with the known pitfalls listed at
 the top (Vercel: `boolean` for `noul`, string `instructions`, 8K context on
 the free model; Sage: different question kinds, `null` answer on near-ties ->
 route to review, level units are not 0..n-1).
+
+### Advanced techniques and images (`references/advanced.md`)
+
+Progressive disclosure (the user, 2026-11-23): `SKILL.md` covers the basics;
+`references/advanced.md` holds only a few common patterns beyond the obvious
+ones, each in a short paragraph with its TypeSafe docs link, and points to
+TypeSafe's Patterns (https://docs.typesafe.ai/patterns.md) and Cookbooks
+(https://docs.typesafe.ai/cookbooks.md) for everything else. Planned entries:
+
+- Screen with a yes/no first, run the costly step only on a clear yes
+  (`patterns/noul-screen.md`).
+- Companion yes/no next to a choice, to catch "none of these fit"
+  (`patterns/companion-noul.md`).
+- Routing by confidence and by probability, with stricter thresholds for
+  riskier actions (`patterns/confidence-routing.md`,
+  `patterns/probability-routing.md`).
+- Composite scoring: several atomic questions, weights in code
+  (`patterns/composite-scoring.md`).
+- Speculative fan-out: extra questions in one call are nearly free
+  (`patterns/fan-out.md`).
+- Large choice sets (the GL code case): the basic two-step idea (pick the
+  group, then the code within it, with a second setup file) plus links to
+  `cookbooks/hierarchical_classification.md`,
+  `cookbooks/classification_using_confidence.md` and
+  `cookbooks/infinite_cardinality_choice.md`. No chaining support in code
+  for v1.
+- Images: a stub saying System One models such as Jev can take images and
+  locate things in them, out of scope for v1's script, with a link to
+  https://docs.typesafe.ai/images.md and `primitives/box.md`.
 
 ### Field extraction
 
@@ -406,6 +436,13 @@ spans (Perplexity `locate`); that is a different job, not covered here.
    `OPENROUTER_API_KEY`, `OPENCODE_API_KEY`, and for ASI Cloud a name the
    builder confirms from ASI's docs (`ASI_API_KEY` until then, marked
    unverified).
+
+## Decided after the builder check (the user, 2026-11-23)
+
+- Large choice sets: basic two-step idea only, in `references/advanced.md`,
+  plus TypeSafe cookbook links. Most advanced techniques are links to
+  TypeSafe's Patterns and Cookbooks, not our own text.
+- Text only for v1; images get a stub with a link.
 
 ## Left to the builder
 
