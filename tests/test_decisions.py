@@ -1117,5 +1117,63 @@ class FinalReviewFixesTest(unittest.TestCase):
             decide.check_privacy("x", {"privacy": {"x": {}}}, False)
 
 
+class PrFollowupTest(unittest.TestCase):
+    def setUp(self):
+        self.fake = FakeSystemOne()
+        self.addCleanup(self.fake.close)
+        self.dir = tempfile.TemporaryDirectory()
+        self.addCleanup(self.dir.cleanup)
+        self.sp = os.path.join(self.dir.name, "s.decisions.json")
+        self.setup = {"provider": "a", "model": "jev-1.13-free", "questions": QUESTIONS,
+                      "providers": {"a": {"endpoint": self.fake.base + "/a", "key_env": [],
+                                          "default_model": "jev-1.13-free",
+                                          "models_url": self.fake.base + "/models"}},
+                      "privacy": {"a": {"confirmed": "2026-11-23"}}}
+        with open(self.sp, "w") as f:
+            json.dump(self.setup, f)
+
+    def main(self, *argv):
+        out, err = io.StringIO(), io.StringIO()
+        with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
+            code = decide.main(list(argv))
+        return code, out.getvalue(), err.getvalue()
+
+    def test_provider_override_without_model_is_error(self):
+        for cmd in (["run", self.sp, "--state", "x"], ["ask", self.sp, "--state", "x", "--yes", "q"],
+                    ["calibrate", self.sp, "--labels", "nolabels.jsonl"]):
+            code, out, err = self.main(*cmd, "--provider", "typesafe")
+            self.assertEqual(code, 2, cmd)
+            self.assertIn("--model", err)
+        self.assertEqual(self.fake.requests, [])
+
+    def test_provider_same_as_setup_needs_no_model(self):
+        code, out, err = self.main("run", self.sp, "--state", "x", "--provider", "a", "--dry-run")
+        self.assertEqual(code, 0, err)
+
+    def test_text_field_missing_is_error_row(self):
+        src = os.path.join(self.dir.name, "in.jsonl")
+        with open(src, "w") as f:
+            f.write('{"id": "1", "body": "hello"}\n{"id": "2", "text": "fire"}\n')
+        rows = list(decide.read_items(src, text_field="text"))
+        self.assertIn("text", rows[0][2])
+        self.assertIsNone(rows[1][2])
+        self.assertEqual(rows[1][1], "fire")
+
+    def test_models_no_description_and_setup_providers(self):
+        self.fake.script["/models"] = [(200, {"data": [{"name": "m1", "description": None},
+                                                       {"id": "m2"}]})]
+        code, out, err = self.main("models", "--setup", self.sp, "--provider", "a")
+        self.assertEqual(code, 0, err)
+        self.assertIn("a: m1  no description", out)
+        self.assertIn("a: m2  no description", out)
+
+    def test_adapters_refuse_until_privacy_check_wired(self):
+        for name in ("vercel_evaluate", "levanto_sage"):
+            mod = _load_adapter(name)
+            with self.assertRaises(RuntimeError) as cm:
+                mod.evaluate("x", {"q": {"type": "noul"}}, key="k", model="m")
+            self.assertIn("check_privacy", str(cm.exception))
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -52,6 +52,8 @@ def from_response(reply):
 
 
 def evaluate(state, questions, *, key, model, timeout=60):
+    # Delete the next line once your code calls decide.check_privacy() for this service first.
+    raise RuntimeError("sample adapter: call decide.check_privacy() before evaluate(), then delete this line")
     body = json.dumps(to_request(model, state, questions)).encode("utf-8")
     req = urllib.request.Request(ENDPOINT, data=body, method="POST", headers={
         "Content-Type": "application/json", "Authorization": f"Bearer {key}"})

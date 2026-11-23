@@ -153,7 +153,7 @@ question); keep their names and rules fixed so the cutoffs still apply.
 | Command | Does |
 |---|---|
 | `providers` | built-in providers, whether a key is set (names only) |
-| `models [--provider X]` | list models where the provider has a list endpoint |
+| `models [--provider X] [--setup F]` | list models where the provider has a list endpoint (with `--setup`, its extra providers too) |
 | `ask [setup] --state T --yes Q` | one question, plain-language answer (`--choice`, `--score` too) |
 | `privacy setup --provider X --policy-url U --summary S` | record the user's confirmation |
 | `calibrate setup --labels F [--check]` | score labels, set cutoffs (`--check` compares only) |

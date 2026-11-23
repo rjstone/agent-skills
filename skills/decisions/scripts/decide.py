@@ -596,6 +596,9 @@ def read_items(source: str, fmt=None, id_field: str = "id", text_field=None):
                 if not row.get(id_field):
                     yield f"line {n}", None, f"line {n}: missing {id_field!r}"
                     continue
+                if text_field and row.get(text_field) is None:
+                    yield str(row[id_field]), None, f"line {n}: missing field {text_field!r}"
+                    continue
                 yield (*_split(row, id_field, text_field), None)
         return
     if fmt != "jsonl":
@@ -615,6 +618,9 @@ def read_items(source: str, fmt=None, id_field: str = "id", text_field=None):
                 continue
             if not isinstance(obj, dict) or id_field not in obj:
                 yield f"line {n}", None, f"line {n}: missing {id_field!r}"
+                continue
+            if text_field and obj.get(text_field) is None:
+                yield str(obj[id_field]), None, f"line {n}: missing field {text_field!r}"
                 continue
             yield (*_split(obj, id_field, text_field), None)
     finally:
@@ -698,8 +704,19 @@ def _batches(iterable, size: int):
         yield batch
 
 
+def _check_override(args, setup) -> None:
+    """--provider other than the setup's needs --model too: model ids differ by provider."""
+    want = getattr(args, "provider", None)
+    if setup and want and want != setup.get("provider") and not getattr(args, "model", None):
+        raise DecisionError(
+            "config", f"--provider {want} differs from the setup's provider "
+            f"{setup.get('provider')!r}: also give --model with that provider's model id "
+            "(ids differ by provider), and run the privacy check for it")
+
+
 def cmd_run(args) -> int:
     setup = load_setup(args.setup)
+    _check_override(args, setup)
     questions = setup["questions"]
     reference = setup.get("reference")
     if args.state is not None:
@@ -799,6 +816,7 @@ def cmd_run(args) -> int:
 
 def cmd_ask(args) -> int:
     setup = load_setup(args.setup) if args.setup else {}
+    _check_override(args, setup)
     questions = _questions_from_flags(args) or setup.get("questions")
     if not questions:
         raise DecisionError("config", "give --yes, --choice or --score (or a setup file with questions)")
@@ -846,16 +864,19 @@ def get_json(url: str, key, timeout: float):
 
 
 def cmd_models(args) -> int:
-    names = [args.provider] if args.provider else list(PROVIDERS)
+    setup = load_setup(args.setup) if args.setup else None
+    extra = [n for n in ((setup or {}).get("providers") or {}) if n not in PROVIDERS]
+    names = [args.provider] if args.provider else list(PROVIDERS) + extra
     for name in names:
-        cfg = provider_config(name)
+        cfg = provider_config(name, setup)
         if not cfg.get("models_url"):
             print(f"{name}: no model-list endpoint; see {cfg['docs']} (default {cfg['default_model']})")
             continue
         data = get_json(cfg["models_url"], api_key(cfg), args.timeout)
         rows = data.get("data") or data.get("models") or [] if isinstance(data, dict) else data
         for m in rows:
-            print(f"{name}: {m.get('name') or m.get('id')}  {m.get('description', '')[:80]}")
+            desc = m.get("description") or "no description"
+            print(f"{name}: {m.get('name') or m.get('id')}  {str(desc)[:80]}")
     return 0
 
 
@@ -915,6 +936,7 @@ def build_parser() -> argparse.ArgumentParser:
 
     m = sub.add_parser("models", help="list a provider's models where it has a list endpoint")
     m.add_argument("--provider")
+    m.add_argument("--setup", help="also list providers defined in this setup file")
     m.add_argument("--timeout", type=float, default=30.0)
     m.set_defaults(func=cmd_models)
     return p
@@ -1114,6 +1136,7 @@ def read_labels(path: str) -> list:
 
 def cmd_calibrate(args) -> int:
     setup = load_setup(args.setup)
+    _check_override(args, setup)
     labels = read_labels(args.labels)
     report = calibrate(setup, labels, target_recall=args.target_recall,
                        target_precision=args.target_precision,

@@ -25,6 +25,11 @@ cautious, _ = decide.is_cautious(setup)
 print(decide.route(answers, decide.effective_rules(setup["policy"], setup["questions"], cautious)))
 ```
 
+Each adapter's `evaluate()` starts with a `raise RuntimeError(...)` line. It
+stays until your code runs the privacy check first (record the confirmation
+with `decide.py privacy`, then call `decide.check_privacy(name, setup, False)`
+before `evaluate()`); delete that line only then.
+
 Before using one: read the service's current docs and fix the field names,
 run one call with made-up data, keep the privacy check (`references/privacy.md`)
 and calibrate again: a different service is a different model family.
