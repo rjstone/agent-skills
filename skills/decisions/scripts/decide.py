@@ -294,3 +294,74 @@ def evaluate(state, questions: dict, *, provider: str | None = None, model: str 
                 "usage": reply.get("usage") or {}, "hops": failed}
         return reply["answers"], meta
     raise DecisionError("fallback", "all providers failed: " + "; ".join(failed))
+
+
+# --- routing -------------------------------------------------------------------
+
+ROUTES = ("pass", "review", "reject")
+CAUTIOUS = {"noul": {"reject_below": 0.05, "pass_above": 0.90}, "min_confidence": 0.6,
+            "score_reject_below": 0.5, "score_pass_margin": 1.5}
+
+
+def is_cautious(setup: dict, model_returned: str | None = None):
+    """(True, reason) unless the setup is calibrated for this model family."""
+    policy = setup.get("policy") or {}
+    cal = setup.get("calibration")
+    if policy.get("mode") != "calibrated":
+        return True, "not calibrated (policy.mode is not 'calibrated')"
+    if not cal or not cal.get("model"):
+        return True, "no calibration record"
+    if model_returned and family_of(model_returned) != family_of(cal["model"]):
+        return True, (f"answering model {model_returned} is family {family_of(model_returned)!r}; "
+                      f"calibrated on {cal['model']} (family {family_of(cal['model'])!r})")
+    return False, f"calibrated on {cal['model']}"
+
+
+def effective_rules(policy: dict, questions: dict, cautious: bool) -> list:
+    """The rules to route with. Cautious mode only widens: the lower reject
+    bound, the higher pass bound and the higher confidence floor win."""
+    rules = [dict(r) for r in (policy or {}).get("rules") or []]
+    if not cautious:
+        return rules
+    for r in rules:
+        qtype = (questions.get(r["question"]) or {}).get("type")
+        if qtype == "noul":
+            r["reject_below"] = min(r.get("reject_below", 1.0), CAUTIOUS["noul"]["reject_below"])
+            r["pass_above"] = max(r.get("pass_above", 0.0), CAUTIOUS["noul"]["pass_above"])
+        elif qtype == "score":
+            levels = len(questions[r["question"]].get("criteria") or [])
+            top = max(levels - CAUTIOUS["score_pass_margin"], 0.0)
+            r["reject_below"] = min(r.get("reject_below", float("inf")), CAUTIOUS["score_reject_below"])
+            r["pass_above"] = max(r.get("pass_above", 0.0), top)
+        if qtype in ("score", "choice"):
+            r["min_confidence"] = max(r.get("min_confidence", 0.0), CAUTIOUS["min_confidence"])
+    return rules
+
+
+def _rule_route(answer: dict | None, rule: dict) -> str:
+    if not isinstance(answer, dict):
+        return "review"
+    conf = answer.get("confidence")
+    low_conf = "min_confidence" in rule and (conf is None or conf < rule["min_confidence"])
+    if answer.get("type") == "choice":
+        r = (rule.get("routes") or {}).get(answer.get("choice"), "review")
+        return "review" if low_conf else r
+    value = answer.get("noul") if answer.get("type") == "noul" else answer.get("score")
+    if value is None:
+        return "review"
+    if "reject_below" in rule and value < rule["reject_below"]:
+        return "review" if low_conf else "reject"
+    if "pass_above" in rule and value > rule["pass_above"] and not low_conf:
+        return "pass"
+    return "review"
+
+
+def route(answers: dict, rules: list) -> str:
+    """"reject" if any rule rejects, else "review" if any rule reviews, else "pass".
+    Questions without a rule are informational and never change the route."""
+    results = [_rule_route(answers.get(r["question"]), r) for r in rules]
+    if "reject" in results:
+        return "reject"
+    if "review" in results:
+        return "review"
+    return "pass"

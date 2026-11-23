@@ -311,5 +311,97 @@ class EvaluateTest(unittest.TestCase):
         self.assertEqual(meta["provider"], "b")
 
 
+class RoutingTest(unittest.TestCase):
+    def noul(self, v):
+        return {"type": "noul", "noul": v}
+
+    def test_route_noul_bands(self):
+        rules = [{"question": "q", "reject_below": 0.2, "pass_above": 0.8}]
+        self.assertEqual(decide.route({"q": self.noul(0.1)}, rules), "reject")
+        self.assertEqual(decide.route({"q": self.noul(0.5)}, rules), "review")
+        self.assertEqual(decide.route({"q": self.noul(0.9)}, rules), "pass")
+
+    def test_route_without_pass_above_reviews(self):
+        rules = [{"question": "q", "reject_below": 0.2}]
+        self.assertEqual(decide.route({"q": self.noul(0.99)}, rules), "review")
+
+    def test_route_any_reject_wins_then_review(self):
+        rules = [{"question": "a", "reject_below": 0.2, "pass_above": 0.8},
+                 {"question": "b", "reject_below": 0.2, "pass_above": 0.8}]
+        self.assertEqual(decide.route({"a": self.noul(0.1), "b": self.noul(0.9)}, rules), "reject")
+        self.assertEqual(decide.route({"a": self.noul(0.5), "b": self.noul(0.9)}, rules), "review")
+        self.assertEqual(decide.route({"a": self.noul(0.9), "b": self.noul(0.9)}, rules), "pass")
+
+    def test_route_low_confidence_reviews(self):
+        rules = [{"question": "s", "reject_below": 0.5, "pass_above": 2.0, "min_confidence": 0.5}]
+        a = {"s": {"type": "score", "score": 2.8, "confidence": 0.4, "probabilities": {}}}
+        self.assertEqual(decide.route(a, rules), "review")
+
+    def test_route_score_uses_expected_score(self):
+        rules = [{"question": "s", "reject_below": 0.5, "pass_above": 2.5}]
+        a = {"s": {"type": "score", "score": 2.6, "confidence": 0.9,
+                   "probabilities": {"0": 0.1, "1": 0.45, "2": 0.0, "3": 0.45}}}
+        self.assertEqual(decide.route(a, rules), "pass")
+
+    def test_choice_rule_maps_names(self):
+        rules = [{"question": "team", "routes": {"ops": "pass", "sales": "reject"},
+                  "min_confidence": 0.7}]
+        def ans(choice, conf):
+            return {"team": {"type": "choice", "choice": choice, "confidence": conf,
+                             "probabilities": {}}}
+        self.assertEqual(decide.route(ans("ops", 0.9), rules), "pass")
+        self.assertEqual(decide.route(ans("sales", 0.9), rules), "reject")
+        self.assertEqual(decide.route(ans("ops", 0.5), rules), "review")
+        self.assertEqual(decide.route(ans("billing", 0.99), rules), "review")
+
+    def test_question_without_rule_is_informational(self):
+        rules = [{"question": "a", "reject_below": 0.2, "pass_above": 0.8}]
+        a = {"a": self.noul(0.9), "other": self.noul(0.0)}
+        self.assertEqual(decide.route(a, rules), "pass")
+
+    def test_missing_answer_reviews(self):
+        rules = [{"question": "a", "reject_below": 0.2, "pass_above": 0.8}]
+        self.assertEqual(decide.route({}, rules), "review")
+
+
+class CautiousTest(unittest.TestCase):
+    Q = {"n": {"type": "noul"}, "c": {"type": "choice", "criteria": {"x": None, "y": None}},
+         "s": {"type": "score", "criteria": ["a", "b", "c", "d"]}}
+
+    def rule(self, rules, name):
+        return [r for r in rules if r["question"] == name][0]
+
+    def test_cautious_widens_never_narrows(self):
+        pol = {"rules": [{"question": "n", "reject_below": 0.10, "pass_above": 0.70}]}
+        r = self.rule(decide.effective_rules(pol, self.Q, True), "n")
+        self.assertEqual((r["reject_below"], r["pass_above"]), (0.05, 0.90))
+        pol = {"rules": [{"question": "n", "reject_below": 0.01, "pass_above": 0.95}]}
+        r = self.rule(decide.effective_rules(pol, self.Q, True), "n")
+        self.assertEqual((r["reject_below"], r["pass_above"]), (0.01, 0.95))
+        pol = {"rules": [{"question": "c", "routes": {"x": "pass"}, "min_confidence": 0.5},
+                         {"question": "s", "min_confidence": 0.8}]}
+        rules = decide.effective_rules(pol, self.Q, True)
+        self.assertEqual(self.rule(rules, "c")["min_confidence"], 0.6)
+        self.assertEqual(self.rule(rules, "s")["min_confidence"], 0.8)
+
+    def test_calibrated_rules_unchanged(self):
+        pol = {"rules": [{"question": "n", "reject_below": 0.10, "pass_above": 0.70}]}
+        self.assertEqual(decide.effective_rules(pol, self.Q, False), pol["rules"])
+
+    def test_cautious_score_defaults(self):
+        pol = {"rules": [{"question": "s"}]}
+        r = self.rule(decide.effective_rules(pol, self.Q, True), "s")
+        self.assertEqual((r["reject_below"], r["pass_above"]), (0.5, 2.5))
+
+    def test_is_cautious_reasons(self):
+        self.assertTrue(decide.is_cautious({"policy": {"mode": "cautious"}})[0])
+        self.assertTrue(decide.is_cautious({"policy": {"mode": "calibrated"}})[0])
+        cal = {"policy": {"mode": "calibrated"}, "calibration": {"model": "jev-1.13-free"}}
+        self.assertFalse(decide.is_cautious(cal, "jev-1.14.0")[0])
+        on, why = decide.is_cautious(cal, "perplexity/pplx-decider-flash-v1.3")
+        self.assertTrue(on)
+        self.assertIn("family", why)
+
+
 if __name__ == "__main__":
     unittest.main()
