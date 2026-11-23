@@ -3375,5 +3375,93 @@ class DoxygenHtmlTests(unittest.TestCase):
         self.assertEqual(main_content(page), "<p>Body</p>")
 
 
+DOXY_CLI_SEARCHDATA = """var indexSectionsWithContent = { 0: "dg", 1: "d", 2: "g" };
+var indexSectionNames = { 0: "all", 1: "functions", 2: "pages" };
+var indexSectionLabels = { 0: "All", 1: "Functions", 2: "Pages" };
+"""
+
+
+def doxy_fn_js(*names):
+    rows = ["['%s_0',['%s',['../group__demo.html#ga%d',1,'demo.h']]]" % (n.lower(), n, i)
+            for i, n in enumerate(names)]
+    return "var searchData=\n[\n  " + ",\n  ".join(rows) + "\n];\n"
+
+
+class DoxygenCliTests(unittest.TestCase):
+    run_main = CliTests.run_main
+
+    def setUp(self):
+        CliTests.setUp(self)
+        self.dox = os.path.join(self.tmp, "dox")
+        write(self.dox, "index.html", '<div id="projectname">Demo<span id="projectnumber">1.2</span></div>')
+        write(self.dox, "search/searchdata.js", DOXY_CLI_SEARCHDATA)
+        write(self.dox, "search/functions_0.js", doxy_fn_js("doThing"))
+        write(self.dox, "search/pages_0.js",
+              "var searchData=[['guide_0',['Guide page',['../guide.html',1,'']]]];")
+        write(self.dox, "group__demo.html", doxy_page(
+            '<a id="ga0"></a><h2 class="memtitle">doThing()</h2><div class="memdoc">Thing doc</div>'
+            '<a id="ga1"></a><h2 class="memtitle">doMore()</h2><div class="memdoc">More doc</div>'))
+        write(self.dox, "guide.html", doxy_page("<p>Long prose</p>"))
+
+    def entries(self, name="demo"):
+        return load(os.path.join(self.cache, "built", name), "index.json")["entries"]
+
+    def test_detect_search(self):
+        code, out, err = self.run_main("detect", self.dox)
+        self.assertEqual(code, 0, err)
+        for want in ("type: doxygen\n", "index: search\n", "read: BUILD-doxygen.md\n",
+                     "source: %s\n" % self.dox):
+            self.assertIn(want, out)
+
+    def test_detect_from_page(self):
+        code, out, err = self.run_main("detect", os.path.join(self.dox, "group__demo.html"))
+        self.assertEqual(code, 0, err)
+        self.assertIn("source: %s\n" % self.dox, out)
+
+    def test_sphinx_wins(self):
+        shutil.copy(os.path.join(self.site, "objects.inv"), self.dox)
+        code, out, err = self.run_main("detect", self.dox)
+        self.assertIn("type: sphinx\n", out)
+        self.assertIn("also: doxygen", out)
+
+    def test_build_search(self):
+        code, out, err = self.run_main("build", self.dox, "--name", "demo")
+        self.assertEqual(code, 0, err)
+        self.assertIn("index: search", out)
+        entries = self.entries()
+        self.assertIn({"name": "doThing", "type": "Function", "path": "group__demo#ga0"}, entries)
+        self.assertIn({"name": "Guide page", "type": "Guide", "path": "guide"}, entries)
+        db = load(self.docvol, "db.json")
+        self.assertIn("Thing doc", db["group__demo"])
+        self.assertNotIn("Long prose", db["guide"])
+        self.assertEqual(load_plan(self.plan_path)["index"], "search")
+
+    def test_rebuild_sees_changed_index(self):
+        self.assertEqual(self.run_main("build", self.dox, "--name", "demo")[0], 0)
+        write(self.dox, "search/functions_0.js", doxy_fn_js("doThing", "doMore"))
+        code, out, err = self.run_main("build", "demo")
+        self.assertEqual(code, 0, err)
+        self.assertIn("the inventory changed", out)
+        self.assertIn({"name": "doMore", "type": "Function", "path": "group__demo#ga1"}, self.entries())
+
+    def test_build_menu(self):
+        menu = os.path.join(self.tmp, "menu")
+        write(menu, "menudata.js", 'var menudata={children:[{text:"Functions",url:"globals_func.html"}]}')
+        write(menu, "globals_func.html", doxy_page(
+            '<ul><li>doThing()\n: <a class="el" href="demo_8h.html#a1">demo.h</a>\n</li></ul>'))
+        write(menu, "demo_8h.html", doxy_page('<a id="a1"></a><h2 class="memtitle">doThing()</h2><p>T</p>'))
+        code, out, err = self.run_main("build", menu, "--name", "demo")
+        self.assertEqual(code, 0, err)
+        self.assertIn("index: menu", out)
+        self.assertIn({"name": "doThing", "type": "Function", "path": "demo_8h#a1"}, self.entries())
+
+    def test_neither(self):
+        empty = os.path.join(self.tmp, "empty")
+        os.makedirs(empty)
+        code, _, err = self.run_main("plan", empty, "--name", "demo")
+        self.assertNotEqual(code, 0)
+        self.assertIn("objects.inv", err)
+
+
 if __name__ == "__main__":
     unittest.main()

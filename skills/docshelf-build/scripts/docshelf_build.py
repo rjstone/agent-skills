@@ -18,6 +18,7 @@ from build_classify import apply_choices, counts, parse_choices, review_lines, r
 from build_core import (NAME_RE, VERSION, CLIError, built_dir, cache_dir, plans_dir, src_dir,  # noqa: E402
                         warn)
 from build_docvol import check_name, derive_name, write_docvol, write_llms_docvol  # noqa: E402
+from build_doxygen import DoxygenFormatError, read_doxygen  # noqa: E402
 from build_fetch import (FetchError, PageCache, fetch_llms, fetch_pages, index_getter,  # noqa: E402
                          open_source, open_url_source)
 from build_inventory import parse_inventory  # noqa: E402
@@ -28,8 +29,9 @@ from build_plan import (load_plan, make_llms_plan, make_plan, save_plan,  # noqa
 
 DESCRIPTION = """\
 Build a docshelf docvol from a Sphinx site's objects.inv (Sphinx, PyDoctor,
-MkDocs with mkdocstrings) or from a site's llms.txt page list (Mintlify,
-Starlight and others). Sphinx: reference pages are kept in full, guide pages
+MkDocs with mkdocstrings), a Doxygen HTML site (its search index or
+menudata.js) or a site's llms.txt page list (Mintlify, Starlight and
+others). Sphinx and Doxygen: reference pages are kept in full, guide pages
 become stubs with a link. llms.txt: every listed page is kept in full; narrow
 with a sub-index as SOURCE or --stub. Usual loop:
   detect URL                  which type the site supports, and the SOURCE
@@ -40,18 +42,63 @@ with a sub-index as SOURCE or --stub. Usual loop:
                               --apply FILE --model ID records an agent's choices
   build SOURCE [plan options] plan and build in one step
 Then look things up with docshelf (the docvol is listed as "built").
-SOURCE is the site's base URL or a local Sphinx HTML build folder, or the
-URL (or local file) of an llms.txt."""
+SOURCE is the site's base URL or a local Sphinx or Doxygen HTML build
+folder, or the URL (or local file) of an llms.txt."""
 
 
 def _plan_path(cache: str, name: str) -> str:
     return os.path.join(plans_dir(cache), name + ".json")
 
 
-def _read_inventory(source):
-    data = source.inventory()
+def _read_inventory(source, data: Optional[bytes] = None):
+    data = source.inventory() if data is None else data
     header, entries = parse_inventory(data)
     return hashlib.sha256(data).hexdigest(), header, entries
+
+
+def _cached_getter(source):
+    """source.file with each answer kept, so probing a file and then reading
+    it costs one request."""
+    cache: dict = {}
+
+    def get(rel: str) -> Optional[bytes]:
+        if rel not in cache:
+            cache[rel] = source.file(rel)
+        return cache[rel]
+    return get
+
+
+def _has_doxygen(get) -> bool:
+    return get("search/searchdata.js") is not None or get("menudata.js") is not None
+
+
+def _read_doxygen(get):
+    """(sha, header, entries, index) with the reader's warnings printed (the
+    first 10, then a count); a site whose index cannot be read is exit 3."""
+    try:
+        sha, header, entries, idx = read_doxygen(get)
+    except DoxygenFormatError as e:
+        raise CLIError("Doxygen index: %s" % e, 3)
+    for w in idx.warnings[:10]:
+        warn(w)
+    if len(idx.warnings) > 10:
+        warn("... and %d more index warnings" % (len(idx.warnings) - 10))
+    return sha, header, entries, idx
+
+
+def _plan_doxygen(cache: str, args, source, get) -> str:
+    sha, header, entries, idx = _read_doxygen(get)
+    name = args.name or derive_name(header)
+    check_name(cache, name)
+    path = _plan_path(cache, name)
+    old = load_plan(path) if os.path.isfile(path) else None
+    plan = make_plan(source.base, sha, header, entries, list(args.overrides or []), old=old,
+                     reset=args.reset, base_url=args.base_url, kind="doxygen")
+    plan["index"] = idx.kind
+    save_plan(path, plan)
+    _print(summarize(plan, old))
+    _summary_tail(path)
+    return name
 
 
 def _print(lines: List[str]) -> None:
@@ -95,7 +142,11 @@ def do_plan(cache: str, args, opener=None, sleep=None) -> str:
     if is_llms_source(args.source):
         return do_plan_llms(cache, args, opener, sleep)
     source = open_source(args.source, base_url=args.base_url, opener=opener, sleep=sleep)
-    sha, header, entries = _read_inventory(source)
+    get = _cached_getter(source)
+    inv = get("objects.inv")
+    if inv is None and _has_doxygen(get):
+        return _plan_doxygen(cache, args, source, get)
+    sha, header, entries = _read_inventory(source, inv)
     name = args.name or derive_name(header)
     check_name(cache, name)
     path = _plan_path(cache, name)
@@ -227,11 +278,17 @@ def do_build(cache: str, name: str, workers: int, refetch: bool = False, opener=
         return do_build_llms(cache, name, plan, path, workers, refetch, opener, sleep)
     source = open_source(plan["source"], base_url=plan.get("base_url"), workers=workers,
                          opener=opener, sleep=sleep)
-    sha, header, entries = _read_inventory(source)
+    kind = plan.get("kind", "sphinx")
+    if kind == "doxygen":
+        sha, header, entries, idx = _read_doxygen(_cached_getter(source))
+    else:
+        sha, header, entries = _read_inventory(source)
     if sha != plan["inventory_sha256"]:
-        old, plan = plan, make_plan(plan["source"], sha, header, entries, [], old=plan)
+        old, plan = plan, make_plan(plan["source"], sha, header, entries, [], old=plan, kind=kind)
         if old.get("archive"):
             plan["archive"] = old["archive"]
+        if kind == "doxygen":
+            plan["index"] = idx.kind
         save_plan(path, plan)
         print("the inventory changed since the plan:")
         _print(summarize(plan, old))
@@ -448,7 +505,7 @@ def main(argv: Optional[List[str]] = None, env=None, opener=None,
         elif args.command == "detect":
             found = detect(args.source, opener=opener, sleep=sleep)
             if found.kind is None:
-                raise CLIError("no objects.inv or llms.txt found; tried: %s"
+                raise CLIError("no objects.inv or llms.txt found (and no Doxygen index); tried: %s"
                                % ", ".join("%s (%s)" % t for t in found.tried),
                                4 if offline(found) else 3)
             _print(describe(found))
