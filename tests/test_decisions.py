@@ -869,21 +869,38 @@ class AdapterTest(unittest.TestCase):
 
     def test_sage_null_answer_maps_to_review_marker(self):
         sg = _load_adapter("levanto_sage")
-        names = ["team"]
-        ans = sg.from_response({"answers": [{"answer": None, "probability": 0.5}]}, names,
-                               {"team": self.Q["team"]})
+        reply = {"results": [{"answers": [
+            {"ok": True, "result": {"id": "team", "kind": "choice",
+                                    "result": {"chosen": None, "probability": 0.5, "probabilities": []}}},
+            {"ok": False, "result": None, "error": "boom"}]}]}
+        ans = sg.from_response(reply, {"team": self.Q["team"], "urgent": self.Q["urgent"]})
         self.assertTrue(ans["team"]["null_answer"])
         self.assertEqual(ans["team"]["confidence"], 0)
         self.assertEqual(decide.route(ans, [{"question": "team"}]), "review")
+        self.assertNotIn("urgent", ans)
 
-    def test_sage_score_levels_without_level_key(self):
+    def test_sage_batch_request_and_answers_by_id(self):
         sg = _load_adapter("levanto_sage")
-        req, names = sg.to_request("levanto-sage-v1.3", {"text": "x"}, self.Q)
-        self.assertEqual(names, ["urgent", "team", "quality"])
-        kinds = [q["question"]["kind"] for q in req["questions"]]
-        self.assertEqual(kinds, ["yesno", "choice", "scale"])
-        self.assertEqual([lv["value"] for lv in req["questions"][2]["question"]["levels"]], [0, 1, 2])
-
+        req = sg.to_request({"text": "x"}, self.Q)
+        qs = req["requests"][0]["questions"]
+        self.assertEqual([q["id"] for q in qs], ["urgent", "team", "quality"])
+        self.assertEqual([q["kind"] for q in qs], ["yesno", "choice", "scale"])
+        self.assertEqual(qs[1]["options"][0]["option"], "ops")
+        self.assertEqual([lv["level"] for lv in qs[2]["levels"]], [0, 1, 2])
+        self.assertTrue(all("instructions" in q for q in qs))
+        reply = {"results": [{"answers": [
+            {"ok": True, "result": {"id": "quality", "kind": "scale", "result": {
+                "expectation": 1.9, "confidence": 0.9, "probabilities": [{"level": 2, "probability": 0.9}]}}},
+            {"ok": True, "result": {"id": "urgent", "kind": "yesno",
+                                    "result": {"answer": "no", "probability": 0.8}}},
+            {"ok": True, "result": {"id": "team", "kind": "choice", "result": {
+                "chosen": "ops", "probability": 0.97,
+                "probabilities": [{"option": "ops", "probability": 0.97}]}}}]}]}
+        ans = sg.from_response(reply, self.Q)
+        self.assertAlmostEqual(ans["urgent"]["noul"], 0.2)
+        self.assertEqual(ans["team"]["choice"], "ops")
+        self.assertEqual(ans["team"]["probabilities"], {"ops": 0.97})
+        self.assertEqual(ans["quality"]["score"], 1.9)
 
 class SetupValidationTest(unittest.TestCase):
     def check(self, setup, word):

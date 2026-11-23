@@ -8,8 +8,8 @@ person to read in a minute; use `decide.py` for real work.
 | File | Service | Status |
 |---|---|---|
 | `systemone_minimal.py` | any System One host (plain request, for reading) | sample |
-| `vercel_evaluate.py` | Vercel AI Gateway `/v1/evaluate` | sample, unverified |
-| `levanto_sage.py` | Levanto Sage `/decide` | sample, unverified |
+| `vercel_evaluate.py` | Vercel AI Gateway `/v1/evaluate` | sample; decision models need paid gateway credits, answers not yet seen live |
+| `levanto_sage.py` | Levanto Sage `/decide/batch` | sample, request and answers checked live 2026-11-23 |
 
 Every adapter exposes the same contract:
 

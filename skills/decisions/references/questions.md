@@ -56,6 +56,8 @@ Keep it short: it is sent with every item and billed as input tokens.
 
 ## Writing tips
 
+- Always give `instructions`, even for a choice whose options speak for
+  themselves: some hosts (Liquid) reject a question without them.
 - One judgment per question. Split "relevant and credible" into two.
 - Describe each score level concretely (what the item must show), lowest
   first. 3-5 levels are easier to calibrate than 10.

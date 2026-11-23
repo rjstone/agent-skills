@@ -27,7 +27,7 @@ models; find them with the `provider-onboarding` skill
 |---|---|---|
 | `jev` | `jev-1.13-free`, `jev-latest` (-> `jev-1.14.0`), `typesafe/jev-1.14` | ~32K context; no domain knowledge assumed; `noul` has no confidence |
 | `pplx-decider` | `pplx-decider-latest`, `perplexity/pplx-decider-flash-v1.3:free` | 1-255 choices, 1-10 score levels, 256K context; questions in one request can see each other's answers (v1.2), so keep grouping fixed once calibrated |
-| `liquid-d1` | `liquid/d1.2`, `liquid/d1-ultra` | via OpenRouter, or Liquid direct (unverified) |
+| `liquid-d1` | `d1`, `d1.1`, `d1.2`, `d1.2-ultra`, `d1-ultra`; on OpenRouter `liquid/d1.2` | Liquid direct verified 2026-11-23; requires `instructions` on every question (422 otherwise) |
 | `asi-super-decider` | `super-decider` | answers noul and choice |
 
 Cheapest listings seen 2026-11-23 (input $/1M): `jev-1.13-free`,
@@ -59,10 +59,12 @@ Read the current page before the privacy check; these change.
 | Perplexity | https://www.perplexity.ai (legal: privacy policy, API terms) | not checked |
 | ASI Cloud | the provider's site (privacy/terms) | not checked |
 
-## Unverified System One hosts
+## Other System One hosts (not built in)
 
-models.dev lists these with the TypeSafe SDK; none was called live. Add one
-to a setup file's `providers` block (marked unverified automatically):
+Add one to a setup file's `providers` block (marked unverified
+automatically). Liquid's direct endpoint was verified live 2026-11-23
+(noul, choice and score; `GET https://api.liquid.ai/decisions/v1/models`
+lists its models; every question needs `instructions`):
 
 ```json
 "providers": {
@@ -76,7 +78,8 @@ is experimental): ASI Cloud, `https://inference.asicloud.cudos.org/v1/systemone`
 model `super-decider` (answers noul and choice), key env var unconfirmed
 (`ASI_API_KEY` used in testing), price not published in the catalogs used.
 
-Others listed: decisionmodels.io (`https://api.decisionmodels.io/v1` +
+Listed by models.dev with the TypeSafe SDK but never called live:
+decisionmodels.io (`https://api.decisionmodels.io/v1` +
 `/systemone`; `s1-fast`, `s1-pro`, `reax-1`), Butler (`cicero`), GreenPT
 (`metis`), Melious (`clef`, `clef-flash`), NEAR AI (`typesafe/jev-1.13`),
 Vivgrid (`jev`). Try one call with `ask --test-data` before real use.
