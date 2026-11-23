@@ -32,6 +32,22 @@
 Numbered so items can be referred to (e.g. "6.2.3"); renumber freely when
 items are done.
 
+#### 0. Next: docshelf-build 0.5.0 deferred minors (PR #38 review)
+
+Do these first (the user, 2026-11-23). Script fixes, so a patch bump
+(0.5.1).
+
+- [ ] 0.1 `detect` gives no hint when its Doxygen probes get an HTML page
+      (a bot check): add a `tried` entry such as "HTML page (site may be
+      blocking automated requests)" when `looks_html(body)`
+      (`build_detect.py`).
+- [ ] 0.2 `build_doxygen.js_value` checks `text.lstrip().startswith("<")`,
+      which misses a page starting with a byte-order mark; reuse
+      `build_fetch.looks_html` or strip the BOM first.
+- [ ] 0.3 A SOURCE with no `objects.inv` and no Doxygen index still says
+      only "cannot fetch .../objects.inv: HTTP 404"; add "(no Doxygen index
+      either)" to that error (`docshelf_build.py`, `do_plan`).
+
 #### 1. Features
 
 (none open)
