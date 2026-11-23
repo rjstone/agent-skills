@@ -336,7 +336,7 @@ def _add_row(idx: DoxyIndex, row, category: str, label: str, non_scopes: Set[str
         scope = link[2] if len(link) > 2 and isinstance(link[2], str) else ""
         role = _role(category, label, uri)
         if category in _SCOPE_CATEGORIES:
-            name, disp = html.unescape(display).strip(), "-"
+            name, disp = html.unescape(scope or display).strip(), "-"
             non_scopes.add(name)
         else:
             name, disp = member_name(display, scope, role, non_scopes)

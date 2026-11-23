@@ -3060,7 +3060,8 @@ def doxy_search_site():
         "search/defines_0.js": sd([
             "['glfw_5fkey_5fescape_0',['GLFW_KEY_ESCAPE',['../group__keys.html#gaac',1,'glfw3.h']]]"]),
         "search/groups_0.js": sd(["['input_0',['Input reference',['../group__input.html',1,'']]]"]),
-        "search/pages_0.js": sd(["['getting_0',['Getting started',['../quick_guide.html',1,'']]]"]),
+        "search/pages_0.js": sd(["['getting_0',['Getting started',['../quick_guide.html',1,'']]]",
+                                 "['started_1',['started',['../quick_guide.html',1,'Getting started']]]"]),
         "search/all_0.js": sd([
             "['glfw_5fkey_5fa_0',['GLFW_KEY_A',['../group__input.html#k1',1,'glfw3.h']]]",
             "['glfwkey_1',['glfwKey',['../group__input.html#ga1',1,'glfw3.h']]]",
@@ -3116,6 +3117,10 @@ class DoxygenSearchIndexTests(unittest.TestCase):
         self.assertEqual(self.entry(idx, "helper")[0].role, "doxygen:Symbol")
         self.assertEqual(len(self.entry(idx, "glfwKey")), 1)
         self.assertFalse([e for e in idx.entries if e.name in ("Introduction", "x")])
+
+    def test_title_keywords_use_full_title(self):
+        idx, _ = self.read(doxy_search_site())
+        self.assertEqual([e.name for e in idx.entries if e.uri == "quick_guide.html"], ["Getting started"])
 
     def test_missing_files_warn(self):
         idx, _ = self.read(doxy_search_site())
