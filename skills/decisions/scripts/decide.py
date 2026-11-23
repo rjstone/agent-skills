@@ -354,7 +354,8 @@ def _rule_route(answer: dict | None, rule: dict) -> str:
     conf = answer.get("confidence")
     low_conf = "min_confidence" in rule and (conf is None or conf < rule["min_confidence"])
     if answer.get("type") == "choice":
-        r = (rule.get("routes") or {}).get(answer.get("choice"), "review")
+        routes = rule.get("routes")
+        r = "pass" if routes is None else routes.get(answer.get("choice"), "review")
         return "review" if low_conf else r
     value = answer.get("noul") if answer.get("type") == "noul" else answer.get("score")
     if value is None:
@@ -777,6 +778,15 @@ def build_parser() -> argparse.ArgumentParser:
     a.add_argument("--json", action="store_true")
     a.set_defaults(func=cmd_ask)
 
+    c = sub.add_parser("calibrate", parents=[common], help="score labeled items and set cutoffs")
+    c.add_argument("setup")
+    c.add_argument("--labels", required=True, help='JSONL: {"id", "item", "expected": {...}}')
+    c.add_argument("--target-recall", type=float, default=0.95)
+    c.add_argument("--target-precision", type=float, default=0.90)
+    c.add_argument("--replace-user-rules", action="store_true")
+    c.add_argument("--check", action="store_true", help="re-score and compare; change nothing")
+    c.set_defaults(func=cmd_calibrate)
+
     pv = sub.add_parser("privacy", help="record the user's privacy confirmation for a provider")
     pv.add_argument("setup")
     pv.add_argument("--provider", required=True)
@@ -802,6 +812,196 @@ def main(argv=None) -> int:
         _err(str(e))
         return {"privacy": 3, "fallback": 4}.get(e.kind, 2)
 
+
+
+# --- calibration -----------------------------------------------------------------
+
+MARGIN = 0.02  # probabilities wobble in the second decimal; leave room around cutoffs
+
+
+def auroc(values, positives):
+    """Area under the ROC curve (Mann-Whitney, ties count half); None if a class is empty."""
+    pos = [v for v, p in zip(values, positives) if p]
+    neg = [v for v, p in zip(values, positives) if not p]
+    if not pos or not neg:
+        return None
+    wins = sum(1.0 if a > b else 0.5 if a == b else 0.0 for a in pos for b in neg)
+    return wins / (len(pos) * len(neg))
+
+
+def is_good(expected: dict, good_if) -> bool:
+    for c in good_if:
+        v = expected.get(c["question"])
+        if v is None:
+            return False
+        if "is" in c and v != c["is"]:
+            return False
+        if "at_least" in c and not (isinstance(v, (int, float)) and v >= c["at_least"]):
+            return False
+        if "in" in c and v not in c["in"]:
+            return False
+    return True
+
+
+def _value(answer):
+    if not isinstance(answer, dict):
+        return None
+    return answer.get("noul") if answer.get("type") == "noul" else answer.get("score")
+
+
+def _default_good_if(questions: dict) -> list:
+    out = []
+    for name, q in questions.items():
+        if q.get("type") == "noul":
+            out.append({"question": name, "is": True})
+        elif q.get("type") == "score":
+            out.append({"question": name, "at_least": (len(q.get("criteria") or []) - 1) / 2})
+    return out
+
+
+def suggest_rules(results, questions: dict, good_if, target_recall: float,
+                  target_precision: float) -> list:
+    """Cutoffs from scored labels. results: [{"answers", "expected", "good"}]."""
+    good = [r for r in results if r["good"]]
+    allowed = int((1 - target_recall) * len(good) + 1e-9)
+    rules = []
+    for name, q in questions.items():
+        qtype = q.get("type")
+        if qtype in ("noul", "score"):
+            rule = {"question": name, "source": "calibration"}
+            gv = sorted(v for v in (_value(r["answers"].get(name)) for r in good) if v is not None)
+            if gv:
+                rule["reject_below"] = round(gv[min(allowed, len(gv) - 1)] - MARGIN, 4)
+            pairs = sorted((_value(r["answers"].get(name)), r["good"]) for r in results
+                           if _value(r["answers"].get(name)) is not None)
+            for i, (t, _) in enumerate(pairs):
+                above = [g for v, g in pairs[i:] if v > t]
+                if len(above) >= 3 and sum(above) / len(above) >= target_precision:
+                    rule["pass_above"] = round(t, 4)
+                    break
+            rules.append(rule)
+        elif qtype == "choice":
+            scored = sorted((r["answers"][name].get("confidence", 0),
+                             r["answers"][name].get("choice") == r["expected"].get(name))
+                            for r in results if name in r["expected"] and name in r["answers"])
+            min_conf = 1.0
+            for i, (c, _) in enumerate(scored):
+                tail = [ok for _, ok in scored[i:]]
+                if len(tail) >= 3 and sum(tail) / len(tail) >= target_precision:
+                    min_conf = round(c, 4)
+                    break
+            rules.append({"question": name, "min_confidence": min_conf, "source": "calibration"})
+    # item level: loosen the rule closest to each rejected good item until recall holds
+    for _ in range(len(good) + 1):
+        rejected = []
+        for r in good:
+            for rule in rules:
+                v = _value(r["answers"].get(rule["question"]))
+                if v is not None and "reject_below" in rule and v < rule["reject_below"]:
+                    rejected.append((rule["reject_below"] - v, rule, v))
+        if len({id(x) for x in good if route(x["answers"], rules) == "reject"}) <= allowed or not rejected:
+            break
+        _, rule, v = min(rejected, key=lambda x: x[0])
+        rule["reject_below"] = round(v - MARGIN, 4)
+    return rules
+
+
+def calibrate(setup: dict, labels, *, target_recall: float = 0.95, target_precision: float = 0.90,
+              replace_user_rules: bool = False, scorer=None, test_data: bool = False,
+              today=None, write: bool = True) -> dict:
+    """Score labeled items, report agreement, and (write=True) store cutoffs and the
+    calibration record in the setup. Labels: [{"id", "item", "expected": {question: value}}]."""
+    scorer = scorer or evaluate
+    check_privacy(setup["provider"], setup, test_data)
+    questions = setup["questions"]
+    policy = setup.setdefault("policy", {})
+    good_if = policy.get("good_if") or _default_good_if(questions)
+    results, model, provider = [], None, None
+    for lab in labels:
+        answers, meta = scorer(build_state(setup.get("reference"), lab["item"]), questions,
+                               setup=setup, test_data=test_data)
+        model = model or meta.get("model_returned")
+        provider = provider or meta.get("provider")
+        results.append({"id": lab.get("id"), "answers": answers, "expected": lab["expected"],
+                        "good": is_good(lab["expected"], good_if)})
+    n_good = sum(r["good"] for r in results)
+    counts = {"good": n_good, "not good": len(results) - n_good}
+    warnings = []
+    if len(results) < 20:
+        warnings.append(f"only {len(results)} labels; 20 or more recommended, covering every class "
+                        "and the borderline cases")
+    metrics = {}
+    for name, q in questions.items():
+        if q.get("type") in ("noul", "score"):
+            vals = [(_value(r["answers"].get(name)), r["good"]) for r in results]
+            vals = [(v, g) for v, g in vals if v is not None]
+            metrics[name] = {"auroc": auroc([v for v, _ in vals], [g for _, g in vals])}
+        elif q.get("type") == "choice":
+            conf, right = {}, 0
+            per = {}
+            for r in results:
+                exp, got = r["expected"].get(name), (r["answers"].get(name) or {}).get("choice")
+                if exp is None:
+                    continue
+                per[exp] = per.get(exp, 0) + 1
+                conf.setdefault(exp, {})[got] = conf.setdefault(exp, {}).get(got, 0) + 1
+                right += exp == got
+            total = sum(per.values())
+            metrics[name] = {"accuracy": right / total if total else None, "confusion": conf}
+            counts.update({f"{name}={k}": v for k, v in per.items()})
+    for cls, k in counts.items():
+        if k < 3 and (cls in ("good", "not good") or "=" in cls):
+            warnings.append(f"class {cls!r} has only {k} labels; add at least 3")
+    suggested = suggest_rules(results, questions, good_if, target_recall, target_precision)
+    old = policy.get("rules") or []
+    user = [r for r in old if r.get("source") != "calibration"]
+    kept = [] if replace_user_rules else user
+    kept_q = {r["question"] for r in kept}
+    final = kept + [r for r in suggested if r["question"] not in kept_q]
+    good_routes = [route(r["answers"], final) for r in results if r["good"]]
+    item_recall = (sum(x != "reject" for x in good_routes) / len(good_routes)) if good_routes else None
+    report = {"labels": len(results), "counts": counts, "questions": metrics, "warnings": warnings,
+              "suggested_rules": suggested, "kept_user_rules": kept, "rules": final,
+              "item_recall": item_recall, "model": model, "provider": provider}
+    if write:
+        policy["rules"] = final
+        policy["mode"] = "calibrated"
+        setup["calibration"] = {
+            "model": model, "provider": provider,
+            "date": today or datetime.date.today().isoformat(),
+            "labels": len(results), "counts": counts, "metrics": metrics,
+            "targets": {"recall": target_recall, "precision": target_precision},
+            "item_recall": item_recall}
+    return report
+
+
+def read_labels(path: str) -> list:
+    labels = []
+    for item_id, obj, error in read_items(path, "jsonl", "id", None):
+        if error:
+            raise DecisionError("config", f"labels file {path}: {error}")
+        if not isinstance(obj, dict) or "item" not in obj or "expected" not in obj:
+            raise DecisionError("config", f"labels file {path}: {item_id} needs 'item' and 'expected'")
+        labels.append({"id": item_id, "item": obj["item"], "expected": obj["expected"]})
+    return labels
+
+
+def cmd_calibrate(args) -> int:
+    setup = load_setup(args.setup)
+    labels = read_labels(args.labels)
+    report = calibrate(setup, labels, target_recall=args.target_recall,
+                       target_precision=args.target_precision,
+                       replace_user_rules=args.replace_user_rules, test_data=args.test_data,
+                       write=not args.check)
+    if args.check:
+        stored = setup.get("calibration") or {}
+        report["stored"] = {"model": stored.get("model"), "metrics": stored.get("metrics")}
+    else:
+        save_setup(args.setup, setup)
+    print(json.dumps(report, indent=2))
+    for w in report["warnings"]:
+        _err("warning: " + w)
+    return 0
 
 if __name__ == "__main__":
     sys.exit(main())

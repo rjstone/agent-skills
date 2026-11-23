@@ -669,5 +669,161 @@ class CliTest(unittest.TestCase):
         self.assertIn("0.1.0", out.getvalue())
 
 
+class CalibrationTest(unittest.TestCase):
+    Q = {"real": {"type": "noul", "instructions": "real lead?"}}
+
+    def setup_(self, **kw):
+        s = {"provider": "a", "model": "jev-1.13-free", "questions": self.Q,
+             "policy": {"mode": "cautious", "good_if": [{"question": "real", "is": True}],
+                        "rules": [{"question": "real", "source": "calibration"}]},
+             "privacy": {"a": {"confirmed": "2026-11-23"}}}
+        s.update(kw)
+        return s
+
+    @staticmethod
+    def scorer_from(values, model="jev-1.14.0"):
+        def scorer(state, questions, **kw):
+            item = state["item"] if isinstance(state, dict) and "item" in state else state
+            return values[item], {"provider": "a", "model_returned": model, "usage": {}, "hops": []}
+        return scorer
+
+    def labeled(self, good_vals, bad_vals):
+        labels, values = [], {}
+        for i, v in enumerate(good_vals):
+            labels.append({"id": f"g{i}", "item": f"g{i}", "expected": {"real": True}})
+            values[f"g{i}"] = {"real": {"type": "noul", "noul": v}}
+        for i, v in enumerate(bad_vals):
+            labels.append({"id": f"b{i}", "item": f"b{i}", "expected": {"real": False}})
+            values[f"b{i}"] = {"real": {"type": "noul", "noul": v}}
+        return labels, values
+
+    def test_auroc_known_values(self):
+        self.assertEqual(decide.auroc([0.9, 0.8, 0.1, 0.2], [True, True, False, False]), 1.0)
+        self.assertEqual(decide.auroc([0.1, 0.2, 0.9, 0.8], [True, True, False, False]), 0.0)
+        self.assertEqual(decide.auroc([0.5, 0.5, 0.5, 0.5], [True, True, False, False]), 0.5)
+        self.assertIsNone(decide.auroc([0.5, 0.6], [True, True]))
+
+    def test_is_good(self):
+        g = [{"question": "real", "is": True}, {"question": "q", "at_least": 2},
+             {"question": "c", "in": ["ops", "billing"]}]
+        self.assertTrue(decide.is_good({"real": True, "q": 2, "c": "ops"}, g))
+        self.assertFalse(decide.is_good({"real": True, "q": 1, "c": "ops"}, g))
+        self.assertFalse(decide.is_good({"real": True, "q": 3, "c": "sales"}, g))
+        self.assertFalse(decide.is_good({"q": 3, "c": "ops"}, g))
+
+    def test_suggest_reject_keeps_target_recall(self):
+        good = [0.30 + 0.69 * i / 19 for i in range(20)]
+        bad = [0.01 + 0.39 * i / 19 for i in range(20)]
+        labels, values = self.labeled(good, bad)
+        setup = self.setup_()
+        report = decide.calibrate(setup, labels, scorer=self.scorer_from(values))
+        rule = [r for r in setup["policy"]["rules"] if r["question"] == "real"][0]
+        rejected_good = sum(v < rule["reject_below"] for v in good)
+        self.assertLessEqual(rejected_good, 1)
+        self.assertGreater(sum(v < rule["reject_below"] for v in bad), 5)
+        self.assertEqual(rule["source"], "calibration")
+        self.assertGreaterEqual(report["item_recall"], 0.95)
+
+    def test_item_level_recall_loosens_rules(self):
+        q = {"a": {"type": "noul"}, "b": {"type": "noul"}}
+        labels, values = [], {}
+        for i in range(20):
+            va = 0.05 if i == 0 else 0.6 + i / 100
+            vb = 0.05 if i == 1 else 0.6 + i / 100
+            labels.append({"id": f"g{i}", "item": f"g{i}", "expected": {"a": True, "b": True}})
+            values[f"g{i}"] = {"a": {"type": "noul", "noul": va}, "b": {"type": "noul", "noul": vb}}
+        for i in range(10):
+            labels.append({"id": f"b{i}", "item": f"b{i}", "expected": {"a": False, "b": False}})
+            values[f"b{i}"] = {"a": {"type": "noul", "noul": 0.01}, "b": {"type": "noul", "noul": 0.01}}
+        setup = self.setup_(questions=q, policy={"mode": "cautious", "good_if": [
+            {"question": "a", "is": True}, {"question": "b", "is": True}], "rules": []})
+        report = decide.calibrate(setup, labels, scorer=self.scorer_from(values))
+        rules = setup["policy"]["rules"]
+        good_rejected = sum(
+            decide.route(values[f"g{i}"], rules) == "reject" for i in range(20))
+        self.assertLessEqual(good_rejected, 1)
+        self.assertGreaterEqual(report["item_recall"], 0.95)
+
+    def test_pass_above_none_when_precision_unreachable(self):
+        good = [0.5 + i / 100 for i in range(10)]
+        bad = [0.5 + i / 100 for i in range(10)]
+        labels, values = self.labeled(good, bad)
+        setup = self.setup_()
+        decide.calibrate(setup, labels, scorer=self.scorer_from(values))
+        rule = setup["policy"]["rules"][0]
+        self.assertNotIn("pass_above", rule)
+
+    def test_pass_above_set_when_separable(self):
+        labels, values = self.labeled([0.9, 0.92, 0.95, 0.97, 0.99] * 4, [0.1, 0.2, 0.3] * 5)
+        setup = self.setup_()
+        decide.calibrate(setup, labels, scorer=self.scorer_from(values))
+        self.assertIn("pass_above", setup["policy"]["rules"][0])
+
+    def test_choice_min_confidence_from_accuracy(self):
+        q = {"code": {"type": "choice", "criteria": {"6100": None, "6200": None}}}
+        labels, values = [], {}
+        for i in range(20):
+            conf = 0.5 + i / 40
+            right = conf >= 0.7
+            exp = "6100"
+            got = exp if right else "6200"
+            labels.append({"id": str(i), "item": str(i), "expected": {"code": exp}})
+            values[str(i)] = {"code": {"type": "choice", "choice": got, "confidence": conf,
+                                       "probabilities": {}}}
+        setup = self.setup_(questions=q, policy={"mode": "cautious", "rules": []})
+        report = decide.calibrate(setup, labels, scorer=self.scorer_from(values))
+        rule = setup["policy"]["rules"][0]
+        self.assertGreaterEqual(rule["min_confidence"], 0.65)
+        self.assertLessEqual(rule["min_confidence"], 0.75)
+        self.assertEqual(report["questions"]["code"]["confusion"]["6100"]["6200"], 8)
+        self.assertEqual(decide.route(values["19"], [rule]), "pass")
+        self.assertEqual(decide.route(values["0"], [rule]), "review")
+
+    def test_calibrate_keeps_user_rules_unless_replace(self):
+        labels, values = self.labeled([0.6 + i / 100 for i in range(20)], [0.1] * 10)
+        user = {"question": "real", "reject_below": 0.3, "pass_above": 0.5, "source": "user"}
+        setup = self.setup_(policy={"mode": "cautious", "good_if": [{"question": "real", "is": True}],
+                                    "rules": [dict(user)]})
+        report = decide.calibrate(setup, labels, scorer=self.scorer_from(values))
+        self.assertEqual(setup["policy"]["rules"], [user])
+        self.assertEqual(report["kept_user_rules"][0]["question"], "real")
+        decide.calibrate(setup, labels, scorer=self.scorer_from(values), replace_user_rules=True)
+        self.assertEqual(setup["policy"]["rules"][0]["source"], "calibration")
+
+    def test_calibrate_warns_small_label_sets(self):
+        labels, values = self.labeled([0.9] * 10, [0.1, 0.2])
+        report = decide.calibrate(self.setup_(), labels, scorer=self.scorer_from(values))
+        text = " ".join(report["warnings"])
+        self.assertIn("12 labels", text)
+        self.assertIn("not good", text)
+
+    def test_calibrate_records_returned_model_and_counts(self):
+        labels, values = self.labeled([0.9] * 15, [0.1] * 10)
+        setup = self.setup_()
+        decide.calibrate(setup, labels, scorer=self.scorer_from(values), today="2026-11-23")
+        cal = setup["calibration"]
+        self.assertEqual(cal["model"], "jev-1.14.0")
+        self.assertEqual(cal["labels"], 25)
+        self.assertEqual(cal["counts"], {"good": 15, "not good": 10})
+        self.assertEqual(cal["date"], "2026-11-23")
+        self.assertEqual(setup["policy"]["mode"], "calibrated")
+        self.assertFalse(decide.is_cautious(setup, "jev-1.14.0")[0])
+
+    def test_calibrate_respects_privacy(self):
+        with tempfile.TemporaryDirectory() as d:
+            path = os.path.join(d, "s.decisions.json")
+            setup = self.setup_()
+            del setup["privacy"]
+            setup["providers"] = {"a": {"endpoint": "http://127.0.0.1:9/x", "key_env": []}}
+            with open(path, "w") as f:
+                json.dump(setup, f)
+            lab = os.path.join(d, "labels.jsonl")
+            with open(lab, "w") as f:
+                f.write('{"id": "1", "item": "x", "expected": {"real": true}}\n')
+            with contextlib.redirect_stderr(io.StringIO()):
+                code = decide.main(["calibrate", path, "--labels", lab])
+            self.assertEqual(code, 3)
+
+
 if __name__ == "__main__":
     unittest.main()
