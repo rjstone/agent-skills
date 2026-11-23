@@ -112,9 +112,11 @@ class DecisionError(Exception):
     """kind: "request" (fix the request), "fallback" (try another provider),
     "privacy" (no confirmed privacy record), "config" (setup or usage problem)."""
 
-    def __init__(self, kind: str, message: str):
+    def __init__(self, kind: str, message: str, *, status=None, retry_after=None):
         super().__init__(message)
         self.kind = kind
+        self.status = status  # HTTP status when the provider answered with an error
+        self.retry_after = retry_after  # seconds from a 429's Retry-After header, if usable
 
 
 _AUTH_PATTERNS = [
@@ -177,6 +179,22 @@ def build_request(model: str, state, questions: dict) -> dict:
 # --- calling a provider ------------------------------------------------------
 
 FALLBACK_STATUSES = {401, 402, 403, 429}
+RETRIES_429 = 2  # extra tries on the same provider after a 429, before falling back
+BACKOFF_429 = (1.0, 2.0)  # seconds to wait before each of those tries without a Retry-After
+MAX_RETRY_AFTER = 30.0
+_sleep = time.sleep  # one place to wait, so tests can patch it
+
+
+def parse_retry_after(value):
+    """Seconds from a Retry-After header, capped at MAX_RETRY_AFTER. None for a
+    missing, negative, non-numeric or HTTP-date value (the default backoff applies)."""
+    try:
+        secs = float(value)
+    except (TypeError, ValueError):
+        return None
+    if secs != secs or secs < 0:  # NaN or negative
+        return None
+    return min(secs, MAX_RETRY_AFTER)
 USER_AGENT = f"decide.py/{VERSION}"
 
 
@@ -199,8 +217,11 @@ def post_json(url: str, key: str | None, payload: dict, timeout: float) -> dict:
         except Exception:
             detail = ""
         msg = redact(f"HTTP {e.code}: {detail}", key)[:400]
+        if e.code == 429:
+            raise DecisionError("fallback", msg, status=429,
+                                retry_after=parse_retry_after(e.headers.get("Retry-After"))) from None
         if e.code >= 500 or e.code in FALLBACK_STATUSES:
-            raise DecisionError("fallback", msg) from None
+            raise DecisionError("fallback", msg, status=e.code) from None
         raise DecisionError("request", msg) from None
     except (urllib.error.URLError, TimeoutError, OSError, http.client.HTTPException, ValueError) as e:
         raise DecisionError("fallback", redact(f"{type(e).__name__}: {e}", key)) from None
@@ -283,14 +304,32 @@ def _hops(setup: dict, provider: str | None, model: str | None, fallbacks) -> li
     return hops
 
 
+def _post_hop(url: str, key, payload: dict, timeout: float, limiter) -> dict:
+    """One provider call: waits for the rate limiter before every POST, and on a
+    429 waits (Retry-After, else BACKOFF_429) and tries the same provider again,
+    up to RETRIES_429 times; then the 429 falls through to the next provider."""
+    for attempt in range(RETRIES_429 + 1):
+        if limiter:
+            limiter()
+        try:
+            return post_json(url, key, payload, timeout)
+        except DecisionError as e:
+            if e.status != 429 or attempt == RETRIES_429:
+                raise
+            _sleep(e.retry_after if e.retry_after is not None else BACKOFF_429[attempt])
+    raise AssertionError("unreachable")
+
+
 def evaluate(state, questions: dict, *, provider: str | None = None, model: str | None = None,
              fallbacks=None, setup: dict | None = None, timeout: float = 60,
-             test_data: bool = False):
+             test_data: bool = False, limiter=None):
     """Ask the questions about one state. Returns (answers, meta).
 
     Tries the primary provider, then each same-family fallback once. Each hop
     uses its own model; `model` overrides the primary hop only. Without a setup
-    file holding a privacy entry for a provider, only test_data=True may send."""
+    file holding a privacy entry for a provider, only test_data=True may send.
+    `limiter`, a no-argument callable, runs before every HTTP call (retries and
+    fallback hops included)."""
     setup = setup or {}
     hops = _hops(setup, provider, model, fallbacks)
     check_privacy(hops[0][0], setup or None, test_data)
@@ -307,7 +346,7 @@ def evaluate(state, questions: dict, *, provider: str | None = None, model: str 
         payload = build_request(m, state, questions)
         try:
             for attempt in range(2):
-                reply = post_json(cfg["endpoint"], key, payload, timeout)
+                reply = _post_hop(cfg["endpoint"], key, payload, timeout, limiter)
                 if isinstance(reply, dict) and "answers" in reply:
                     break
                 if attempt:
@@ -815,11 +854,10 @@ def cmd_run(args) -> int:
             answers, returned = hit["answers"], hit["model_returned"]
             row.update(cached=True, provider=first)
         else:
-            limiter.wait()
             try:
                 answers, meta = evaluate(build_state(reference, item), questions, provider=args.provider,
                                          model=args.model, setup=setup, timeout=args.timeout,
-                                         test_data=args.test_data)
+                                         test_data=args.test_data, limiter=limiter.wait)
             except DecisionError as e:
                 if e.kind == "privacy":
                     raise
@@ -971,7 +1009,7 @@ def build_parser() -> argparse.ArgumentParser:
     r.add_argument("--dry-run", action="store_true", help="print the first request; send nothing")
     r.add_argument("--no-cache", action="store_true")
     r.add_argument("--workers", type=int, default=1)
-    r.add_argument("--rate", type=float, default=2.0, help="max calls per second (default 2)")
+    r.add_argument("--rate", type=float, default=2.0, help="max calls per second across all workers, retries and fallbacks included (default 2)")
     r.set_defaults(func=cmd_run)
 
     a = sub.add_parser("ask", parents=[common], help="ask one question about one text")

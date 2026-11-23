@@ -119,7 +119,8 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer  # noqa: E40
 
 class FakeSystemOne:
     """Local stand-in for System One hosts. script[path] is a list of
-    (status, body) replies used in order; the last one repeats."""
+    (status, body) or (status, body, headers) replies used in order; the
+    last one repeats."""
 
     def __init__(self):
         self.script = {}
@@ -139,13 +140,17 @@ class FakeSystemOne:
                     body = None
                 fake.requests.append((self.path, dict(self.headers), body))
                 replies = fake.script.get(self.path) or [(404, {"error": "no route"})]
-                status, out = replies.pop(0) if len(replies) > 1 else replies[0]
+                reply = replies.pop(0) if len(replies) > 1 else replies[0]
+                status, out = reply[0], reply[1]
+                extra = reply[2] if len(reply) > 2 else {}
                 if callable(out):
                     out = out(self.headers, body)
                 data = out if isinstance(out, bytes) else json.dumps(out).encode()
                 self.send_response(status)
                 self.send_header("Content-Type", "application/json")
                 self.send_header("Content-Length", str(len(data)))
+                for k, v in extra.items():
+                    self.send_header(k, v)
                 self.end_headers()
                 self.wfile.write(data)
 
@@ -218,10 +223,57 @@ class EvaluateTest(unittest.TestCase):
     def test_fallback_on_429_then_success(self):
         self.fake.script["/a"] = [(429, {"error": "rate"})]
         self.fake.script["/b"] = [(200, good_answer())]
-        answers, meta = self.ev()
+        with mock.patch.object(decide, "_sleep"):
+            answers, meta = self.ev()
         self.assertEqual(meta["provider"], "b")
         self.assertEqual(len(meta["hops"]), 1)
         self.assertIn("429", meta["hops"][0])
+
+    def test_429_backs_off_then_same_hop_succeeds(self):
+        self.fake.script["/a"] = [(429, {"error": "rate"}), (200, good_answer())]
+        with mock.patch.object(decide, "_sleep") as sl:
+            answers, meta = self.ev()
+        self.assertEqual(meta["provider"], "a")
+        self.assertEqual(meta["hops"], [])
+        sl.assert_called_once_with(1.0)
+
+    def test_429_honours_retry_after_capped(self):
+        self.fake.script["/a"] = [(429, {}, {"Retry-After": "3"}), (429, {}, {"Retry-After": "999"}),
+                                  (200, good_answer())]
+        with mock.patch.object(decide, "_sleep") as sl:
+            self.ev()
+        self.assertEqual([c.args[0] for c in sl.call_args_list], [3.0, 30.0])
+
+    def test_429_exhausted_falls_back_after_backoff(self):
+        self.fake.script["/a"] = [(429, {"error": "rate"})]
+        self.fake.script["/b"] = [(200, good_answer())]
+        with mock.patch.object(decide, "_sleep") as sl:
+            answers, meta = self.ev()
+        self.assertEqual(len(self.fake.calls("/a")), 3)
+        self.assertEqual([c.args[0] for c in sl.call_args_list], [1.0, 2.0])
+        self.assertEqual(meta["provider"], "b")
+        self.assertIn("429", meta["hops"][0])
+
+    def test_429_on_fallback_hop_also_backs_off(self):
+        self.fake.script["/a"] = [(500, {})]
+        self.fake.script["/b"] = [(429, {}), (200, good_answer())]
+        with mock.patch.object(decide, "_sleep") as sl:
+            _, meta = self.ev()
+        self.assertEqual(meta["provider"], "b")
+        sl.assert_called_once_with(1.0)
+
+    def test_parse_retry_after(self):
+        for raw, want in [("2", 2.0), ("0", 0.0), ("999", 30.0), ("-1", None), ("", None), (None, None),
+                          ("Wed, 21 Oct 2026 07:28:00 GMT", None), ("soon", None), ("nan", None)]:
+            self.assertEqual(decide.parse_retry_after(raw), want, raw)
+
+    def test_limiter_runs_before_every_post(self):
+        self.fake.script["/a"] = [(200, {"no": "answers"})]
+        self.fake.script["/b"] = [(200, good_answer())]
+        ticks = []
+        self.ev(limiter=lambda: ticks.append(1))
+        self.assertEqual(len(self.fake.requests), 3)
+        self.assertEqual(len(ticks), 3)
 
     def test_no_fallback_on_422(self):
         self.fake.script["/a"] = [(422, {"detail": "bad question"})]
@@ -286,7 +338,7 @@ class EvaluateTest(unittest.TestCase):
         del self.setup["privacy"]["b"]
         self.fake.script["/a"] = [(429, {"error": "rate"})]
         self.fake.script["/b"] = [(200, good_answer())]
-        with self.assertRaises(decide.DecisionError) as cm:
+        with self.assertRaises(decide.DecisionError) as cm, mock.patch.object(decide, "_sleep"):
             self.ev()
         self.assertEqual(cm.exception.kind, "fallback")
         self.assertIn("privacy", str(cm.exception))
@@ -1382,6 +1434,29 @@ class ReviewMinorsTest(unittest.TestCase):
             with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(err):
                 decide.main(["run", sp, "--input", src, "--no-cache", "--rate", "0"])
         self.assertNotIn(" answered, but", err.getvalue())
+
+    def test_run_rate_limits_fallback_hops_too(self):
+        fake = FakeSystemOne()
+        self.addCleanup(fake.close)
+        fake.script["/a"] = [(500, {})]
+        fake.script["/b"] = [(200, good_answer())]
+        with tempfile.TemporaryDirectory() as d:
+            setup = {"provider": "a", "model": "jev-1.13.0", "questions": QUESTIONS,
+                     "fallbacks": [{"provider": "b", "model": "jev-1.14.0"}],
+                     "providers": {"a": {"endpoint": fake.base + "/a", "key_env": []},
+                                   "b": {"endpoint": fake.base + "/b", "key_env": []}},
+                     "privacy": {"a": {"confirmed": "2026-11-23"}, "b": {"confirmed": "2026-11-23"}}}
+            sp = os.path.join(d, "s.decisions.json")
+            with open(sp, "w") as f:
+                json.dump(setup, f)
+            src = os.path.join(d, "in.jsonl")
+            with open(src, "w") as f:
+                f.write('{"id": "1", "text": "x"}\n{"id": "2", "text": "y"}\n')
+            with mock.patch.object(decide.RateLimiter, "wait") as w, \
+                    contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
+                decide.main(["run", sp, "--input", src, "--no-cache"])
+        self.assertEqual(len(fake.requests), 4)
+        self.assertEqual(w.call_count, 4)
 
     def test_ask_warns_on_drift(self):
         fake = FakeSystemOne()
