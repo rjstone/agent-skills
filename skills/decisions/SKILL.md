@@ -26,11 +26,14 @@ the calibrated probabilities this skill depends on.
 
 ## Hard rules
 
-- **No real data before the privacy check is recorded** for that provider:
-  the user reads the provider's current data-handling policy at its source,
-  and confirms the three points in
-  [references/new-setup.md](references/new-setup.md) step 4. Never record
-  it on the user's behalf; a summary you write never replaces their reading.
+- **No real data before the privacy check is recorded** for that provider.
+  The user confirms all three: (1) the data is OK to send; (2) they read the
+  provider's current data-handling policy at its source (you give the link;
+  a summary from you never replaces their reading) and accept it; (3)
+  whoever is liable and principally responsible for proper handling of the
+  data under applicable laws agrees, or the user is that party. Details in
+  [references/new-setup.md](references/new-setup.md) step 4. Never record it
+  on the user's behalf.
 - **No run on real data without calibration** unless the user has said yes
   to the cautious-mode drawbacks (wording in new-setup.md step 5).
 - **Errors and uncertain answers go to `review`,** never dropped.
