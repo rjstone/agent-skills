@@ -44,7 +44,8 @@ from build_classify import (RULES_ID, apply_choices, parse_choices, bucket, coun
 from build_llms import LlmsPage, Tree, is_llms_source, parse_index, read_tree, url_key  # noqa: E402
 from build_markdown import front_matter, md_to_html, page_signals, slugify  # noqa: E402
 import build_doxygen  # noqa: E402
-from build_doxygen import DoxygenFormatError, js_value  # noqa: E402
+from build_doxygen import (DoxygenFormatError, js_value, member_name, page_uri,  # noqa: E402
+                           read_search_index)
 
 DOCSHELF = os.path.join(REPO_ROOT, "skills", "docshelf", "scripts", "docshelf.py")
 
@@ -3006,6 +3007,133 @@ class DoxygenSourceTests(unittest.TestCase):
             self.assertEqual(s.file("search/searchdata.js"), b"v")
             self.assertIsNone(s.file("nope.js"))
             self.assertIsNone(s.file("../outside"))
+
+
+DOXY_SEARCHDATA = """var indexSectionsWithContent =
+{
+  0: "abg",
+  1: "gm",
+  2: "g",
+  3: "abcdefghijk",
+  4: "g",
+  5: "i",
+  6: "g"
+};
+var indexSectionNames =
+{
+  0: "all",
+  1: "classes",
+  2: "files",
+  3: "functions",
+  4: "defines",
+  5: "groups",
+  6: "pages"
+};
+var indexSectionLabels =
+{
+  0: "All",
+  1: "Data Structures",
+  2: "Files",
+  3: "Functions",
+  4: "Macros",
+  5: "Modules",
+  6: "Pages"
+};
+"""
+
+
+def doxy_search_site():
+    """A hand-made Doxygen search index: rel path -> bytes."""
+    sd = lambda rows: ("var searchData=\n[\n  " + ",\n  ".join(rows) + "\n];\n").encode()
+    return {
+        "search/searchdata.js": DOXY_SEARCHDATA.encode(),
+        "search/classes_0.js": sd(["['glfwimage_0',['GLFWimage',['../structGLFWimage.html',1,'']]]"]),
+        "search/classes_1.js": sd(["['mat_0',['Mat',['../classcv_1_1Mat.html',1,'cv']]]"]),
+        "search/files_0.js": sd(["['glfw3_2eh_0',['glfw3.h',['../glfw3_8h.html',1,'']]]"]),
+        "search/functions_0.js": sd([
+            "['_5fget_0',['_get',['../a.html#x',1,'ns::A::_get()'],"
+            "['../a.html#y',1,'ns::A::_get(const std::vector&lt; int &gt; &amp;v)']]]"]),
+        "search/functions_a.js": sd([
+            "['glfwkey_0',['glfwKey',['../group__input.html#ga1',1,'glfw3.h'],"
+            "['../group__input.html#ga1',1,'glfw3.h']]]"]),
+        "search/defines_0.js": sd([
+            "['glfw_5fkey_5fescape_0',['GLFW_KEY_ESCAPE',['../group__keys.html#gaac',1,'glfw3.h']]]"]),
+        "search/groups_0.js": sd(["['input_0',['Input reference',['../group__input.html',1,'']]]"]),
+        "search/pages_0.js": sd(["['getting_0',['Getting started',['../quick_guide.html',1,'']]]"]),
+        "search/all_0.js": sd(["['x_0',['x',['../x.html',1,'']]]"]),
+    }
+
+
+class DoxygenSearchIndexTests(unittest.TestCase):
+    def read(self, files):
+        asked = []
+
+        def get(rel):
+            asked.append(rel)
+            return files.get(rel)
+        return read_search_index(get), asked
+
+    def entry(self, idx, name):
+        found = [e for e in idx.entries if e.name == name]
+        self.assertTrue(found, name)
+        return found
+
+    def test_hex_file_names_and_bare_c_names(self):
+        idx, asked = self.read(doxy_search_site())
+        self.assertEqual(self.entry(idx, "glfwKey"),
+                         [InvEntry("glfwKey", "doxygen:Function", 1, "group__input.html#ga1", "-")])
+        self.assertIn("search/functions_a.js", asked)
+        self.assertNotIn("search/functions_10.js", asked)
+        self.assertFalse([r for r in asked if r.startswith("search/all_")])
+        self.assertEqual(idx.kind, "search")
+
+    def test_overloads_and_entities(self):
+        idx, _ = self.read(doxy_search_site())
+        got = self.entry(idx, "ns::A::_get")
+        self.assertEqual([(e.uri, e.dispname, e.role) for e in got],
+                         [("a.html#x", "ns::A::_get()", "doxygen:Function"),
+                          ("a.html#y", "ns::A::_get(const std::vector< int > &v)", "doxygen:Function")])
+
+    def test_types(self):
+        idx, _ = self.read(doxy_search_site())
+        self.assertEqual(self.entry(idx, "cv::Mat")[0].role, "doxygen:Class")
+        self.assertEqual(self.entry(idx, "GLFWimage")[0].role, "doxygen:Struct")
+        self.assertEqual(self.entry(idx, "GLFW_KEY_ESCAPE")[0].role, "doxygen:Macro")
+        self.assertEqual(self.entry(idx, "glfw3.h")[0].role, "doxygen:File")
+        self.assertEqual(self.entry(idx, "Input reference")[0].role, "doxygen:Module")
+        self.assertEqual(self.entry(idx, "Getting started")[0].role, "std:doc")
+
+    def test_missing_files_warn(self):
+        idx, _ = self.read(doxy_search_site())
+        missing = [w for w in idx.warnings if "functions_" in w]
+        self.assertEqual(len(missing), 9)
+        self.assertIn("search/searchdata.js", [rel for rel, _ in idx.files])
+
+    def test_blocked_file_warns(self):
+        files = doxy_search_site()
+        files["search/functions_0.js"] = b"<html>blocked</html>"
+        idx, _ = self.read(files)
+        self.assertTrue([w for w in idx.warnings if "blocking automated requests" in w])
+        self.entry(idx, "glfwKey")
+
+    def test_no_searchdata(self):
+        with self.assertRaises(DoxygenFormatError):
+            self.read({})
+
+    def test_page_uri(self):
+        self.assertEqual(page_uri("../group__window.html#ga5c", "search/"), "group__window.html#ga5c")
+        self.assertEqual(page_uri("classwx_window.html#a9", ""), "classwx_window.html#a9")
+
+    def test_member_name(self):
+        ns = {"glfw3.h", "Input reference"}
+        self.assertEqual(member_name("glfwKey", "glfw3.h", "doxygen:Function", ns), ("glfwKey", "-"))
+        self.assertEqual(member_name("f", "Input reference", "doxygen:Function", ns), ("f", "-"))
+        self.assertEqual(member_name("f", "util.hpp", "doxygen:Function", set()), ("f", "-"))
+        self.assertEqual(member_name("SetSize", "wxWindow", "doxygen:Function", ns),
+                         ("wxWindow::SetSize", "-"))
+        self.assertEqual(member_name("_A", "cv::_A::_A(int (*f)(int)) const", "doxygen:Function", ns),
+                         ("cv::_A::_A", "cv::_A::_A(int (*f)(int)) const"))
+        self.assertEqual(member_name("x", "", "doxygen:Variable", ns), ("x", "-"))
 
 
 if __name__ == "__main__":
