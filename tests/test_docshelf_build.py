@@ -43,6 +43,8 @@ from build_classify import (RULES_ID, apply_choices, parse_choices, bucket, coun
                             rule_choice, run_rules)
 from build_llms import LlmsPage, Tree, is_llms_source, parse_index, read_tree, url_key  # noqa: E402
 from build_markdown import front_matter, md_to_html, page_signals, slugify  # noqa: E402
+import build_doxygen  # noqa: E402
+from build_doxygen import DoxygenFormatError, js_value  # noqa: E402
 
 DOCSHELF = os.path.join(REPO_ROOT, "skills", "docshelf", "scripts", "docshelf.py")
 
@@ -2946,6 +2948,34 @@ class DeferredMinorsTests(unittest.TestCase):
         db._split_single_page(None, uris, html, errors)
         self.assertIn("A", html["a.html"])
         self.assertEqual(list(errors), ["b.html"])
+
+
+class DoxygenJsTests(unittest.TestCase):
+    def test_search_data(self):
+        text = "var searchData=\n[\n  ['_5fget_0',['_get',['../a.html#x',1,'ns::A::_get()']]]\n];\n"
+        self.assertEqual(js_value(text, "searchData"),
+                         [["_5fget_0", ["_get", ["../a.html#x", 1, "ns::A::_get()"]]]])
+
+    def test_menudata_bare_keys_and_comment(self):
+        text = '/* @licstart x */ var menudata={children:[{text:"Main Page",url:"index.html"}]}'
+        self.assertEqual(js_value(text, "menudata"),
+                         {"children": [{"text": "Main Page", "url": "index.html"}]})
+
+    def test_escapes(self):
+        self.assertEqual(js_value(r"var v=['it\'s','a\\b','\u00e9'];", "v"), ["it's", "a\\b", "\u00e9"])
+
+    def test_object_with_int_keys(self):
+        self.assertEqual(js_value('var s =\n{\n  0: "all",\n  1: "classes"\n};', "s"),
+                         {"0": "all", "1": "classes"})
+
+    def test_html_instead_of_js(self):
+        with self.assertRaisesRegex(DoxygenFormatError, "blocking automated requests"):
+            js_value("<!DOCTYPE html><title>Just a moment...</title>", "searchData")
+
+    def test_missing_var_and_garbage(self):
+        for text in ("var other=[1];", "var searchData=[1,", "var searchData=[foo()]"):
+            with self.assertRaises(DoxygenFormatError):
+                js_value(text, "searchData")
 
 
 if __name__ == "__main__":
