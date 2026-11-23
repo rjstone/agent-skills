@@ -324,6 +324,28 @@ metadata:
   `skillspector scan skills/skillspector-install --no-llm` (0.1.1: CAUTION,
   only subprocess calls and no `allowed-tools`, which is left out so the
   installer's commands still need approval).
+- `decisions` - lets an agent use a decision model (System One wire
+  format: TypeSafe Jev, Perplexity Decider, Liquid d1 and others) as a cheap
+  pre-filter or decision step, for novice and expert users alike.
+  `scripts/decide.py` (stdlib, CLI and importable): built-in providers are
+  only hosts verified with a live call (opencode, typesafe, openrouter,
+  perplexity, asi); others go in a setup file's `providers` block and are
+  marked unverified. A JSON setup file in the user's project holds questions,
+  `reference` text (sent with every item), model, same-family fallbacks,
+  cutoffs, calibration and privacy confirmations. Rules decided by the user
+  (2026-11-23): calibration is offered every time, never forced; declining
+  means a warning plus cautious mode that over-includes; cutoffs belong to
+  one model family; three privacy confirmations (data OK to send, terms
+  acceptable, responsible parties agree) before any provider gets real data,
+  recorded per provider and enforced by the script; free or cheap models are
+  assumed to retain and train; text only in v1; field extraction is only
+  mentioned; other wire formats get sample adapters
+  (`scripts/adapters/`), not core code; advanced patterns mostly link to
+  TypeSafe's Patterns and Cookbooks docs. Scenario tests in `evals/`
+  (baseline and with-skill results; left out of `.skill` packages). Spec and
+  plan under `docs/superpowers/`. Write f-strings without `${` in its scripts:
+  SkillSpector's parser reads that as shell brace syntax and reports a
+  HIGH coverage gap (2026-11-23).
 
 ## Testing skills with small models
 

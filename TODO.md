@@ -10,6 +10,12 @@
 
 ## Skills
 
+- [ ] `decisions`: image input and `box` questions (TypeSafe `assets`,
+      Perplexity image parts); live-test the sample adapters
+      (`vercel_evaluate.py`, `levanto_sage.py`); confirm ASI Cloud's key env
+      var name and price; read TypeSafe, Perplexity and ASI data-policy pages
+      (not reachable from the test environment on 2026-11-23); a `then`
+      mapping for two-step choices if large code lists turn out common.
 - [ ] `opencode-console`: the skill exists (configuring a workspace, the
       Console MCP server, CLI and inference endpoints). Still missing upstream
       (checked 2026-11-08, still true in the skill 2026-11-22): a REST API for
