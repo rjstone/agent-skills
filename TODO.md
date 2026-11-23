@@ -11,8 +11,8 @@
 ## Skills
 
 - [ ] `decisions`: image input and `box` questions (TypeSafe `assets`,
-      Perplexity image parts); live-test the Vercel AI Gateway sample adapter (needs paid gateway
-      credits; Sage was checked 2026-11-23)
+      Perplexity image parts); the sample adapters for Vercel and Sage were
+      checked live 2026-11-23 (keep them in step with those APIs)
       (`vercel_evaluate.py`, `levanto_sage.py`); confirm ASI Cloud's key env
       var name and price; read TypeSafe, Perplexity and ASI data-policy pages
       (not reachable from the test environment on 2026-11-23); a `then`

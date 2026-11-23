@@ -86,9 +86,12 @@ Vivgrid (`jev`). Try one call with `ask --test-data` before real use.
 
 ## Not System One
 
-- Vercel AI Gateway `/v1/evaluate`: `boolean` instead of `noul`, simpler
-  criteria; sample converter in `scripts/adapters/vercel_evaluate.py`.
-- Levanto Sage `/decide`: its own schema, `null` on near-ties; sample in
-  `scripts/adapters/levanto_sage.py`.
+- Vercel AI Gateway `/v1/evaluate` (`AI_GATEWAY_API_KEY`, ids like
+  `typesafe-ai/jev`): `boolean` instead of `noul`, simpler criteria; decision
+  models need paid gateway credits. Checked live 2026-11-23 through
+  `scripts/adapters/vercel_evaluate.py`.
+- Levanto Sage `/decide/batch`: its own schema (one item per request,
+  questions with `kind`/`id`/`instructions`), `null` on near-ties; checked
+  live 2026-11-23 through `scripts/adapters/levanto_sage.py`.
 - Cloudflare Workers AI `@cf/cloudflare/clef*` via `/ai/run`: own format
   (not covered).

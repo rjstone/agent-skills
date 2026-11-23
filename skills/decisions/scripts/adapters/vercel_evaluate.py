@@ -1,11 +1,12 @@
 """SAMPLE adapter: System One questions -> Vercel AI Gateway /v1/evaluate, and back.
 
-Answers not yet seen live. Checked 2026-11-23: the endpoint and a Bearer key
-work, but every decision model needs paid AI Gateway credits (403 "Free tier
-users do not have access to this model"; the old free id
-convaiinnovations/laya-free is gone, and "providerOptions": {"gateway":
-{"has": ["free"]}} finds no free provider). Check every field against
-Vercel's current docs before use.
+Checked live 2026-11-23 with typesafe-ai/jev (boolean, choice, score; the
+reply converts with from_response below). Decision models need paid AI
+Gateway credits: a free-tier account gets 403 "Free tier users do not have
+access to this model", the old free id convaiinnovations/laya-free is gone,
+and "providerOptions": {"gateway": {"has": ["free"]}} finds no free
+provider. The reply's providerMetadata.gateway.cost is the call's price in
+USD; providerMetadata.typesafe carries confidence and the score legend.
 
 Known differences from System One (from earlier hands-on notes):
 - yes/no questions are type "boolean", not "noul"
