@@ -491,6 +491,12 @@ def save_setup(path: str, setup: dict) -> None:
         with os.fdopen(fd, "w", encoding="utf-8") as f:
             json.dump(setup, f, indent=2, ensure_ascii=False)
             f.write("\n")
+            f.flush()
+            os.fsync(f.fileno())  # data on disk before the rename, so a crash can't leave it empty
+        try:  # keep the original's permissions (mkstemp creates 0600)
+            os.chmod(tmp, os.stat(path).st_mode & 0o7777)
+        except OSError:
+            pass
         os.replace(tmp, path)
     except BaseException:
         try:
@@ -738,7 +744,7 @@ def cmd_run(args) -> int:
     check_privacy(first, setup, args.test_data)
     cache = Cache(None if args.no_cache else default_cache_path(args.setup))
     limiter = RateLimiter(args.rate)
-    _, base_reason = is_cautious(setup)
+    base_cautious, base_reason = is_cautious(setup)
 
     def one(entry):
         try:
@@ -780,14 +786,14 @@ def cmd_run(args) -> int:
             row["provider"] = meta["provider"]
             if meta["provider"] == first:
                 cache.put(key, answers, returned)
-        cautious, _ = is_cautious(setup, returned)
+        cautious, why = is_cautious(setup, returned)
         rules = effective_rules(setup.get("policy") or {}, questions, cautious)
         row.update(route=route(answers, rules, combine_of(setup)), answers=answers, model=returned)
-        row["cautious"] = cautious
+        row["cautious"], row["_why"] = cautious, why
         return row, meta
 
     counts = {r: 0 for r in ROUTES}
-    totals, fallbacks, failed, n, cautious_any = {}, 0, 0, 0, False
+    totals, fallbacks, failed, n, cautious_any, answered = {}, 0, 0, 0, False, 0
     out = open(args.out, "w", encoding="utf-8") if args.out else sys.stdout
     try:
         workers = max(1, args.workers)
@@ -796,7 +802,13 @@ def cmd_run(args) -> int:
                 n += 1
                 counts[row["route"]] += 1
                 failed += bool(row["error"])
-                cautious_any = cautious_any or row.pop("cautious", True)
+                flag = row.pop("cautious", None)  # only rows that got answers were routed
+                why = row.pop("_why", None)
+                if flag is not None:
+                    answered += 1
+                    if flag and not cautious_any:
+                        base_reason = why or base_reason
+                    cautious_any = cautious_any or flag
                 if meta:
                     _usage_add(totals, meta["usage"])
                     fallbacks += bool(meta["hops"])
@@ -805,6 +817,8 @@ def cmd_run(args) -> int:
         if out is not sys.stdout:
             out.close()
         cache.close()
+    if not answered:
+        cautious_any = base_cautious
     mode = f"cautious ({base_reason})" if cautious_any else f"calibrated ({base_reason})"
     cost = (", cost USD " + format(totals["cost"], ".6f")) if "cost" in totals else ""
     _err(f"{n} items: pass {counts['pass']}, review {counts['review']}, reject {counts['reject']}, "

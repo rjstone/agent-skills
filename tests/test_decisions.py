@@ -1175,5 +1175,69 @@ class PrFollowupTest(unittest.TestCase):
             self.assertIn("check_privacy", str(cm.exception))
 
 
+class SummaryAndSaveTest(unittest.TestCase):
+    def test_summary_says_calibrated_despite_error_rows(self):
+        fake = FakeSystemOne()
+        self.addCleanup(fake.close)
+        fake.script["/a"] = [(200, good_answer("jev-1.14.0"))]
+        with tempfile.TemporaryDirectory() as d:
+            setup = {"provider": "a", "model": "jev-1.13-free", "questions": QUESTIONS,
+                     "providers": {"a": {"endpoint": fake.base + "/a", "key_env": []}},
+                     "privacy": {"a": {"confirmed": "2026-11-23"}},
+                     "policy": {"mode": "calibrated",
+                                "rules": [{"question": "urgent", "reject_below": 0.2}]},
+                     "calibration": {"model": "jev-1.14.0"}}
+            sp = os.path.join(d, "s.decisions.json")
+            with open(sp, "w") as f:
+                json.dump(setup, f)
+            src = os.path.join(d, "in.jsonl")
+            with open(src, "w") as f:
+                f.write('{"text": "no id"}\n{"id": "2", "text": "fire"}\n')
+            err = io.StringIO()
+            with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(err):
+                decide.main(["run", sp, "--input", src, "--no-cache", "--rate", "0"])
+        self.assertIn("mode: calibrated", err.getvalue())
+        self.assertNotIn("cautious mode:", err.getvalue())
+
+    def test_summary_gives_family_reason_when_family_differs(self):
+        fake = FakeSystemOne()
+        self.addCleanup(fake.close)
+        fake.script["/a"] = [(200, good_answer("jev-1.14.0"))]
+        with tempfile.TemporaryDirectory() as d:
+            setup = {"provider": "a", "model": "jev-1.13-free", "questions": QUESTIONS,
+                     "providers": {"a": {"endpoint": fake.base + "/a", "key_env": []}},
+                     "privacy": {"a": {"confirmed": "2026-11-23"}},
+                     "policy": {"mode": "calibrated", "rules": []},
+                     "calibration": {"model": "pplx-decider-latest"}}
+            sp = os.path.join(d, "s.decisions.json")
+            with open(sp, "w") as f:
+                json.dump(setup, f)
+            err = io.StringIO()
+            with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(err):
+                decide.main(["run", sp, "--state", "x", "--no-cache", "--rate", "0"])
+        self.assertIn("mode: cautious (answering model jev-1.14.0", err.getvalue())
+
+    @unittest.skipIf(os.name == "nt", "POSIX file modes")
+    def test_save_setup_keeps_file_mode(self):
+        with tempfile.TemporaryDirectory() as d:
+            sp = os.path.join(d, "s.decisions.json")
+            with open(sp, "w") as f:
+                f.write("{}")
+            os.chmod(sp, 0o644)
+            decide.save_setup(sp, {"provider": "opencode", "questions": QUESTIONS})
+            self.assertEqual(os.stat(sp).st_mode & 0o777, 0o644)
+
+    def test_save_setup_fsyncs_before_replace(self):
+        calls = []
+        real_fsync, real_replace = os.fsync, os.replace
+        with tempfile.TemporaryDirectory() as d:
+            sp = os.path.join(d, "s.decisions.json")
+            with mock.patch.object(decide.os, "fsync", side_effect=lambda fd: (calls.append("fsync"), real_fsync(fd))), \
+                 mock.patch.object(decide.os, "replace", side_effect=lambda a, b: (calls.append("replace"), real_replace(a, b))):
+                decide.save_setup(sp, {"provider": "opencode", "questions": QUESTIONS})
+        self.assertIn("fsync", calls)
+        self.assertLess(calls.index("fsync"), calls.index("replace"))
+
+
 if __name__ == "__main__":
     unittest.main()
