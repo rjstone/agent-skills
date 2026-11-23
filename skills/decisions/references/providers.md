@@ -43,6 +43,13 @@ Perplexity Decider Flash $0.01; Liquid d1.2 $0.02; Jev $0.042; Gemini Decision
 - Mercury Decide (gone from OpenRouter by 2026-11): near-binary scores;
   cutoffs fitted on Jev lost about half the good items. Lesson: cutoffs never
   transfer across families (live tests, 2026-10).
+- Through Vercel AI Gateway (2026-11-23, one made-up item, three questions):
+  `microsoft/microsoft-decision-1` sharp and confident, about $0.0000034 a
+  call; `google/gemini-decision-1` fine, about $0.00002, adds a free-text
+  `text` field; `openai/gpt-6-luna-decisions` returns probabilities rounded
+  to 0 or 1 (near-binary like Mercury: calibrate before trusting cutoffs),
+  about $0.00004; `nace-ai/drex-v2.0` cheapest (about $0.0000018) and much
+  less certain (choice confidence 0.50 on a clear case).
 - Probabilities wobble in the second decimal between identical calls: keep a
   margin around cutoffs (Perplexity docs; observed 2026-10).
 - Jev reads `state` as given; put definitions and examples in it
