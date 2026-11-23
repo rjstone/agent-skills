@@ -259,23 +259,66 @@ def read_search_index(get: Getter) -> DoxyIndex:
         if name == "all":
             continue
         label = str(labels.get(str(num), name)) if isinstance(labels, dict) else name
-        for i in range(len(str(letters.get(str(num), "")))):
-            rel = "search/%s_%x.js" % (name, i)
-            body = get(rel)
-            if body is None:
-                idx.warnings.append("%s: missing" % rel)
-                continue
-            try:
-                rows = js_value(_decode(body), "searchData")
-            except DoxygenFormatError as e:
-                idx.warnings.append("%s: %s" % (rel, e))
-                continue
-            idx.files.append((rel, body))
-            for row in rows if isinstance(rows, list) else []:
-                _add_row(idx, row, name, label, non_scopes, seen)
+        for row in _category_rows(get, idx, name, len(str(letters.get(str(num), "")))):
+            _add_row(idx, row, name, label, non_scopes, seen)
+    for num, name in cats:
+        if name == "all":
+            _add_all_only(idx, _category_rows(get, idx, name, len(str(letters.get(str(num), "")))),
+                          non_scopes, seen)
     if not idx.entries:
         raise DoxygenFormatError("the search index lists no entries")
     return idx
+
+
+def _category_rows(get: Getter, idx: DoxyIndex, name: str, count: int) -> list:
+    """The searchData rows of search/<name>_<hex>.js for every letter; a
+    missing or unreadable file is a warning."""
+    out: list = []
+    for i in range(count):
+        rel = "search/%s_%x.js" % (name, i)
+        body = get(rel)
+        if body is None:
+            idx.warnings.append("%s: missing" % rel)
+            continue
+        try:
+            rows = js_value(_decode(body), "searchData")
+        except DoxygenFormatError as e:
+            idx.warnings.append("%s: %s" % (rel, e))
+            continue
+        idx.files.append((rel, body))
+        out.extend(rows if isinstance(rows, list) else [])
+    return out
+
+
+_CAPS = re.compile(r"^[A-Z][A-Z0-9_]*$")
+
+
+def _add_all_only(idx: DoxyIndex, rows: list, non_scopes: Set[str],
+                  seen: Set[Tuple[str, str, str]]) -> None:
+    """Members the "all" category lists but no typed category does (GLFW's
+    key macros): those with an anchor, on a page that is not a prose page.
+    ALL_CAPS names are macros; others get the generic type Symbol."""
+    prose = {e.uri.split("#", 1)[0] for e in idx.entries if e.role == "std:doc"}
+    typed = {e.uri for e in idx.entries}
+    for row in rows:
+        if not (isinstance(row, list) and len(row) == 2 and isinstance(row[1], list) and row[1]):
+            continue
+        display = row[1][0]
+        if not isinstance(display, str):
+            continue
+        for link in row[1][1:]:
+            if not (isinstance(link, list) and link and isinstance(link[0], str)):
+                continue
+            uri = page_uri(link[0], "search/")
+            if "#" not in uri or uri in typed or uri.split("#", 1)[0] in prose:
+                continue
+            role = "doxygen:Macro" if _CAPS.match(html.unescape(display)) else "doxygen:Symbol"
+            scope = link[2] if len(link) > 2 and isinstance(link[2], str) else ""
+            name, disp = member_name(display, scope, role, non_scopes)
+            if (name, role, uri) not in seen:
+                seen.add((name, role, uri))
+                typed.add(uri)
+                idx.entries.append(InvEntry(name, role, 1, uri, disp))
 
 
 def _add_row(idx: DoxyIndex, row, category: str, label: str, non_scopes: Set[str],

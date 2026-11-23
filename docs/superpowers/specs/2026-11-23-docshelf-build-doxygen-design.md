@@ -164,8 +164,12 @@ Checked formats (GLFW, CMSIS, OpenCV, gRPC, 2026-11-22/23):
 
 Rules:
 
-- Read the per-category files, never `all_*`: the category gives the
-  type, and `all` mixes in section headings of prose pages.
+- Read the per-category files first: the category gives the type. Then
+  `all_*` (added after the GLFW trial, 2026-11-23): GLFW lists its 295 key,
+  hint and error macros only there. From `all` only entries with an anchor,
+  on a page that is not a prose page, that no typed entry already has:
+  ALL_CAPS names as Macro, others as Symbol. Section headings of prose
+  pages (most of `all`) stay out.
 - Parse with a small purpose-built tokenizer for this literal subset
   (nested arrays, single-quoted strings with backslash escapes, integers),
   not `eval` and not a general JS parser. Anything else is a parse error

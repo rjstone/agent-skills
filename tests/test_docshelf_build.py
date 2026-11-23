@@ -3061,7 +3061,12 @@ def doxy_search_site():
             "['glfw_5fkey_5fescape_0',['GLFW_KEY_ESCAPE',['../group__keys.html#gaac',1,'glfw3.h']]]"]),
         "search/groups_0.js": sd(["['input_0',['Input reference',['../group__input.html',1,'']]]"]),
         "search/pages_0.js": sd(["['getting_0',['Getting started',['../quick_guide.html',1,'']]]"]),
-        "search/all_0.js": sd(["['x_0',['x',['../x.html',1,'']]]"]),
+        "search/all_0.js": sd([
+            "['glfw_5fkey_5fa_0',['GLFW_KEY_A',['../group__input.html#k1',1,'glfw3.h']]]",
+            "['glfwkey_1',['glfwKey',['../group__input.html#ga1',1,'glfw3.h']]]",
+            "['intro_2',['Introduction',['../quick_guide.html#intro',1,'Getting started']]]",
+            "['helper_3',['helper',['../group__input.html#h1',1,'glfw3.h']]]",
+            "['x_4',['x',['../x.html',1,'']]]"]),
     }
 
 
@@ -3085,7 +3090,7 @@ class DoxygenSearchIndexTests(unittest.TestCase):
                          [InvEntry("glfwKey", "doxygen:Function", 1, "group__input.html#ga1", "-")])
         self.assertIn("search/functions_a.js", asked)
         self.assertNotIn("search/functions_10.js", asked)
-        self.assertFalse([r for r in asked if r.startswith("search/all_")])
+        self.assertIn("search/all_0.js", asked)
         self.assertEqual(idx.kind, "search")
 
     def test_overloads_and_entities(self):
@@ -3103,6 +3108,14 @@ class DoxygenSearchIndexTests(unittest.TestCase):
         self.assertEqual(self.entry(idx, "glfw3.h")[0].role, "doxygen:File")
         self.assertEqual(self.entry(idx, "Input reference")[0].role, "doxygen:Module")
         self.assertEqual(self.entry(idx, "Getting started")[0].role, "std:doc")
+
+    def test_all_only_members(self):
+        idx, _ = self.read(doxy_search_site())
+        self.assertEqual(self.entry(idx, "GLFW_KEY_A"),
+                         [InvEntry("GLFW_KEY_A", "doxygen:Macro", 1, "group__input.html#k1", "-")])
+        self.assertEqual(self.entry(idx, "helper")[0].role, "doxygen:Symbol")
+        self.assertEqual(len(self.entry(idx, "glfwKey")), 1)
+        self.assertFalse([e for e in idx.entries if e.name in ("Introduction", "x")])
 
     def test_missing_files_warn(self):
         idx, _ = self.read(doxy_search_site())
