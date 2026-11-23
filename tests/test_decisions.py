@@ -24,12 +24,15 @@ spec.loader.exec_module(decide)
 
 
 class ProviderTableTest(unittest.TestCase):
-    def test_version_constant(self):
-        self.assertEqual(decide.VERSION, "0.1.0")
+    def test_version_matches_skill_md(self):
+        import re
+        with open(os.path.join(SKILL_DIR, "SKILL.md"), encoding="utf-8") as f:
+            m = re.search(r'version: "(\d+\.\d+\.\d+)"', f.read())
+        self.assertEqual(decide.VERSION, m.group(1))
 
     def test_builtin_providers(self):
         p = decide.PROVIDERS
-        self.assertEqual(set(p), {"typesafe", "openrouter", "opencode", "perplexity"})
+        self.assertEqual(set(p), {"typesafe", "openrouter", "opencode", "perplexity", "liquid"})
         self.assertEqual(p["typesafe"]["endpoint"], "https://api.typesafe.ai/v1/systemone")
         self.assertEqual(p["openrouter"]["endpoint"], "https://openrouter.ai/api/v1/systemone")
         self.assertEqual(p["opencode"]["endpoint"],
@@ -37,6 +40,10 @@ class ProviderTableTest(unittest.TestCase):
         self.assertEqual(p["perplexity"]["endpoint"], "https://api.perplexity.ai/v1/decisions")
         self.assertEqual(p["typesafe"]["key_env"], ["TYPESAFE_AI_API_KEY", "TYPESAFE_API_KEY"])
         self.assertEqual(p["perplexity"]["key_env"], ["PERPLEXITY_API_KEY"])
+        self.assertEqual(p["liquid"]["endpoint"], "https://api.liquid.ai/decisions/v1/systemone")
+        self.assertEqual(p["liquid"]["key_env"], ["LIQUID_API_KEY"])
+        self.assertEqual(p["liquid"]["models_url"], "https://api.liquid.ai/decisions/v1/models")
+        self.assertEqual(p["liquid"]["default_model"], "d1.1")
         for name, cfg in p.items():
             self.assertTrue(cfg["verified"], name)
             self.assertTrue(cfg["default_model"], name)
@@ -676,7 +683,7 @@ class CliTest(unittest.TestCase):
         with self.assertRaises(SystemExit):
             with contextlib.redirect_stdout(io.StringIO()) as out:
                 decide.main(["--version"])
-        self.assertIn("0.1.0", out.getvalue())
+        self.assertIn(decide.VERSION, out.getvalue())
 
 
 class CalibrationTest(unittest.TestCase):

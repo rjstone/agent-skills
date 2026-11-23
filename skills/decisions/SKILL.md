@@ -1,7 +1,7 @@
 ---
 name: decisions
 description: Use when an agent must classify, score, filter, triage, moderate or route many items (leads, invoices, posts, documents, game moves) cheaply, when a user asks to save model tokens or cost with a "decision model" (TypeSafe Jev, System One, Perplexity Decider, Liquid d1), or wants code that makes yes/no, pick-one or rating decisions automatically.
-compatibility: Needs network access to a decision-model provider (api.typesafe.ai, openrouter.ai, opencode.ai, api.perplexity.ai or another System One host) and an API key for it. Python 3.9+, standard library only.
+compatibility: Needs network access to a decision-model provider (api.typesafe.ai, openrouter.ai, opencode.ai, api.perplexity.ai, api.liquid.ai or another System One host) and an API key for it. Python 3.9+, standard library only.
 license: MIT
 metadata:
   author: Robert Stone

@@ -35,7 +35,7 @@ import urllib.error
 import urllib.request
 from concurrent.futures import ThreadPoolExecutor
 
-VERSION = "0.1.0"
+VERSION = "0.2.0"
 
 # Built-in providers: only hosts verified with a live System One call.
 # Unverified hosts go in a setup file's "providers" block (see references/providers.md).
@@ -62,6 +62,14 @@ PROVIDERS = {
         "models_url": None,
         "default_model": "jev-1.13-free",
         "docs": "https://opencode.ai/docs/console/models/",
+        "verified": True,
+    },
+    "liquid": {
+        "endpoint": "https://api.liquid.ai/decisions/v1/systemone",
+        "key_env": ["LIQUID_API_KEY"],
+        "models_url": "https://api.liquid.ai/decisions/v1/models",
+        "default_model": "d1.1",
+        "docs": "https://www.liquid.ai",  # every question needs "instructions"
         "verified": True,
     },
     "perplexity": {

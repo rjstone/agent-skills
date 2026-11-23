@@ -15,6 +15,7 @@ typical decision is 100-1,500 input tokens.
 | `typesafe` | `https://api.typesafe.ai/v1/systemone` | `TYPESAFE_AI_API_KEY` (or `TYPESAFE_API_KEY`) | `jev-latest` | https://typesafe.ai; docs index https://docs.typesafe.ai/llms.txt |
 | `openrouter` | `https://openrouter.ai/api/v1/systemone` | `OPENROUTER_API_KEY` | `typesafe/jev-1.14` | https://openrouter.ai; many decision models, some `:free` |
 | `perplexity` | `https://api.perplexity.ai/v1/decisions` | `PERPLEXITY_API_KEY` | `pplx-decider-latest` | https://docs.perplexity.ai (same body, different path) |
+| `liquid` | `https://api.liquid.ai/decisions/v1/systemone` | `LIQUID_API_KEY` | `d1.1` | https://www.liquid.ai; every question needs `instructions` |
 
 `GET https://api.typesafe.ai/v1/models` lists TypeSafe's names (`jev-latest`,
 `jev-preview`). OpenRouter's `/api/v1/models` does **not** list decision
@@ -62,14 +63,12 @@ Read the current page before the privacy check; these change.
 ## Other System One hosts (not built in)
 
 Add one to a setup file's `providers` block (marked unverified
-automatically). Liquid's direct endpoint was verified live 2026-11-23
-(noul, choice and score; `GET https://api.liquid.ai/decisions/v1/models`
-lists its models; every question needs `instructions`):
+automatically), for example:
 
 ```json
 "providers": {
-  "liquid": {"endpoint": "https://api.liquid.ai/decisions/v1/systemone",
-             "key_env": ["LIQUID_API_KEY"], "default_model": "d1.1"}
+  "decisionmodels": {"endpoint": "https://api.decisionmodels.io/v1/systemone",
+                     "key_env": ["DECISIONMODELS_API_KEY"], "default_model": "s1-fast"}
 }
 ```
 
