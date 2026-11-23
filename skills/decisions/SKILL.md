@@ -49,9 +49,12 @@ Ask, in the user's terms, one or two questions at a time:
 - What reference material defines the domain: code lists, definitions,
   policies, a rubric? Decision models assume **no domain knowledge**.
 
-Then write `<name>.decisions.json` in the user's project (format:
+Then write `<name>.decisions.json` in the user's project. Start from a copy
+of `<skill>/examples/lead-vetting.decisions.json`: `questions` is an object
+keyed by name, `policy.good_if` a list of conditions (format:
 [references/setup-file.md](references/setup-file.md), question writing:
-[references/questions.md](references/questions.md)). Put the definitions and
+[references/questions.md](references/questions.md)). `decide.py run
+<setup> --dry-run --state "test"` checks the file's shape without sending. Put the definitions and
 3-10 labeled examples in its `reference` field: `decide.py` adds them to
 **every** request. Set `policy.good_if` to what the user called a good item.
 Show the questions back to the user before any call.
@@ -118,7 +121,12 @@ request and sends nothing). Each output row has `route`:
 | `review` | read it in full (or a person does); errors and malformed answers land here |
 | `reject` | skip it; mention the count |
 
-Never drop `review` items to save tokens. Report the summary line (counts,
+Never drop `review` items to save tokens.
+
+For **flagging** jobs (moderation, alerts: "act if any harm question says
+yes"), set `"combine": "any"` in `policy`: then `pass` means flagged by any
+rule, `reject` means every rule says clean, and the rest is `review`. The
+default `"all"` suits screening (any disqualifier rejects). Report the summary line (counts,
 mode, tokens, cost) to the user.
 
 ### 7. Hand over code the user keeps
@@ -127,15 +135,18 @@ For a hook, a bot or a scheduled job, copy `scripts/decide.py` and the setup
 file into the user's project and show the import:
 
 ```python
-from decide import load_setup, evaluate, route, effective_rules, is_cautious, build_state
+from decide import load_setup, evaluate, route, effective_rules, is_cautious, build_state, combine_of
 setup = load_setup("moderation.decisions.json")
 answers, meta = evaluate(build_state(setup.get("reference"), post_text),
                          setup["questions"], setup=setup)
 cautious, _ = is_cautious(setup, meta["model_returned"])
-action = route(answers, effective_rules(setup["policy"], setup["questions"], cautious))
+rules = effective_rules(setup["policy"], setup["questions"], cautious)
+action = route(answers, rules, combine_of(setup))
 ```
 
-Wrap the call so that any exception means `review`, never `pass`.
+Wrap the call so that any exception means `review`, never `pass`. Questions
+can also be built per call (for example this turn's legal moves as a choice
+question); keep their names and rules fixed so the cutoffs still apply.
 
 ## Quick reference
 

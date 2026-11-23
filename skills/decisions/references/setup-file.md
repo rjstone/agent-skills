@@ -15,6 +15,7 @@ as `<name>.decisions.cache.sqlite`.
 | `policy.mode` | no | `cautious` (default) or `calibrated` (set by `calibrate`) |
 | `policy.good_if` | no | what a good item is, for calibration |
 | `policy.rules` | no | routing rules (below) |
+| `policy.combine` | no | `all` (default, screening: any reject rejects) or `any` (flagging: any pass flags) |
 | `calibration` | no | written by `calibrate`: model, provider, date, labels, counts, metrics |
 | `privacy` | no | written by `decide.py privacy`: `{provider: {confirmed, policy_url, summary}}` |
 | `providers` | no | extra hosts: `{name: {endpoint, key_env, default_model}}`, always unverified |
@@ -35,6 +36,12 @@ as `<name>.decisions.cache.sqlite`.
   no `routes` means any confident answer passes (code assignment).
 - An item is `reject` if any rule rejects, else `review` if any reviews, else
   `pass`. Questions without a rule are informational. Errors -> review.
+- With `"combine": "any"` (moderation, alerts): `pass` (flagged) if any rule
+  passes, `reject` only if every rule rejects, otherwise `review`.
+
+`decide.py` checks this shape when it loads the file and names the first
+problem (questions as a list, `good_if` as text, a rule naming an unknown
+question).
 
 ## Example
 

@@ -369,10 +369,23 @@ def _rule_route(answer: dict | None, rule: dict) -> str:
     return "review"
 
 
-def route(answers: dict, rules: list) -> str:
-    """"reject" if any rule rejects, else "review" if any rule reviews, else "pass".
+def combine_of(setup: dict) -> str:
+    return ((setup or {}).get("policy") or {}).get("combine") or "all"
+
+
+def route(answers: dict, rules: list, combine: str = "all") -> str:
+    """combine "all" (default; screening): "reject" if any rule rejects, else
+    "review" if any rule reviews, else "pass".
+    combine "any" (flagging, e.g. moderation): "pass" (= flagged) if any rule
+    passes, "reject" only if every rule rejects, else "review".
     Questions without a rule are informational and never change the route."""
     results = [_rule_route(answers.get(r["question"]), r) for r in rules]
+    if combine == "any":
+        if "pass" in results:
+            return "pass"
+        if results and all(x == "reject" for x in results):
+            return "reject"
+        return "review"
     if "reject" in results:
         return "reject"
     if "review" in results:
@@ -396,9 +409,49 @@ def load_setup(path: str) -> dict:
     for key in ("provider", "questions"):
         if not setup.get(key):
             raise DecisionError("config", f"setup file {path} is missing {key!r}")
+    validate_setup(setup, path)
     if not setup.get("model"):
         setup["model"] = provider_config(setup["provider"], setup)["default_model"]
     return setup
+
+
+QUESTION_TYPES = ("noul", "choice", "score")
+
+
+def validate_setup(setup: dict, path: str = "setup") -> None:
+    """Raise kind "config" naming the first shape problem (see references/setup-file.md)."""
+    def bad(msg):
+        raise DecisionError("config", f"{path}: {msg} (see references/setup-file.md and "
+                            "examples/lead-vetting.decisions.json)")
+    qs = setup.get("questions")
+    if not isinstance(qs, dict):
+        bad("'questions' must be an object mapping names to questions, not a list")
+    for name, q in qs.items():
+        if not isinstance(q, dict) or q.get("type") not in QUESTION_TYPES:
+            bad(f"question {name!r}: 'type' must be one of noul, choice, score")
+        crit = q.get("criteria")
+        if q["type"] == "choice" and not isinstance(crit, dict):
+            bad(f"question {name!r}: choice 'criteria' must be an object {{option: description or null}}")
+        if q["type"] == "score" and not (isinstance(crit, list) and len(crit) >= 2):
+            bad(f"question {name!r}: score 'criteria' must be a list of 2+ levels, lowest first")
+        if q["type"] == "noul" and crit is not None and not isinstance(crit, dict):
+            bad(f"question {name!r}: noul 'criteria' must be {{\"true\": ..., \"false\": ...}}")
+    policy = setup.get("policy") or {}
+    if not isinstance(policy, dict):
+        bad("'policy' must be an object")
+    good_if = policy.get("good_if")
+    if good_if is not None and not (isinstance(good_if, list)
+                                    and all(isinstance(c, dict) and c.get("question") in qs for c in good_if)):
+        bad("'policy.good_if' must be a list like [{\"question\": \"real\", \"is\": true}] "
+            "naming questions in 'questions'")
+    rules = policy.get("rules") or []
+    if not isinstance(rules, list):
+        bad("'policy.rules' must be a list")
+    for r in rules:
+        if not isinstance(r, dict) or r.get("question") not in qs:
+            bad(f"rule {r!r} must name a question in 'questions'")
+    if policy.get("combine", "all") not in ("all", "any"):
+        bad("'policy.combine' must be 'all' (screening) or 'any' (flagging)")
 
 
 def save_setup(path: str, setup: dict) -> None:
@@ -651,7 +704,7 @@ def cmd_run(args) -> int:
                 cache.put(key, answers, returned)
         cautious, _ = is_cautious(setup, returned)
         rules = effective_rules(setup.get("policy") or {}, questions, cautious)
-        row.update(route=route(answers, rules), answers=answers, model=returned)
+        row.update(route=route(answers, rules, combine_of(setup)), answers=answers, model=returned)
         row["cautious"] = cautious
         return row, meta
 
@@ -674,7 +727,7 @@ def cmd_run(args) -> int:
             out.close()
         cache.close()
     mode = f"cautious ({base_reason})" if cautious_any else f"calibrated ({base_reason})"
-    cost = f", cost ${totals['cost']:.6f}" if "cost" in totals else ""
+    cost = (", cost USD " + format(totals["cost"], ".6f")) if "cost" in totals else ""
     _err(f"{n} items: pass {counts['pass']}, review {counts['review']}, reject {counts['reject']}, "
          f"errors {failed} | mode: {mode} | tokens in {totals.get('input_tokens', 0)} "
          f"out {totals.get('output_tokens', 0)}{cost} | items that used a fallback: {fallbacks}")

@@ -868,5 +868,68 @@ class AdapterTest(unittest.TestCase):
         self.assertEqual([lv["value"] for lv in req["questions"][2]["question"]["levels"]], [0, 1, 2])
 
 
+class SetupValidationTest(unittest.TestCase):
+    def check(self, setup, word):
+        with tempfile.TemporaryDirectory() as d:
+            path = os.path.join(d, "x.decisions.json")
+            with open(path, "w") as f:
+                json.dump(setup, f)
+            with self.assertRaises(decide.DecisionError) as cm:
+                decide.load_setup(path)
+            self.assertEqual(cm.exception.kind, "config")
+            self.assertIn(word, str(cm.exception))
+
+    def base(self, **kw):
+        s = {"provider": "opencode", "questions": dict(QUESTIONS)}
+        s.update(kw)
+        return s
+
+    def test_questions_must_be_object(self):
+        self.check(self.base(questions=[{"id": "q", "type": "noul"}]), "object")
+
+    def test_question_type_known(self):
+        self.check(self.base(questions={"q": {"type": "yesno"}}), "noul, choice, score")
+
+    def test_choice_criteria_object_and_score_criteria_list(self):
+        self.check(self.base(questions={"q": {"type": "choice", "criteria": ["a", "b"]}}), "criteria")
+        self.check(self.base(questions={"q": {"type": "score", "criteria": {"a": 1}}}), "criteria")
+
+    def test_good_if_must_be_list_of_conditions(self):
+        self.check(self.base(policy={"good_if": "a good lead"}), "good_if")
+
+    def test_rule_names_unknown_question(self):
+        self.check(self.base(policy={"rules": [{"question": "nope"}]}), "nope")
+
+    def test_combine_value(self):
+        self.check(self.base(policy={"combine": "some"}), "combine")
+
+    def test_example_setup_is_valid(self):
+        decide.load_setup(os.path.join(SKILL_DIR, "examples", "lead-vetting.decisions.json"))
+
+
+class CombineAnyTest(unittest.TestCase):
+    RULES = [{"question": "harassment", "reject_below": 0.1, "pass_above": 0.8},
+             {"question": "spam", "reject_below": 0.1, "pass_above": 0.8}]
+
+    def a(self, h, s):
+        return {"harassment": {"type": "noul", "noul": h}, "spam": {"type": "noul", "noul": s}}
+
+    def test_any_pass_flags_even_if_others_reject(self):
+        self.assertEqual(decide.route(self.a(0.95, 0.01), self.RULES, combine="any"), "pass")
+        self.assertEqual(decide.route(self.a(0.95, 0.01), self.RULES), "reject")
+
+    def test_any_rejects_only_when_all_reject(self):
+        self.assertEqual(decide.route(self.a(0.02, 0.01), self.RULES, combine="any"), "reject")
+        self.assertEqual(decide.route(self.a(0.5, 0.01), self.RULES, combine="any"), "review")
+
+    def test_any_without_rules_reviews(self):
+        self.assertEqual(decide.route({}, [], combine="any"), "review")
+
+    def test_run_uses_policy_combine(self):
+        setup = {"policy": {"combine": "any", "rules": self.RULES}}
+        self.assertEqual(decide.combine_of(setup), "any")
+        self.assertEqual(decide.combine_of({}), "all")
+
+
 if __name__ == "__main__":
     unittest.main()
