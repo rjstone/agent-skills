@@ -34,7 +34,8 @@ this session. It can be:
 4. temporary storage that disappears when the session ends (a cloud agent's
    container, a temp folder), **only** after you tell the user that its
    files will be lost and they agree to download them. Then, at the end of
-   each working stretch, list every file to download and where it is.
+   each working stretch, list every file in the project folder to download
+   (setup, labels, results, cache, README, scripts) and where it is.
 
 Cloud agent workspaces and temp folders are temporary unless you know
 otherwise; when unsure whether storage lasts, ask. Then say it: "I'll keep

@@ -341,11 +341,21 @@ metadata:
   marked unverified. A JSON setup file in the user's project holds questions,
   `reference` text (sent with every item), model, same-family fallbacks,
   cutoffs, calibration and privacy confirmations. Rules decided by the user
-  (2026-11-23): calibration is offered every time, never forced; declining
-  means a warning plus cautious mode that over-includes; cutoffs belong to
-  one model family; three privacy confirmations (data OK to send, terms
-  acceptable, responsible parties agree) before any provider gets real data,
-  recorded per provider and enforced by the script; free or cheap models are
+  (2026-11-23): look for an existing project first (environment memory,
+  notes, `*.decisions.json`); new-use-case steps live in
+  `references/new-setup.md` (progressive disclosure); settle a lasting
+  project folder before the first file write (temporary storage only if the
+  user agrees to download the files); in a git folder, ask which files to
+  commit every time; say what, where, why (and how) for every file write,
+  send and command; calibration is offered every time, never forced;
+  declining or a weak calibration needs the user's explicit yes to the
+  drawbacks and keeps cautious mode; cutoffs belong to one model family;
+  three privacy confirmations before any provider gets real data (data OK
+  to send; the user read the provider's current policy at its source, an
+  agent summary only with a "may be wrong, the written policy is binding"
+  warning; whoever is liable and principally responsible under applicable
+  laws agrees), recorded per provider and endpoint, enforced by the script,
+  re-checked after 90 days; free or cheap models are
   assumed to retain and train; text only in v1; field extraction is only
   mentioned; other wire formats get sample adapters
   (`scripts/adapters/`), not core code; advanced patterns mostly link to
