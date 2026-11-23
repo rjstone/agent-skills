@@ -32,7 +32,7 @@ wire formats.
 - `tests/test_decisions.py` starts with the `selected("decisions")` skip and makes no network calls.
 - Scripts are invoked through the interpreter in prose: `python3 scripts/decide.py ...`.
 - Text only in v1: no image input, no `box` questions.
-- Built-in providers are the verified ones only: `typesafe`, `openrouter`, `opencode`, `asi`, `perplexity` (docs-confirmed body; live call pending).
+- Built-in providers are the verified ones only: `typesafe`, `openrouter`, `opencode`, `asi`, `perplexity` (live call verified 2026-11-23).
 - Cautious-mode starting defaults: noul reject below 0.05, pass above 0.90; choice/score `min_confidence` 0.6; score reject below 0.5, pass above `levels - 1.5`.
 - Calibration defaults: target recall 0.95 (per item), target precision 0.90; warn below 20 labels or fewer than 3 for any class.
 - Default rate 2 calls/s, workers 1, timeout 60 s.
@@ -101,7 +101,7 @@ git commit -m "decisions: baseline scenarios and results without the skill"
   - `test_redact`: `redact("Bearer sk-abc123 failed sk-abc123", "sk-abc123")` contains no `sk-abc123`; also scrubs `Authorization: Bearer <anything>` patterns with no secret given
   - `test_setup_provider_block_unverified`: a setup with `providers: {"liquid": {...}}` yields `provider_config("liquid", setup)["verified"] is False`
 - [ ] **Step 2: Run** `python3 -m unittest tests.test_decisions -v`; expected FAIL (file or names missing).
-- [ ] **Step 3: Implement** the names above in `decide.py`. Default models: typesafe `jev-latest`, openrouter `typesafe/jev-1.14`, opencode `jev-1.13-free`, asi `super-decider`, perplexity `pplx-decider-latest`. `models_url`: typesafe `https://api.typesafe.ai/v1/models`, others `None` unless confirmed. Mark asi and perplexity `verified` per the spec (asi True, perplexity False until a live call).
+- [ ] **Step 3: Implement** the names above in `decide.py`. Default models: typesafe `jev-latest`, openrouter `typesafe/jev-1.14`, opencode `jev-1.13-free`, asi `super-decider`, perplexity `pplx-decider-latest`. `models_url`: typesafe `https://api.typesafe.ai/v1/models`, others `None` unless confirmed. All five built-ins are `verified: True` (live calls 2026-11-23).
 - [ ] **Step 4: Run** the tests; expected PASS.
 - [ ] **Step 5: Commit** `decisions: provider table, request building, redaction`.
 
@@ -285,7 +285,7 @@ git commit -m "decisions: baseline scenarios and results without the skill"
 **Files:**
 - Modify: `skills/decisions/references/providers.md` (verified dates), `AGENTS.md` (Skills list entry), `TODO.md` (follow-ups)
 
-- [ ] **Step 1: Live smoke test** (manual, sandbox, free models only): `python3 skills/decisions/scripts/decide.py ask --test-data --provider opencode --state "My server is down" --yes "Is this urgent?"`, and the same for `openrouter` (`perplexity/pplx-decider-flash-v1.3:free`), `typesafe` and `asi`; `perplexity` once the user's rotated key works. Expected: a plain-language answer each; update dates in `providers.md`.
+- [ ] **Step 1: Live smoke test** (manual, sandbox, free models only): `python3 skills/decisions/scripts/decide.py ask --test-data --provider opencode --state "My server is down" --yes "Is this urgent?"`, and the same for `openrouter` (`perplexity/pplx-decider-flash-v1.3:free`), `typesafe`, `asi` and `perplexity`. Expected: a plain-language answer each; update dates in `providers.md`.
 - [ ] **Step 2: Run** `python3 skills/skillspector-install/scripts/install.py --skip-skill` if `skillspector` is missing, then `python3 scripts/skillspector_ci.py --skills decisions`; expected no HIGH/CRITICAL findings (fix, or add a reasoned baseline in `.skillspector/decisions.yaml` for the user to review).
 - [ ] **Step 3: Add the `decisions` entry** to `AGENTS.md` "Skills" (one paragraph in the existing style, decisions marked "(the user, 2026-11-23)"), and to `TODO.md`: image input and `box` questions; live-test the sample adapters; fix the stale OpenCode System One path in the private repo's `opencode-cli` skill (tell the user, don't edit there).
 - [ ] **Step 4: Run all tests** and `bash scripts/claude_skill.sh -o "$TMPDIR" decisions` (packaging check; delete the `.skill` afterwards). Expected: all PASS, one package built.
