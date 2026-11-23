@@ -38,6 +38,7 @@ npx skills add rjstone/agent-skills --list
 
 - **capturing-tk-screenshots-headless** - run a Tkinter or other Tk GUI on a headless Linux machine or CI and take reliable screenshots of it.
 - **concept-parable** - explain a concept as a short fable whose plot carries the concept's real mechanics, followed by a mapping back to it.
+- **decisions** - use a cheap decision model (TypeSafe Jev, Perplexity Decider and others) to screen, classify or score many items before an agent reads them: provider setup, a privacy check before any data is sent, calibration on labeled examples, and a stdlib client script.
 - **docshelf** - search and read DevDocs documentation and Dash/Zeal docsets offline, with your own notes, from the command line or as an MCP server.
 - **docshelf-build** - build a trimmed docshelf docvol from a documentation site's Sphinx `objects.inv` or `llms.txt` page list, keeping reference pages in full and guides as stubs.
 - **opencode-api** - call opencode's v2 server HTTP API correctly, using its OpenAPI spec cached in the skill.
