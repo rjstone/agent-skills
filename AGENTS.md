@@ -332,6 +332,51 @@ metadata:
   `skillspector scan skills/skillspector-install --no-llm` (0.1.1: CAUTION,
   only subprocess calls and no `allowed-tools`, which is left out so the
   installer's commands still need approval).
+- `decisions` - lets an agent use a decision model (System One wire
+  format: TypeSafe Jev, Perplexity Decider, Liquid d1 and others) as a cheap
+  pre-filter or decision step, for novice and expert users alike.
+  `scripts/decide.py` (stdlib, CLI and importable): built-in providers are
+  only hosts verified with a live call (opencode, typesafe, openrouter,
+  perplexity; ASI Cloud was removed as small and experimental, the user,
+  2026-11-23); others go in a setup file's `providers` block and are
+  marked unverified. A JSON setup file in the user's project holds questions,
+  `reference` text (sent with every item), model, same-family fallbacks,
+  cutoffs, calibration and privacy confirmations. Rules decided by the user
+  (2026-11-23): look for an existing project first (environment memory,
+  notes, `*.decisions.json`); new-use-case steps live in
+  `references/new-setup.md` (progressive disclosure); settle a lasting
+  project folder before the first file write (temporary storage only if the
+  user agrees to download the files); in a git folder, ask which files to
+  commit every time; say what, where, why (and how) for every file write,
+  send and command; calibration is offered every time, never forced;
+  declining or a weak calibration needs the user's explicit yes to the
+  drawbacks and keeps cautious mode; cutoffs belong to one model family;
+  three privacy confirmations before any provider gets real data (data OK
+  to send; the user read the provider's current policy at its source, an
+  agent summary only with a "may be wrong, the written policy is binding"
+  warning; whoever is liable and principally responsible under applicable
+  laws agrees), recorded per provider and endpoint, enforced by the script,
+  re-checked after 90 days; free or cheap models are
+  assumed to retain and train; text only in v1; field extraction is only
+  mentioned; other wire formats get sample adapters
+  (`scripts/adapters/`), not core code; advanced patterns mostly link to
+  TypeSafe's Patterns and Cookbooks docs. Scenario tests in `evals/`
+  (baseline and with-skill results; left out of `.skill` packages). Spec and
+  plan under `docs/superpowers/`. Write f-strings without `${` in its scripts:
+  SkillSpector's parser reads that as shell brace syntax and reports a
+  HIGH coverage gap (2026-11-23).
+
+- **Wording beats scanner patterns** (the user, 2026-11-23): word skill
+  instructions the way models are most likely to follow them, even when a
+  SkillSpector regex flags the phrase (for example EA2 on "never ... without
+  asking", which is the opposite of autonomous action). Dismiss such alerts
+  as false positives instead of weakening the instruction. Rewording is fine
+  only when it says the same thing just as strongly.
+- **No `allowed-tools` in skill frontmatter** (the user, 2026-11-23): tool
+  names differ between harnesses, so a list written for one would be wrong
+  for the others. SkillSpector's LP3 finding ("declares no tool scope") is
+  expected for every skill with scripts; dismiss it in the Security tab
+  rather than adding the field.
 
 ## Testing skills with small models
 
@@ -340,6 +385,10 @@ metadata:
   `/work/.claude/skills/<name>/` (opencode v2 finds it there) and placeholder
   keys. Grade from the tool calls in the JSON events, not from the model's own
   list of files it opened, which is often wrong (2026-11-21).
+- The `--work` folder must be readable by the sandbox user (not a root-only
+  scratchpad), and an `opencode` installed outside the system paths (for
+  example under `/opt/node22`) needs `--ro <that folder>` plus
+  `--setenv PATH=<its bin>:/usr/local/bin:/usr/bin:/bin` (2026-11-23).
 - A provider that isn't built in goes in `/work/.config/opencode/opencode.json`
   under `providers`: `{"name", "package": "aisdk:@ai-sdk/openai-compatible",
   "env": ["<KEY_VAR>"], "settings": {"baseURL"}, "models": {"<id>": {}}}`
