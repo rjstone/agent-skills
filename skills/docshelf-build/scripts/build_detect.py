@@ -10,7 +10,7 @@ from build_fetch import FetchError, looks_html, normalize_source, open_url_sourc
 from build_llms import parse_index
 
 SPHINX_MAGIC = b"# Sphinx inventory version"
-DOCS = {"sphinx": "BUILD-sphinx.md", "llms": "BUILD-llmstxt.md"}
+DOCS = {"sphinx": "BUILD-sphinx.md", "llms": "BUILD-llmstxt.md", "doxygen": "BUILD-doxygen.md"}
 
 
 class Detection(NamedTuple):
@@ -19,6 +19,24 @@ class Detection(NamedTuple):
     found: List[Tuple[str, str]]   # (kind, where) of every usable index found
     tried: List[Tuple[str, str]]   # (URL or path, why it was not used)
     archive: Optional[str] = None  # URL of the site's HTML archive (Sphinx URL only)
+    index: Optional[str] = None    # Doxygen: "search" or "menu"
+
+
+def _doxygen_folders(inv: str, is_url: bool) -> List[str]:
+    """The folder that would hold objects.inv, then its parent: where a
+    Doxygen site's search/ folder or menudata.js may be. URL folders end in
+    "/", local ones do not."""
+    if is_url:
+        folder = inv[:-len("objects.inv")]
+        parts = urllib.parse.urlsplit(folder)
+        out = [folder]
+        if parts.path.rstrip("/"):
+            parent = parts.path.rstrip("/").rsplit("/", 1)[0] + "/"
+            out.append(urllib.parse.urlunsplit((parts.scheme, parts.netloc, parent, "", "")))
+        return out
+    folder = os.path.dirname(inv)
+    parent = os.path.dirname(folder)
+    return [folder] + ([parent] if parent != folder else [])
 
 
 def _is_llms(text: str, where: str) -> bool:
@@ -90,9 +108,25 @@ def detect(src: str, opener=None, sleep: Optional[Callable[[float], None]] = Non
             break
         if body is not None:
             tried.append((where, "not an llms.txt page list"))
+    index = None
+    for folder in _doxygen_folders(invs[0], is_url):
+        def at(rel: str) -> str:
+            return folder + rel if is_url else os.path.join(folder, *rel.split("/"))
+        body = read(at("search/searchdata.js"))
+        if body is not None and b"indexSectionNames" in body:
+            found.append(("doxygen", folder))
+            index = "search"
+            break
+        body = read(at("menudata.js"))
+        if body is not None and b"var menudata" in body:
+            found.append(("doxygen", folder))
+            index = "menu"
+            break
     if not found:
         return Detection(None, None, found, tried)
     kind, where = found[0]
+    if kind == "doxygen":
+        return Detection(kind, where, found, tried, None, index)
     if kind == "sphinx":
         source = where[:-len("objects.inv")]
         if not is_url:
@@ -113,6 +147,8 @@ def offline(d: Detection) -> bool:
 def describe(d: Detection) -> List[str]:
     """The lines `detect` prints for a found type."""
     lines = ["type: %s" % d.kind, "source: %s" % d.source, "read: %s" % DOCS[d.kind]]
+    if d.index:
+        lines.append("index: %s" % d.index)
     for kind, where in d.found[1:]:
         lines.append("also: %s (%s)" % (kind, where))
     if d.archive:

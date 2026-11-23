@@ -129,6 +129,29 @@ class Source:
         except OSError as e:
             raise CLIError("no objects.inv in %s (%s)" % (self.base, e.strerror), 2)
 
+    def file(self, rel: str) -> Optional[bytes]:
+        """Bytes of an index file at `rel` under the base; None when it does
+        not exist (404/410, or missing locally). FetchError when robots.txt
+        blocks it, CLIError(4) for any other failed answer."""
+        if self.is_url:
+            url = urllib.parse.urljoin(self.base, rel)
+            if not self._allowed(url):
+                raise FetchError(url, "blocked by robots.txt")
+            status, body = self._get(url)
+            if status == 200:
+                return body
+            if status in (404, 410):
+                return None
+            raise CLIError("cannot fetch %s: %s" % (url, _status_text(status)), 4)
+        path = os.path.realpath(os.path.join(self.base, *rel.split("/")))
+        if os.path.commonpath([path, self.base]) != self.base:
+            return None
+        try:
+            with open(path, "rb") as f:
+                return f.read()
+        except OSError:
+            return None
+
     def page(self, uri: str) -> str:
         if self.is_url:
             url = urllib.parse.urljoin(self.base, uri)

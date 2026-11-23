@@ -134,11 +134,55 @@ def _serialize(tokens: List[Token], href: Optional[Callable[[str], str]] = None)
     return "".join(out)
 
 
-def main_content(page_html: str) -> str:
+_DOXYGEN_CHROME = {"dynheader", "dyncontent", "ttc", "navpath"}
+
+
+def _find(tokens: List[Token], tag: str, cls: str) -> Optional[int]:
+    for i, (kind, t, attrs) in enumerate(tokens):
+        if kind == "start" and t == tag and cls in _classes(attrs or []):
+            return i
+    return None
+
+
+def _doxygen_content(tokens: List[Token]) -> Optional[List[Token]]:
+    """For a Doxygen page (one with div.contents): the inner tokens of
+    div.headertitle and div.contents, without graphs, tooltips, image maps
+    and "More..." links. None for other pages."""
+    start = _find(tokens, "div", "contents")
+    if start is None:
+        return None
+    out: List[Token] = []
+    title = _find(tokens, "div", "headertitle")
+    if title is not None and title < start:
+        out.extend(tokens[title + 1:_element_end(tokens, title) - 1])
+    body = tokens[start + 1:_element_end(tokens, start) - 1]
+    i = 0
+    while i < len(body):
+        kind, t, attrs = body[i]
+        if kind == "start" and (t == "map" or (t == "div" and _DOXYGEN_CHROME & set(_classes(attrs or [])))):
+            i = _element_end(body, i)
+            continue
+        if kind == "start" and t == "a":
+            end = _element_end(body, i)
+            text = "".join(x[1] for x in body[i + 1:end] if x[0] == "text").strip()
+            if text == "More...":
+                i = end
+                continue
+        out.append(body[i])
+        i += 1
+    return out
+
+
+def main_content(page_html: str, doxygen: bool = False) -> str:
     """The page's main content as clean HTML: no navigation, sidebars,
     scripts, styles, header-link pilcrows or images (images become their alt
     text)."""
     tokens = _tokens(page_html)
+    # only for Doxygen sites: older Sphinx (docutils < 0.18) also writes a
+    # div.contents, for its local table of contents
+    dox = _doxygen_content(tokens) if doxygen else None
+    if dox is not None:
+        return _serialize(dox).strip()
     for match in _SELECTORS:
         for i, (kind, t, attrs) in enumerate(tokens):
             if kind == "start" and match(t, attrs or []):
