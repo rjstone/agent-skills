@@ -19,7 +19,6 @@ from __future__ import annotations
 
 import argparse
 import csv
-import codecs
 import datetime
 import hashlib
 import http.client
@@ -182,20 +181,22 @@ def build_request(model: str, state, questions: dict) -> dict:
 FALLBACK_STATUSES = {401, 402, 403, 429}
 RETRIES_429 = 2  # extra tries on the same provider after a 429, before falling back
 BACKOFF_429 = (1.0, 2.0)  # seconds to wait before each of those tries without a Retry-After
-MAX_RETRY_AFTER = 30.0
+MAX_RETRY_AFTER = 30.0  # a longer Retry-After (a spent quota) falls back at once
 _sleep = time.sleep  # one place to wait, so tests can patch it
 
 
 def parse_retry_after(value):
-    """Seconds from a Retry-After header, capped at MAX_RETRY_AFTER. None for a
-    missing, negative, non-numeric or HTTP-date value (the default backoff applies)."""
+    """Seconds from a Retry-After header. None for a missing, negative,
+    non-numeric or HTTP-date value (the default backoff applies)."""
     try:
         secs = float(value)
     except (TypeError, ValueError):
         return None
     if secs != secs or secs < 0:  # NaN or negative
         return None
-    return min(secs, MAX_RETRY_AFTER)
+    return secs
+
+
 USER_AGENT = f"decide.py/{VERSION}"
 
 
@@ -308,7 +309,8 @@ def _hops(setup: dict, provider: str | None, model: str | None, fallbacks) -> li
 def _post_hop(url: str, key, payload: dict, timeout: float, limiter) -> dict:
     """One provider call: waits for the rate limiter before every POST, and on a
     429 waits (Retry-After, else BACKOFF_429) and tries the same provider again,
-    up to RETRIES_429 times; then the 429 falls through to the next provider."""
+    up to RETRIES_429 times; then the 429 falls through to the next provider.
+    A Retry-After above MAX_RETRY_AFTER (a spent quota) falls through at once."""
     for attempt in range(RETRIES_429 + 1):
         if limiter:
             limiter()
@@ -316,6 +318,8 @@ def _post_hop(url: str, key, payload: dict, timeout: float, limiter) -> dict:
             return post_json(url, key, payload, timeout)
         except DecisionError as e:
             if e.status != 429 or attempt == RETRIES_429:
+                raise
+            if e.retry_after is not None and e.retry_after > MAX_RETRY_AFTER:
                 raise
             _sleep(e.retry_after if e.retry_after is not None else BACKOFF_429[attempt])
     raise AssertionError("unreachable")
@@ -749,17 +753,19 @@ class RateLimiter:
             time.sleep(delay)
 
 
-def _is_utf8(stream) -> bool:
-    try:
-        return codecs.lookup(getattr(stream, "encoding", None) or "").name == "utf-8"
-    except LookupError:
-        return False
-
-
 def json_line(obj, stream) -> str:
-    """JSON for one output line: real characters on a UTF-8 stream, \\u escapes
-    otherwise (a redirected Windows console is often cp1252), so it stays valid."""
-    return json.dumps(obj, ensure_ascii=not _is_utf8(stream))
+    """JSON for one output line: real characters when the stream's encoding can
+    hold them all, else \\u escapes (a redirected Windows console is often cp1252;
+    a lone surrogate fits no encoding), so the line is valid and nothing is lost."""
+    enc = getattr(stream, "encoding", None)
+    if enc:
+        text = json.dumps(obj, ensure_ascii=False)
+        try:
+            text.encode(enc)
+            return text
+        except (UnicodeEncodeError, LookupError):
+            pass
+    return json.dumps(obj, ensure_ascii=True)
 
 
 def _err(msg: str) -> None:

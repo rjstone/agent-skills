@@ -229,6 +229,16 @@ class EvaluateTest(unittest.TestCase):
         self.assertEqual(len(meta["hops"]), 1)
         self.assertIn("429", meta["hops"][0])
 
+    def test_429_long_retry_after_falls_back_at_once(self):
+        self.fake.script["/a"] = [(429, {}, {"Retry-After": "3600"})]
+        self.fake.script["/b"] = [(200, good_answer())]
+        with mock.patch.object(decide, "_sleep") as sl:
+            _, meta = self.ev()
+        sl.assert_not_called()
+        self.assertEqual(len(self.fake.calls("/a")), 1)
+        self.assertEqual(meta["provider"], "b")
+        self.assertIn("429", meta["hops"][0])
+
     def test_429_backs_off_then_same_hop_succeeds(self):
         self.fake.script["/a"] = [(429, {"error": "rate"}), (200, good_answer())]
         with mock.patch.object(decide, "_sleep") as sl:
@@ -237,8 +247,8 @@ class EvaluateTest(unittest.TestCase):
         self.assertEqual(meta["hops"], [])
         sl.assert_called_once_with(1.0)
 
-    def test_429_honours_retry_after_capped(self):
-        self.fake.script["/a"] = [(429, {}, {"Retry-After": "3"}), (429, {}, {"Retry-After": "999"}),
+    def test_429_honours_retry_after(self):
+        self.fake.script["/a"] = [(429, {}, {"Retry-After": "3"}), (429, {}, {"Retry-After": "30"}),
                                   (200, good_answer())]
         with mock.patch.object(decide, "_sleep") as sl:
             self.ev()
@@ -263,7 +273,7 @@ class EvaluateTest(unittest.TestCase):
         sl.assert_called_once_with(1.0)
 
     def test_parse_retry_after(self):
-        for raw, want in [("2", 2.0), ("0", 0.0), ("999", 30.0), ("-1", None), ("", None), (None, None),
+        for raw, want in [("2", 2.0), ("0", 0.0), ("999", 999.0), ("-1", None), ("", None), (None, None),
                           ("Wed, 21 Oct 2026 07:28:00 GMT", None), ("soon", None), ("nan", None)]:
             self.assertEqual(decide.parse_retry_after(raw), want, raw)
 
@@ -1499,6 +1509,39 @@ class WindowsMinorsTest(unittest.TestCase):
             stream.flush()
         row = json.loads(buf.getvalue().decode("cp1252").splitlines()[0])
         self.assertEqual(row["id"], "\u9879\u76ee-1")
+        self.assertEqual(code, 0)
+
+    def _run_lone_surrogate(self, out_args, stream=None):
+        fake = FakeSystemOne()
+        self.addCleanup(fake.close)
+        fake.script["/a"] = [(200, good_answer())]
+        with tempfile.TemporaryDirectory() as d:
+            sp = self._setup(fake, d)
+            src = os.path.join(d, "in.jsonl")
+            with open(src, "w", encoding="utf-8") as f:
+                f.write('{"id": "x\\ud83d", "text": "y"}\n')
+            args = ["run", sp, "--input", src, "--no-cache", "--rate", "0"]
+            if out_args:
+                args += ["--out", os.path.join(d, "out.jsonl")]
+            with contextlib.redirect_stdout(stream or io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
+                code = decide.main(args)
+            if out_args:
+                with open(os.path.join(d, "out.jsonl"), encoding="utf-8") as f:
+                    return code, f.read()
+        return code, None
+
+    def test_lone_surrogate_id_round_trips_on_utf8_stdout(self):
+        buf = io.BytesIO()
+        stream = io.TextIOWrapper(buf, encoding="utf-8")
+        code, _ = self._run_lone_surrogate(False, stream)
+        stream.flush()
+        row = json.loads(buf.getvalue().decode("utf-8").splitlines()[0])
+        self.assertEqual(row["id"], "x\ud83d")
+        self.assertEqual(code, 0)
+
+    def test_lone_surrogate_id_round_trips_in_out_file(self):
+        code, text = self._run_lone_surrogate(True)
+        self.assertEqual(json.loads(text.splitlines()[0])["id"], "x\ud83d")
         self.assertEqual(code, 0)
 
     def test_run_out_file_keeps_real_characters(self):
