@@ -1322,5 +1322,78 @@ class ReviewRoundTwoTest(unittest.TestCase):
         self.assertIsNone(decide.privacy_age_warning(setup, "zz", "2026-11-23"))
 
 
+
+class ReviewMinorsTest(unittest.TestCase):
+    """Deferred review minors: version drift, 429 backoff, Windows."""
+
+    def _calibrated_setup(self, fake, d):
+        setup = {"provider": "a", "model": "jev-1.13.0", "questions": QUESTIONS,
+                 "providers": {"a": {"endpoint": fake.base + "/a", "key_env": []}},
+                 "privacy": {"a": {"confirmed": "2026-11-23"}},
+                 "policy": {"mode": "calibrated",
+                            "rules": [{"question": "urgent", "reject_below": 0.1, "pass_above": 0.8}]},
+                 "calibration": {"model": "jev-1.13.0", "provider": "a"}}
+        sp = os.path.join(d, "s.decisions.json")
+        with open(sp, "w") as f:
+            json.dump(setup, f)
+        return sp
+
+    # --- version drift (Task 1) ---
+    def test_version_drift_same_family_other_version(self):
+        s = {"policy": {"mode": "calibrated"}, "calibration": {"model": "jev-1.13.0"}}
+        msg = decide.version_drift(s, "jev-1.14.0")
+        self.assertIn("jev-1.13.0", msg)
+        self.assertIn("jev-1.14.0", msg)
+        self.assertIn("calibrate", msg)
+        self.assertIn("--check", msg)
+
+    def test_version_drift_none_when_same_model_other_family_uncalibrated_or_unknown(self):
+        s = {"policy": {"mode": "calibrated"}, "calibration": {"model": "jev-1.13.0"}}
+        self.assertIsNone(decide.version_drift(s, "jev-1.13.0"))
+        self.assertIsNone(decide.version_drift(s, "d1.1"))
+        self.assertIsNone(decide.version_drift(s, None))
+        self.assertIsNone(decide.version_drift({"policy": {}}, "jev-1.14.0"))
+
+    def test_run_summary_warns_once_per_drifted_model(self):
+        fake = FakeSystemOne()
+        self.addCleanup(fake.close)
+        fake.script["/a"] = [(200, good_answer("jev-1.14.0"))]
+        with tempfile.TemporaryDirectory() as d:
+            sp = self._calibrated_setup(fake, d)
+            src = os.path.join(d, "in.jsonl")
+            with open(src, "w") as f:
+                f.write('{"id": "1", "text": "x"}\n{"id": "2", "text": "y"}\n{"id": "3", "text": "z"}\n')
+            out, err = io.StringIO(), io.StringIO()
+            with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
+                code = decide.main(["run", sp, "--input", src, "--no-cache", "--rate", "0"])
+        self.assertEqual(code, 0)
+        self.assertEqual(err.getvalue().count("jev-1.14.0 answered"), 1)
+
+    def test_run_no_drift_warning_for_the_calibrated_model(self):
+        fake = FakeSystemOne()
+        self.addCleanup(fake.close)
+        fake.script["/a"] = [(200, good_answer("jev-1.13.0"))]
+        with tempfile.TemporaryDirectory() as d:
+            sp = self._calibrated_setup(fake, d)
+            src = os.path.join(d, "in.jsonl")
+            with open(src, "w") as f:
+                f.write('{"id": "1", "text": "x"}\n')
+            err = io.StringIO()
+            with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(err):
+                decide.main(["run", sp, "--input", src, "--no-cache", "--rate", "0"])
+        self.assertNotIn(" answered, but", err.getvalue())
+
+    def test_ask_warns_on_drift(self):
+        fake = FakeSystemOne()
+        self.addCleanup(fake.close)
+        fake.script["/a"] = [(200, good_answer("jev-1.14.0"))]
+        with tempfile.TemporaryDirectory() as d:
+            sp = self._calibrated_setup(fake, d)
+            err = io.StringIO()
+            with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(err):
+                code = decide.main(["ask", sp, "--state", "server down"])
+        self.assertEqual(code, 0)
+        self.assertIn("jev-1.14.0 answered", err.getvalue())
+
 if __name__ == "__main__":
     unittest.main()

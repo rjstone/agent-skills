@@ -353,6 +353,19 @@ def is_cautious(setup: dict, model_returned: str | None = None):
     return False, f"calibrated on {cal['model']}"
 
 
+def version_drift(setup: dict, model_returned):
+    """A warning when another version of the calibrated model family answered
+    (the calibration is kept; a family change is cautious mode instead)."""
+    cal = (setup or {}).get("calibration") or {}
+    cal_model = cal.get("model")
+    if ((setup or {}).get("policy") or {}).get("mode") != "calibrated" or not cal_model:
+        return None
+    if not model_returned or model_returned == cal_model or family_of(model_returned) != family_of(cal_model):
+        return None
+    return (f"{model_returned} answered, but the cutoffs were calibrated on {cal_model} (same family). "
+            "The calibration is kept; re-check it with: decide.py calibrate SETUP --labels FILE --check")
+
+
 def effective_rules(policy: dict, questions: dict, cautious: bool) -> list:
     """The rules to route with. Cautious mode only widens: the lower reject
     bound, the higher pass bound and the higher confidence floor win."""
@@ -824,6 +837,7 @@ def cmd_run(args) -> int:
 
     counts = {r: 0 for r in ROUTES}
     totals, fallbacks, failed, n, cautious_any, answered = {}, 0, 0, 0, False, 0
+    drift = []
     out = open(args.out, "w", encoding="utf-8") if args.out else sys.stdout
     try:
         workers = max(1, args.workers)
@@ -839,6 +853,9 @@ def cmd_run(args) -> int:
                     if flag and not cautious_any:
                         base_reason = why or base_reason
                     cautious_any = cautious_any or flag
+                    msg = version_drift(setup, row["model"])
+                    if msg and msg not in drift:
+                        drift.append(msg)
                 if meta:
                     _usage_add(totals, meta["usage"])
                     fallbacks += bool(meta["hops"])
@@ -856,6 +873,8 @@ def cmd_run(args) -> int:
          f"out {totals.get('output_tokens', 0)}{cost} | items that used a fallback: {fallbacks}")
     if cautious_any:
         _err("cautious mode: wider review band; read every 'review' item. Calibrate to narrow it.")
+    for msg in drift:
+        _err(msg)
     return 4 if n and failed == n else 0
 
 
@@ -878,6 +897,9 @@ def cmd_ask(args) -> int:
         for name, a in answers.items():
             print(describe(name, a))
         print(f"(model {meta['model_returned']} via {meta['provider']})")
+    msg = version_drift(setup, answering_model(meta))
+    if msg:
+        _err(msg)
     return 0
 
 
