@@ -77,8 +77,8 @@ The `provider-onboarding` skill helps: it compares providers, models,
 prices, endpoints and key setup. One way to install it is
 `npx skills@1.9.0 add rjstone/agent-skills --skill provider-onboarding`, but
 check first how this environment installs skills (its own plugin or skill
-manager, a skills folder, a settings page), and **always ask the user
-before installing a skill**.
+manager, a skills folder, a settings page), and **never install a skill
+without asking the user first**.
 
 ## 5. Privacy check (required before any real data is sent)
 

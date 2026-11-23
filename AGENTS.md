@@ -366,6 +366,12 @@ metadata:
   SkillSpector's parser reads that as shell brace syntax and reports a
   HIGH coverage gap (2026-11-23).
 
+- **Wording beats scanner patterns** (the user, 2026-11-23): word skill
+  instructions the way models are most likely to follow them, even when a
+  SkillSpector regex flags the phrase (for example EA2 on "never ... without
+  asking", which is the opposite of autonomous action). Dismiss such alerts
+  as false positives instead of weakening the instruction. Rewording is fine
+  only when it says the same thing just as strongly.
 - **No `allowed-tools` in skill frontmatter** (the user, 2026-11-23): tool
   names differ between harnesses, so a list written for one would be wrong
   for the others. SkillSpector's LP3 finding ("declares no tool scope") is
