@@ -16,8 +16,14 @@
       change within a family; rate limit retries and fallback hops, with a
       backoff on 429; Windows (cp1252 stdout, `os.replace` while the setup
       file is open).
-- [ ] `decisions`: keep the Vercel and Sage sample adapters in step with
-      those APIs (both checked live 2026-11-23).
+- [ ] `decisions`: after 2027-05-23, re-check the Vercel sample adapter
+      (`scripts/adapters/vercel_evaluate.py`) with a live call, sooner if
+      Vercel announces an AI Gateway `/v1/evaluate` change; update its
+      "Checked live" date.
+- [ ] `decisions`: after 2027-05-23, re-check the Levanto Sage sample
+      adapter (`scripts/adapters/levanto_sage.py`) with a live call, sooner
+      if Levanto announces a `/decide/batch` change; update its "Checked
+      live" date.
 - [ ] `opencode-console`: the skill exists (configuring a workspace, the
       Console MCP server, CLI and inference endpoints). Still missing upstream
       (checked 2026-11-08, still true in the skill 2026-11-22): a REST API for

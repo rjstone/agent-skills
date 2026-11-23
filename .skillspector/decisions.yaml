@@ -1,0 +1,42 @@
+# SkillSpector baseline for skills/decisions (accepted findings).
+# Used by scripts/skillspector_ci.py (CI: .github/workflows/skillspector.yml).
+# Glob rules match rule id, a path relative to the skill folder, and an
+# optional message glob (the finding text). Every rule needs a reason.
+# Accept only findings you checked in context; scope AE1 (coverage gap)
+# rules to one file so a new gap still fails CI. Format: upstream
+# docs/SUPPRESSION.md.
+#
+# E1 (External Transmission) rules are one per host and file: a new host
+# still raises an alert. decide.py is a decision-model client, so sending
+# items to the provider is its job; it refuses real data until the user's
+# privacy confirmations are recorded for that provider and endpoint.
+version: 2
+rules:
+  - id: "E1"
+    path: "scripts/decide.py"
+    message: "*https://api.typesafe.ai/*"
+    reason: "Built-in provider endpoint and model list (TypeSafe); sends only after the privacy gate"
+  - id: "E1"
+    path: "scripts/decide.py"
+    message: "*https://api.liquid.ai/*"
+    reason: "Built-in provider endpoint and model list (Liquid); sends only after the privacy gate"
+  - id: "E1"
+    path: "scripts/decide.py"
+    message: "*https://api.perplexity.ai/*"
+    reason: "Built-in provider endpoint (Perplexity); sends only after the privacy gate"
+  - id: "E1"
+    path: "references/providers.md"
+    message: "*https://api.typesafe.ai/*"
+    reason: "Documentation: the built-in provider table and model-list URL, not an instruction to send data"
+  - id: "E1"
+    path: "references/providers.md"
+    message: "*https://api.liquid.ai/*"
+    reason: "Documentation: the built-in provider table, not an instruction to send data"
+  - id: "E1"
+    path: "references/providers.md"
+    message: "*https://api.perplexity.ai/*"
+    reason: "Documentation: the built-in provider table, not an instruction to send data"
+  - id: "E1"
+    path: "references/providers.md"
+    message: "*https://api.decisionmodels.io/*"
+    reason: "Documentation: a made-up example host in a sample providers block"
