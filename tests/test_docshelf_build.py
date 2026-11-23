@@ -45,6 +45,7 @@ from build_llms import LlmsPage, Tree, is_llms_source, parse_index, read_tree, u
 from build_markdown import front_matter, md_to_html, page_signals, slugify  # noqa: E402
 import build_doxygen  # noqa: E402
 from build_doxygen import (DoxygenFormatError, js_value, member_name, page_uri,  # noqa: E402
+                           menu_pages, parse_list_page, parse_member_page, read_menu_index,
                            read_search_index)
 
 DOCSHELF = os.path.join(REPO_ROOT, "skills", "docshelf", "scripts", "docshelf.py")
@@ -3134,6 +3135,126 @@ class DoxygenSearchIndexTests(unittest.TestCase):
         self.assertEqual(member_name("_A", "cv::_A::_A(int (*f)(int)) const", "doxygen:Function", ns),
                          ("cv::_A::_A", "cv::_A::_A(int (*f)(int)) const"))
         self.assertEqual(member_name("x", "", "doxygen:Variable", ns), ("x", "-"))
+
+
+def doxy_page(contents, nav=""):
+    return ('<html><body><div id="top"><a href="nav_target.html">Navigation</a>%s</div>'
+            '<div class="contents">%s</div></body></html>' % (nav, contents))
+
+
+DOXY_MENU = {"children": [
+    {"text": "Main Page", "url": "index.html"},
+    {"text": "Related Pages", "url": "pages.html"},
+    {"text": "Categories", "url": "modules.html"},
+    {"text": "Classes", "url": "annotated.html", "children": [
+        {"text": "Class List", "url": "annotated.html"},
+        {"text": "Class Index", "url": "classes.html"},
+        {"text": "Class Members", "url": "functions.html", "children": [
+            {"text": "All", "url": "functions.html", "children": [
+                {"text": "a", "url": "functions_a.html#index_a"}]},
+            {"text": "Functions", "url": "functions_func.html", "children": [
+                {"text": "s", "url": "functions_func_s.html#index_s"}]}]}]},
+    {"text": "Files", "url": "files.html", "children": [
+        {"text": "File Members", "url": "globals.html", "children": [
+            {"text": "Macros", "url": "globals_defs.html", "children": [
+                {"text": "e", "url": "globals_defs_e.html#index_e"},
+                {"text": "e", "url": "globals_defs_e.html#index_e"},
+                {"text": "w", "url": "globals_defs_w.html#index_w"}]}]}]}]}
+
+DOXY_ANNOTATED = doxy_page(
+    '<div class="textblock">Here are the classes:</div><table class="directory">'
+    '<tr><td class="entry"><a class="el" href="classwx_window.html">wxWindow</a></td>'
+    '<td class="desc">Base, see <a class="el" href="overview_windows.html">Window overview</a></td></tr>'
+    '<tr><td class="entry"><a class="el" href="structwx_point.html">wxPoint</a></td>'
+    '<td class="desc">A point</td></tr></table>')
+DOXY_FUNC_S = doxy_page(
+    '<h3><a id="index_s"></a>- s -</h3><ul>'
+    '<li>SetSize()\n: <a class="el" href="classwx_window.html#a9">wxWindow</a>\n'
+    ', <a class="el" href="classwx_frame.html#a3">wxFrame</a>\n</li></ul>')
+DOXY_DEFS_W = doxy_page(
+    '<h3><a id="index_w"></a>- w -</h3><ul>'
+    '<li>wxUSE_X\n: <a class="el" href="defs_8h.html#a1">defs.h</a>\n</li></ul>')
+
+
+def doxy_menu_site():
+    return {
+        "menudata.js": ("/* @licstart */ var menudata=" + json.dumps(DOXY_MENU)).encode(),
+        "annotated.html": DOXY_ANNOTATED.encode(),
+        "files.html": doxy_page('<table class="directory"><tr><td class="entry">'
+                                '<a class="el" href="defs_8h.html">defs.h</a></td></tr></table>').encode(),
+        "functions_func.html": doxy_page("<ul></ul>").encode(),
+        "functions_func_s.html": DOXY_FUNC_S.encode(),
+        "globals_defs.html": doxy_page("<ul></ul>").encode(),
+        "globals_defs_e.html": doxy_page("<ul></ul>").encode(),
+        "globals_defs_w.html": DOXY_DEFS_W.encode(),
+    }
+
+
+class DoxygenMenuIndexTests(unittest.TestCase):
+    def read(self, files):
+        logged = []
+        idx = read_menu_index(files.get, log=logged.append)
+        return idx, logged
+
+    def names(self, entries):
+        return sorted((e.name, e.role, e.uri) for e in entries)
+
+    def test_menu_pages(self):
+        pages = menu_pages(DOXY_MENU)
+        self.assertEqual(pages.count(("globals_defs_e.html", "doxygen:Macro")), 1)
+        self.assertIn(("functions_func_s.html", "doxygen:Function"), pages)
+        self.assertIn(("annotated.html", "doxygen:Class"), pages)
+        self.assertIn(("modules.html", "doxygen:Module"), pages)
+        self.assertIn(("pages.html", "std:doc"), pages)
+        rels = [rel for rel, _ in pages]
+        for skipped in ("functions.html", "functions_a.html", "classes.html", "index.html"):
+            self.assertNotIn(skipped, rels)
+
+    def test_member_page_owners(self):
+        got = parse_member_page(DOXY_FUNC_S, "doxygen:Function", set())
+        self.assertEqual(self.names(got), [
+            ("wxFrame::SetSize", "doxygen:Function", "classwx_frame.html#a3"),
+            ("wxWindow::SetSize", "doxygen:Function", "classwx_window.html#a9")])
+
+    def test_member_page_file_scope_is_bare(self):
+        got = parse_member_page(DOXY_DEFS_W, "doxygen:Macro", {"defs.h"})
+        self.assertEqual(self.names(got), [("wxUSE_X", "doxygen:Macro", "defs_8h.html#a1")])
+
+    def test_navigation_outside_contents_ignored(self):
+        got = parse_member_page(doxy_page("<ul></ul>", '<ul><li>x : <a href="y.html#1">Y</a></li></ul>'),
+                                "doxygen:Function", set())
+        self.assertEqual(got, [])
+
+    def test_list_page(self):
+        got = parse_list_page(DOXY_ANNOTATED, "doxygen:Class")
+        self.assertEqual(self.names(got), [
+            ("wxPoint", "doxygen:Struct", "structwx_point.html"),
+            ("wxWindow", "doxygen:Class", "classwx_window.html")])
+
+    def test_read_with_menudata(self):
+        idx, logged = self.read(doxy_menu_site())
+        self.assertEqual(idx.kind, "menu")
+        names = self.names(idx.entries)
+        self.assertIn(("wxWindow::SetSize", "doxygen:Function", "classwx_window.html#a9"), names)
+        self.assertIn(("wxUSE_X", "doxygen:Macro", "defs_8h.html#a1"), names)
+        self.assertTrue([m for m in logged if re.search(r"reading \d+ Doxygen index pages", m)])
+        self.assertTrue([w for w in idx.warnings if "modules.html" in w])
+
+    def test_read_without_menudata(self):
+        files = doxy_menu_site()
+        del files["menudata.js"]
+        files["globals_defs.html"] = doxy_page(
+            '<div class="qindex"><a href="globals_defs_w.html#index_w">w</a></div><ul></ul>').encode()
+        files["functions_func.html"] = doxy_page(
+            '<div class="qindex"><a href="functions_func_s.html#index_s">s</a></div><ul></ul>').encode()
+        idx, _ = self.read(files)
+        names = self.names(idx.entries)
+        self.assertIn(("wxWindow::SetSize", "doxygen:Function", "classwx_window.html#a9"), names)
+        self.assertIn(("wxUSE_X", "doxygen:Macro", "defs_8h.html#a1"), names)
+
+    def test_nothing_found(self):
+        with self.assertRaises(DoxygenFormatError):
+            self.read({})
 
 
 if __name__ == "__main__":
