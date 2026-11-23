@@ -18,7 +18,7 @@
     },
     {
       "name": "decisions",
-      "version": "0.1.0",
+      "version": "0.2.0",
       "files": [
         "SKILL.md",
         "evals/baseline-2026-11.md",
@@ -34,6 +34,7 @@
         "references/setup-file.md",
         "scripts/adapters/README.md",
         "scripts/adapters/levanto_sage.py",
+        "scripts/adapters/systemone_minimal.py",
         "scripts/adapters/vercel_evaluate.py",
         "scripts/decide.py"
       ]
