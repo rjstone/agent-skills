@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import argparse
 import csv
+import codecs
 import datetime
 import hashlib
 import http.client
@@ -538,6 +539,10 @@ def validate_setup(setup: dict, path: str = "setup") -> None:
         bad("'policy.combine' must be 'all' (screening) or 'any' (flagging)")
 
 
+SAVE_RETRIES = 5
+SAVE_RETRY_DELAY = 0.2
+
+
 def save_setup(path: str, setup: dict) -> None:
     """Write atomically: a temp file in the same folder, then os.replace."""
     folder = os.path.dirname(os.path.abspath(path))
@@ -552,7 +557,17 @@ def save_setup(path: str, setup: dict) -> None:
             os.chmod(tmp, os.stat(path).st_mode & 0o7777)
         except OSError:
             pass
-        os.replace(tmp, path)
+        for attempt in range(SAVE_RETRIES):
+            try:
+                os.replace(tmp, path)
+                break
+            except PermissionError as e:  # Windows: another program has the file open
+                if attempt == SAVE_RETRIES - 1:
+                    raise DecisionError(
+                        "config", f"could not save {path}: {e}. It may be open in another program "
+                        "(an editor, a sync or backup tool); close it and run the command again. "
+                        "The file was not changed.") from None
+                _sleep(SAVE_RETRY_DELAY)
     except BaseException:
         try:
             os.unlink(tmp)
@@ -734,6 +749,19 @@ class RateLimiter:
             time.sleep(delay)
 
 
+def _is_utf8(stream) -> bool:
+    try:
+        return codecs.lookup(getattr(stream, "encoding", None) or "").name == "utf-8"
+    except LookupError:
+        return False
+
+
+def json_line(obj, stream) -> str:
+    """JSON for one output line: real characters on a UTF-8 stream, \\u escapes
+    otherwise (a redirected Windows console is often cp1252), so it stays valid."""
+    return json.dumps(obj, ensure_ascii=not _is_utf8(stream))
+
+
 def _err(msg: str) -> None:
     print(f"decide: {msg}", file=sys.stderr)
 
@@ -897,7 +925,7 @@ def cmd_run(args) -> int:
                 if meta:
                     _usage_add(totals, meta["usage"])
                     fallbacks += bool(meta["hops"])
-                out.write(json.dumps(row, ensure_ascii=False) + "\n")
+                out.write(json_line(row, out) + "\n")
     finally:
         if out is not sys.stdout:
             out.close()
@@ -1051,6 +1079,13 @@ def build_parser() -> argparse.ArgumentParser:
 
 
 def main(argv=None) -> int:
+    for stream in (sys.stdout, sys.stderr):  # plain text the console can't show becomes "?", not a crash
+        reconfigure = getattr(stream, "reconfigure", None)
+        if reconfigure:
+            try:
+                reconfigure(errors="replace")
+            except (ValueError, OSError):
+                pass
     args = build_parser().parse_args(argv)
     try:
         return args.func(args)

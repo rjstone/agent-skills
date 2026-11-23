@@ -1470,5 +1470,109 @@ class ReviewMinorsTest(unittest.TestCase):
         self.assertEqual(code, 0)
         self.assertIn("jev-1.14.0 answered", err.getvalue())
 
+
+class WindowsMinorsTest(unittest.TestCase):
+    """Non-UTF-8 stdout (Windows cp1252 when redirected) and a setup file held open."""
+
+    def _setup(self, fake, d, questions=QUESTIONS):
+        setup = {"provider": "a", "model": "jev-1.13.0", "questions": questions,
+                 "providers": {"a": {"endpoint": fake.base + "/a", "key_env": []}},
+                 "privacy": {"a": {"confirmed": "2026-11-23"}}}
+        sp = os.path.join(d, "s.decisions.json")
+        with open(sp, "w") as f:
+            json.dump(setup, f)
+        return sp
+
+    def test_run_to_cp1252_stdout_keeps_valid_json(self):
+        fake = FakeSystemOne()
+        self.addCleanup(fake.close)
+        fake.script["/a"] = [(200, good_answer())]
+        buf = io.BytesIO()
+        stream = io.TextIOWrapper(buf, encoding="cp1252")
+        with tempfile.TemporaryDirectory() as d:
+            sp = self._setup(fake, d)
+            src = os.path.join(d, "in.jsonl")
+            with open(src, "w", encoding="utf-8") as f:
+                f.write('{"id": "\u9879\u76ee-1", "text": "x"}\n')
+            with contextlib.redirect_stdout(stream), contextlib.redirect_stderr(io.StringIO()):
+                code = decide.main(["run", sp, "--input", src, "--no-cache", "--rate", "0"])
+            stream.flush()
+        row = json.loads(buf.getvalue().decode("cp1252").splitlines()[0])
+        self.assertEqual(row["id"], "\u9879\u76ee-1")
+        self.assertEqual(code, 0)
+
+    def test_run_out_file_keeps_real_characters(self):
+        fake = FakeSystemOne()
+        self.addCleanup(fake.close)
+        fake.script["/a"] = [(200, good_answer())]
+        with tempfile.TemporaryDirectory() as d:
+            sp = self._setup(fake, d)
+            src = os.path.join(d, "in.jsonl")
+            with open(src, "w", encoding="utf-8") as f:
+                f.write('{"id": "\u9879\u76ee-1", "text": "x"}\n')
+            out = os.path.join(d, "out.jsonl")
+            with contextlib.redirect_stderr(io.StringIO()):
+                decide.main(["run", sp, "--input", src, "--no-cache", "--rate", "0", "--out", out])
+            with open(out, encoding="utf-8") as f:
+                self.assertIn("\u9879\u76ee-1", f.read())
+
+    def test_ask_human_output_to_cp1252_does_not_crash(self):
+        fake = FakeSystemOne()
+        self.addCleanup(fake.close)
+        team = {"team": {"type": "choice", "instructions": "Which team?",
+                         "criteria": {"\u56e2\u961f": "people", "other": None}}}
+        fake.script["/a"] = [(200, {"model": "jev-1.13.0",
+                                    "answers": {"team": {"type": "choice", "choice": "\u56e2\u961f",
+                                                         "confidence": 0.9,
+                                                         "probabilities": {"\u56e2\u961f": 0.9, "other": 0.1}}}})]
+        buf = io.BytesIO()
+        stream = io.TextIOWrapper(buf, encoding="cp1252")
+        with tempfile.TemporaryDirectory() as d:
+            sp = self._setup(fake, d, team)
+            with contextlib.redirect_stdout(stream), contextlib.redirect_stderr(io.StringIO()):
+                code = decide.main(["ask", sp, "--state", "x"])
+            stream.flush()
+        self.assertEqual(code, 0)
+        self.assertIn("?", buf.getvalue().decode("cp1252"))
+
+    def test_main_tolerates_stdout_without_reconfigure(self):
+        with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
+            self.assertEqual(decide.main(["providers"]), 0)
+
+    def test_save_setup_retries_permission_error(self):
+        with tempfile.TemporaryDirectory() as d:
+            path = os.path.join(d, "s.decisions.json")
+            with open(path, "w") as f:
+                json.dump({"x": 0}, f)
+            real = os.replace
+            calls = []
+
+            def flaky(a, b):
+                calls.append(1)
+                if len(calls) == 1:
+                    raise PermissionError("in use")
+                return real(a, b)
+            with mock.patch("os.replace", side_effect=flaky), mock.patch.object(decide, "_sleep") as sl:
+                decide.save_setup(path, {"x": 1})
+            with open(path) as f:
+                self.assertEqual(json.load(f), {"x": 1})
+        self.assertEqual(len(calls), 2)
+        sl.assert_called_once_with(0.2)
+
+    def test_save_setup_gives_up_cleanly(self):
+        with tempfile.TemporaryDirectory() as d:
+            path = os.path.join(d, "s.decisions.json")
+            with open(path, "w") as f:
+                json.dump({"x": 0}, f)
+            with mock.patch("os.replace", side_effect=PermissionError("in use")), \
+                    mock.patch.object(decide, "_sleep"):
+                with self.assertRaises(decide.DecisionError) as cm:
+                    decide.save_setup(path, {"x": 2})
+            with open(path) as f:
+                self.assertEqual(json.load(f), {"x": 0})
+            self.assertEqual(os.listdir(d), ["s.decisions.json"])
+        self.assertEqual(cm.exception.kind, "config")
+        self.assertIn("open in another program", str(cm.exception))
+
 if __name__ == "__main__":
     unittest.main()
