@@ -860,6 +860,13 @@ class AdapterTest(unittest.TestCase):
         ans = v.from_response({"answers": {"urgent": {"type": "boolean", "boolean": 0.8}}})
         self.assertEqual(ans["urgent"], {"type": "noul", "noul": 0.8})
 
+    def test_systemone_minimal_request_and_answers(self):
+        m = _load_adapter("systemone_minimal")
+        self.assertEqual(m.to_request("jev-1.13-free", "x", self.Q),
+                         {"model": "jev-1.13-free", "state": "x", "questions": self.Q})
+        self.assertEqual(m.from_response({"model": "m", "answers": {"q": {"type": "noul", "noul": 0.5}}}),
+                         {"q": {"type": "noul", "noul": 0.5}})
+
     def test_sage_null_answer_maps_to_review_marker(self):
         sg = _load_adapter("levanto_sage")
         names = ["team"]
@@ -1166,7 +1173,7 @@ class PrFollowupTest(unittest.TestCase):
         self.assertIn("a: m2  no description", out)
 
     def test_adapters_refuse_until_privacy_check_wired(self):
-        for name in ("vercel_evaluate", "levanto_sage"):
+        for name in ("vercel_evaluate", "levanto_sage", "systemone_minimal"):
             mod = _load_adapter(name)
             with self.assertRaises(RuntimeError) as cm:
                 mod.evaluate("x", {"q": {"type": "noul"}}, key="k", model="m")

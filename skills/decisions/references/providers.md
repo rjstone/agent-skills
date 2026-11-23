@@ -12,7 +12,7 @@ typical decision is 100-1,500 input tokens.
 | Provider | Endpoint (POST) | Key env var | Default model | Sign-up / docs |
 |---|---|---|---|---|
 | `opencode` | `https://opencode.ai/inference/systemone/v1/systemone` | `OPENCODE_API_KEY` | `jev-1.13-free` ($0) | https://opencode.ai (Console); https://opencode.ai/docs/console/models/ |
-| `typesafe` | `https://api.typesafe.ai/v1/systemone` | `TYPESAFE_AI_API_KEY` (or `TYPESAFE_API_KEY`) | `jev-latest` | https://typesafe.ai; https://docs.typesafe.ai |
+| `typesafe` | `https://api.typesafe.ai/v1/systemone` | `TYPESAFE_AI_API_KEY` (or `TYPESAFE_API_KEY`) | `jev-latest` | https://typesafe.ai; docs index https://docs.typesafe.ai/llms.txt |
 | `openrouter` | `https://openrouter.ai/api/v1/systemone` | `OPENROUTER_API_KEY` | `typesafe/jev-1.14` | https://openrouter.ai; many decision models, some `:free` |
 | `perplexity` | `https://api.perplexity.ai/v1/decisions` | `PERPLEXITY_API_KEY` | `pplx-decider-latest` | https://docs.perplexity.ai (same body, different path) |
 

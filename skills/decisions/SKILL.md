@@ -6,7 +6,7 @@ license: MIT
 metadata:
   author: Robert Stone
   source: https://github.com/rjstone/agent-skills
-  version: "0.1.0"
+  version: "0.2.0"
 ---
 
 # Decisions
@@ -116,10 +116,15 @@ yes"), set `"combine": "any"` in `policy`: then `pass` means flagged by any
 rule, `reject` means every rule says clean, and the rest is `review`. The
 default `"all"` suits screening (any disqualifier rejects).
 
-### 4. Hand over code the user keeps
+### 4. Copy code into the project folder
 
-For a hook, a bot or a scheduled job, copy `scripts/decide.py` and the setup
-file into the user's project and show the import:
+You may copy `scripts/decide.py`, the sample scripts and any code you write
+into the project folder (the skill's code is MIT-licensed). Prefer doing so
+when the work will be reused: the user can see exactly what runs, the copy
+keeps working the same even when the skill is updated, and changes the user
+asks for are kept there. Say what you copy, where, and why. For a hook, a bot
+or a scheduled job, copy `scripts/decide.py` beside the setup file and show
+the import:
 
 ```python
 from decide import load_setup, evaluate, route, effective_rules, is_cautious, build_state, combine_of

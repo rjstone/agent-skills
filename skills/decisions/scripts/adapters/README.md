@@ -1,10 +1,13 @@
-# Sample adapters (not tested against live services)
+# Sample adapters
 
 `decide.py` speaks only the System One format. A few decision APIs use their
 own format; these files are a head start for those, not supported code.
+`systemone_minimal.py` is the shortest possible System One call, for a
+person to read in a minute; use `decide.py` for real work.
 
 | File | Service | Status |
 |---|---|---|
+| `systemone_minimal.py` | any System One host (plain request, for reading) | sample |
 | `vercel_evaluate.py` | Vercel AI Gateway `/v1/evaluate` | sample, unverified |
 | `levanto_sage.py` | Levanto Sage `/decide` | sample, unverified |
 

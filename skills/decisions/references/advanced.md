@@ -1,10 +1,12 @@
 # Advanced patterns
 
-A few common patterns beyond the basics. For everything else, read TypeSafe's
-Patterns (https://docs.typesafe.ai/patterns), Cookbooks
-(https://docs.typesafe.ai/cookbooks) and structured questions
-(https://docs.typesafe.ai/primitives/advanced); they apply to any System One
-model. Append `.md` to a docs URL for the plain-text version.
+A few common patterns beyond the basics. For everything else, start from
+TypeSafe's docs index, https://docs.typesafe.ai/llms.txt (every page with a
+one-line summary and its plain-text `.md` link), then read Patterns
+(https://docs.typesafe.ai/patterns.md), Cookbooks
+(https://docs.typesafe.ai/cookbooks.md) or structured questions
+(https://docs.typesafe.ai/primitives/advanced.md). They apply to any System
+One model.
 
 - **Screen with a yes/no first.** Ask one cheap yes/no ("is this a real
   lead at all?") and run the costly step (more questions, a large model) only
