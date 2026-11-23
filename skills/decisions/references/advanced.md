@@ -29,8 +29,8 @@ model. Append `.md` to a docs URL for the plain-text version.
   leaves if large) so the model sees what lives under a branch; then a second
   choice per group picks the code within it. Route low confidence at either
   step to review; when the top two groups are close, try both.
-  https://docs.typesafe.ai/primitives/advanced.md (Walking a taxonomy) `decide.py`
-  has no chaining in this version: run the first setup, split the output by
+  https://docs.typesafe.ai/primitives/advanced.md (Walking a taxonomy).
+  `decide.py` has no chaining in this version: run the first setup, split the output by
   group, run the second. See
   https://docs.typesafe.ai/cookbooks/hierarchical_classification.md ,
   https://docs.typesafe.ai/cookbooks/classification_using_confidence.md and
