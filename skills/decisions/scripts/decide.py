@@ -17,6 +17,9 @@ are never printed. See the skill's SKILL.md for the workflow.
 """
 from __future__ import annotations
 
+import argparse
+import csv
+import datetime
 import hashlib
 import http.client
 import json
@@ -24,11 +27,13 @@ import math
 import os
 import re
 import sqlite3
+import sys
 import tempfile
 import threading
 import time
 import urllib.error
 import urllib.request
+from concurrent.futures import ThreadPoolExecutor
 
 VERSION = "0.1.0"
 
@@ -460,3 +465,343 @@ class Cache:
         if self.db:
             self.db.close()
             self.db = None
+
+
+# --- inputs --------------------------------------------------------------------
+
+TEXT_SUFFIXES = (".txt", ".md")
+
+
+def _split(obj: dict, id_field: str, text_field):
+    item = obj.get(text_field) if text_field else {k: v for k, v in obj.items() if k != id_field}
+    return str(obj[id_field]), item
+
+
+def read_items(source: str, fmt=None, id_field: str = "id", text_field=None):
+    """Yield (id, item, error) from JSONL, CSV, a folder of .txt/.md files, or "-" (stdin JSONL).
+    A bad line yields an error row naming the line; blank lines are skipped."""
+    if fmt is None:
+        if source == "-" or source.endswith((".jsonl", ".json", ".ndjson")):
+            fmt = "jsonl"
+        elif source.endswith(".csv"):
+            fmt = "csv"
+        elif os.path.isdir(source):
+            fmt = "dir"
+        else:
+            raise DecisionError("config", f"cannot tell the format of {source}; use --format")
+    if fmt == "dir":
+        for name in sorted(os.listdir(source)):
+            if name.endswith(TEXT_SUFFIXES):
+                path = os.path.join(source, name)
+                try:
+                    with open(path, encoding="utf-8") as f:
+                        yield name, f.read(), None
+                except (OSError, UnicodeDecodeError) as e:
+                    yield name, None, f"{name}: {type(e).__name__}"
+        return
+    if fmt == "csv":
+        with open(source, newline="", encoding="utf-8-sig") as f:
+            for n, row in enumerate(csv.DictReader(f), start=2):
+                if not row.get(id_field):
+                    yield f"line {n}", None, f"line {n}: missing {id_field!r}"
+                    continue
+                yield (*_split(row, id_field, text_field), None)
+        return
+    if fmt != "jsonl":
+        raise DecisionError("config", f"unknown format {fmt!r} (jsonl, csv, dir)")
+    stream = sys.stdin.buffer if source == "-" else open(source, "rb")
+    try:
+        for n, raw in enumerate(stream, start=1):
+            if not raw.strip():
+                continue
+            try:
+                obj = json.loads(raw.decode("utf-8"))
+            except UnicodeDecodeError:
+                yield f"line {n}", None, f"line {n}: not UTF-8 text"
+                continue
+            except ValueError:
+                yield f"line {n}", None, f"line {n}: invalid JSON"
+                continue
+            if not isinstance(obj, dict) or id_field not in obj:
+                yield f"line {n}", None, f"line {n}: missing {id_field!r}"
+                continue
+            yield (*_split(obj, id_field, text_field), None)
+    finally:
+        if stream is not sys.stdin.buffer:
+            stream.close()
+
+
+# --- command line ----------------------------------------------------------------
+
+class RateLimiter:
+    def __init__(self, per_second: float):
+        self.gap = 1.0 / per_second if per_second and per_second > 0 else 0.0
+        self.next = 0.0
+        self.lock = threading.Lock()
+
+    def wait(self):
+        if not self.gap:
+            return
+        with self.lock:
+            now = time.monotonic()
+            delay = self.next - now
+            self.next = max(now, self.next) + self.gap
+        if delay > 0:
+            time.sleep(delay)
+
+
+def _err(msg: str) -> None:
+    print(f"decide: {msg}", file=sys.stderr)
+
+
+def _questions_from_flags(args):
+    if args.yes:
+        return {"answer": {"type": "noul", "instructions": args.yes}}
+    if args.choice:
+        crit = {}
+        for c in args.choice:
+            name, _, desc = c.partition("=")
+            crit[name] = desc or None
+        return {"answer": {"type": "choice", "criteria": crit}}
+    if args.score:
+        return {"answer": {"type": "score", "criteria": list(args.score)}}
+    return None
+
+
+def describe(name: str, a: dict) -> str:
+    """One plain-language line for an answer."""
+    t = a.get("type")
+    if t == "noul":
+        p = a["noul"]
+        word = "Yes" if p >= 0.5 else "No"
+        return f"{name}: {word} - {round(100 * max(p, 1 - p))}% likely (P(yes) = {p:.2f})"
+    if t == "choice":
+        probs = sorted((a.get("probabilities") or {}).items(), key=lambda kv: -kv[1])
+        rest = ", ".join(f"{k} ({round(100 * v)}%)" for k, v in probs if k != a["choice"])[:200]
+        top = (a.get("probabilities") or {}).get(a["choice"], a.get("confidence", 0))
+        line = f"{name}: {a['choice']} ({round(100 * top)}%)"
+        line += f", next: {rest}" if rest else ""
+        return line + f"; confidence {a.get('confidence', 0):.2f}"
+    if t == "score":
+        return f"{name}: score {a['score']:.1f}, confidence {a.get('confidence', 0):.2f}"
+    return f"{name}: {json.dumps(a)}"
+
+
+def _usage_add(total: dict, usage: dict) -> None:
+    for k in ("input_tokens", "output_tokens"):
+        if isinstance(usage.get(k), (int, float)):
+            total[k] = total.get(k, 0) + usage[k]
+    if isinstance(usage.get("cost"), (int, float)):
+        total["cost"] = total.get("cost", 0.0) + usage["cost"]
+
+
+def cmd_run(args) -> int:
+    setup = load_setup(args.setup)
+    questions = setup["questions"]
+    reference = setup.get("reference")
+    if args.state is not None:
+        items = iter([("state", args.state, None)])
+    elif args.input:
+        items = read_items(args.input, args.format, args.id_field, args.text_field)
+    else:
+        raise DecisionError("config", "give --input FILE|DIR|- or --state TEXT")
+    model = args.model or setup["model"]
+    if args.dry_run:
+        for _id, item, error in items:
+            if not error:
+                print(json.dumps(build_request(model, build_state(reference, item), questions), indent=2))
+                return 0
+        _err("no valid item to show")
+        return 2
+    first = args.provider or setup["provider"]
+    check_privacy(first, setup, args.test_data)
+    cache = Cache(None if args.no_cache else default_cache_path(args.setup))
+    limiter = RateLimiter(args.rate)
+    _, base_reason = is_cautious(setup)
+
+    def one(entry):
+        item_id, item, error = entry
+        row = {"id": item_id, "route": "review", "answers": None, "model": None,
+               "provider": None, "cached": False, "error": error}
+        if error:
+            return row, None
+        key = cache_key(first, model, questions, reference, item)
+        hit = cache.get(key)
+        meta = None
+        if hit:
+            answers, returned = hit["answers"], hit["model_returned"]
+            row.update(cached=True, provider=first)
+        else:
+            limiter.wait()
+            try:
+                answers, meta = evaluate(build_state(reference, item), questions, provider=args.provider,
+                                         model=args.model, setup=setup, timeout=args.timeout,
+                                         test_data=args.test_data)
+            except DecisionError as e:
+                if e.kind == "privacy":
+                    raise
+                row["error"] = str(e)
+                return row, None
+            returned = meta["model_returned"]
+            row["provider"] = meta["provider"]
+            if meta["provider"] == first:
+                cache.put(key, answers, returned)
+        cautious, _ = is_cautious(setup, returned)
+        rules = effective_rules(setup.get("policy") or {}, questions, cautious)
+        row.update(route=route(answers, rules), answers=answers, model=returned)
+        row["cautious"] = cautious
+        return row, meta
+
+    counts = {r: 0 for r in ROUTES}
+    totals, fallbacks, failed, n, cautious_any = {}, 0, 0, 0, False
+    out = open(args.out, "w", encoding="utf-8") if args.out else sys.stdout
+    try:
+        with ThreadPoolExecutor(max_workers=max(1, args.workers)) as pool:
+            for row, meta in pool.map(one, items):
+                n += 1
+                counts[row["route"]] += 1
+                failed += bool(row["error"])
+                cautious_any = cautious_any or row.pop("cautious", True)
+                if meta:
+                    _usage_add(totals, meta["usage"])
+                    fallbacks += bool(meta["hops"])
+                out.write(json.dumps(row, ensure_ascii=False) + "\n")
+    finally:
+        if out is not sys.stdout:
+            out.close()
+        cache.close()
+    mode = f"cautious ({base_reason})" if cautious_any else f"calibrated ({base_reason})"
+    cost = f", cost ${totals['cost']:.6f}" if "cost" in totals else ""
+    _err(f"{n} items: pass {counts['pass']}, review {counts['review']}, reject {counts['reject']}, "
+         f"errors {failed} | mode: {mode} | tokens in {totals.get('input_tokens', 0)} "
+         f"out {totals.get('output_tokens', 0)}{cost} | items that used a fallback: {fallbacks}")
+    if cautious_any:
+        _err("cautious mode: wider review band; read every 'review' item. Calibrate to narrow it.")
+    return 4 if n and failed == n else 0
+
+
+def cmd_ask(args) -> int:
+    setup = load_setup(args.setup) if args.setup else {}
+    questions = _questions_from_flags(args) or setup.get("questions")
+    if not questions:
+        raise DecisionError("config", "give --yes, --choice or --score (or a setup file with questions)")
+    provider = args.provider or setup.get("provider") or "opencode"
+    state = build_state(setup.get("reference"), args.state)
+    answers, meta = evaluate(state, questions, provider=provider, model=args.model,
+                             fallbacks=None if setup else [], setup=setup or None,
+                             timeout=args.timeout, test_data=args.test_data)
+    if args.json:
+        print(json.dumps({"answers": answers, "meta": meta}, indent=2))
+    else:
+        for name, a in answers.items():
+            print(describe(name, a))
+        print(f"(model {meta['model_returned']} via {meta['provider']})")
+    return 0
+
+
+def cmd_privacy(args) -> int:
+    setup = load_setup(args.setup)
+    record_privacy(setup, args.provider, args.policy_url, args.summary,
+                   datetime.date.today().isoformat())
+    save_setup(args.setup, setup)
+    print(f"recorded privacy confirmation for {args.provider} in {args.setup}")
+    return 0
+
+
+def cmd_providers(args) -> int:
+    for name, cfg in PROVIDERS.items():
+        found = [v for v in cfg["key_env"] if os.environ.get(v)]
+        key = f"key: {found[0]} is set" if found else f"key: not set ({' or '.join(cfg['key_env'])})"
+        print(f"{name:11} {cfg['endpoint']}  default model {cfg['default_model']}  {key}")
+    return 0
+
+
+def get_json(url: str, key, timeout: float):
+    headers = {"Accept": "application/json", "User-Agent": USER_AGENT}
+    if key:
+        headers["Authorization"] = f"Bearer {key}"
+    req = urllib.request.Request(url, headers=headers)
+    try:
+        with urllib.request.urlopen(req, timeout=timeout) as r:  # nosec B310 - provider URL from table
+            return json.loads(r.read().decode("utf-8", "replace"))
+    except (urllib.error.URLError, OSError, ValueError, http.client.HTTPException) as e:
+        raise DecisionError("fallback", redact(f"{type(e).__name__}: {e}", key)) from None
+
+
+def cmd_models(args) -> int:
+    names = [args.provider] if args.provider else list(PROVIDERS)
+    for name in names:
+        cfg = provider_config(name)
+        if not cfg.get("models_url"):
+            print(f"{name}: no model-list endpoint; see {cfg['docs']} (default {cfg['default_model']})")
+            continue
+        data = get_json(cfg["models_url"], api_key(cfg), args.timeout)
+        rows = data.get("data") or data.get("models") or [] if isinstance(data, dict) else data
+        for m in rows:
+            print(f"{name}: {m.get('name') or m.get('id')}  {m.get('description', '')[:80]}")
+    return 0
+
+
+def build_parser() -> argparse.ArgumentParser:
+    p = argparse.ArgumentParser(prog="decide.py", description="Decision-model client (System One).")
+    p.add_argument("--version", action="version", version=f"decide.py {VERSION}")
+    common = argparse.ArgumentParser(add_help=False)
+    common.add_argument("--provider", help="override the setup's provider")
+    common.add_argument("--model", help="override the primary hop's model")
+    common.add_argument("--timeout", type=float, default=60.0)
+    common.add_argument("--test-data", action="store_true",
+                        help="the data is made up: skip the privacy check")
+    sub = p.add_subparsers(dest="cmd", required=True)
+
+    r = sub.add_parser("run", parents=[common], help="score a batch and route each item")
+    r.add_argument("setup")
+    r.add_argument("--input", help="JSONL, CSV, a folder of .txt/.md files, or - for stdin")
+    r.add_argument("--state", help="one item given as text")
+    r.add_argument("--format", choices=("jsonl", "csv", "dir"))
+    r.add_argument("--id-field", default="id")
+    r.add_argument("--text-field", help="send only this field of each item")
+    r.add_argument("--out", help="write result rows here instead of stdout")
+    r.add_argument("--dry-run", action="store_true", help="print the first request; send nothing")
+    r.add_argument("--no-cache", action="store_true")
+    r.add_argument("--workers", type=int, default=1)
+    r.add_argument("--rate", type=float, default=2.0, help="max calls per second (default 2)")
+    r.set_defaults(func=cmd_run)
+
+    a = sub.add_parser("ask", parents=[common], help="ask one question about one text")
+    a.add_argument("setup", nargs="?")
+    a.add_argument("--state", required=True)
+    g = a.add_mutually_exclusive_group()
+    g.add_argument("--yes", metavar="QUESTION", help="a yes/no question")
+    g.add_argument("--choice", nargs="+", metavar="NAME[=DESC]")
+    g.add_argument("--score", nargs="+", metavar="LEVEL", help="levels, lowest first")
+    a.add_argument("--json", action="store_true")
+    a.set_defaults(func=cmd_ask)
+
+    pv = sub.add_parser("privacy", help="record the user's privacy confirmation for a provider")
+    pv.add_argument("setup")
+    pv.add_argument("--provider", required=True)
+    pv.add_argument("--policy-url", required=True)
+    pv.add_argument("--summary", required=True)
+    pv.set_defaults(func=cmd_privacy)
+
+    pr = sub.add_parser("providers", help="built-in providers and whether a key is set")
+    pr.set_defaults(func=cmd_providers)
+
+    m = sub.add_parser("models", help="list a provider's models where it has a list endpoint")
+    m.add_argument("--provider")
+    m.add_argument("--timeout", type=float, default=30.0)
+    m.set_defaults(func=cmd_models)
+    return p
+
+
+def main(argv=None) -> int:
+    args = build_parser().parse_args(argv)
+    try:
+        return args.func(args)
+    except DecisionError as e:
+        _err(str(e))
+        return {"privacy": 3, "fallback": 4}.get(e.kind, 2)
+
+
+if __name__ == "__main__":
+    sys.exit(main())

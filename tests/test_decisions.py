@@ -489,5 +489,185 @@ class CacheTest(unittest.TestCase):
                          os.path.join("a", "leads.decisions.cache.sqlite"))
 
 
+import contextlib  # noqa: E402
+import io  # noqa: E402
+
+
+class CliTest(unittest.TestCase):
+    def setUp(self):
+        self.fake = FakeSystemOne()
+        self.addCleanup(self.fake.close)
+        self.dir = tempfile.TemporaryDirectory()
+        self.addCleanup(self.dir.cleanup)
+        self.setup_path = os.path.join(self.dir.name, "t.decisions.json")
+        self.setup = {
+            "provider": "a", "model": "jev-1.13-free", "questions": QUESTIONS,
+            "reference": "ops means outages",
+            "policy": {"mode": "cautious",
+                       "rules": [{"question": "urgent", "reject_below": 0.2, "pass_above": 0.8}]},
+            "providers": {"a": {"endpoint": self.fake.base + "/a", "key_env": [],
+                                "default_model": "jev-1.13-free"}},
+            "privacy": {"a": {"confirmed": "2026-11-23"}},
+        }
+        self.save()
+        self.fake.script["/a"] = [(200, self.answer_for)]
+
+    def save(self):
+        with open(self.setup_path, "w", encoding="utf-8") as f:
+            json.dump(self.setup, f)
+
+    @staticmethod
+    def answer_for(headers, body):
+        text = json.dumps(body["state"])
+        p = 0.99 if "fire" in text else (0.01 if "spam" in text else 0.5)
+        a = good_answer()
+        a["answers"]["urgent"]["noul"] = p
+        return a
+
+    def write(self, name, text, mode="w"):
+        path = os.path.join(self.dir.name, name)
+        with open(path, mode) as f:
+            f.write(text)
+        return path
+
+    def main(self, *argv):
+        out, err = io.StringIO(), io.StringIO()
+        with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
+            code = decide.main(list(argv))
+        return code, out.getvalue(), err.getvalue()
+
+    def rows(self, out):
+        return [json.loads(line) for line in out.splitlines() if line.strip()]
+
+    def test_run_jsonl_routes_and_summary(self):
+        src = self.write("in.jsonl", '{"id": "1", "text": "fire in server room"}\n'
+                                     '{"id": "2", "text": "spam offer"}\n'
+                                     '{"id": "3", "text": "question about invoice"}\n')
+        code, out, err = self.main("run", self.setup_path, "--input", src, "--no-cache")
+        self.assertEqual(code, 0, err)
+        routes = {r["id"]: r["route"] for r in self.rows(out)}
+        self.assertEqual(routes, {"1": "pass", "2": "reject", "3": "review"})
+        self.assertIn("mode: cautious", err)
+        self.assertIn("pass 1", err)
+        body = self.fake.calls("/a")[0][2]
+        self.assertEqual(body["state"]["reference"], "ops means outages")
+        self.assertEqual(body["state"]["item"], {"text": "fire in server room"})
+
+    def test_run_bad_lines_reported(self):
+        src = self.write("in.jsonl", b'{"id": "1", "text": "fire"}\n\n{"text": "no id"}\n'
+                                     b'{"id": "4", "text": "\xff\xfe bad"}\n'
+                                     b'{"id": "5", "text": "fire again"}\n', "wb")
+        code, out, err = self.main("run", self.setup_path, "--input", src, "--no-cache")
+        rows = self.rows(out)
+        errors = [r for r in rows if r["error"]]
+        self.assertEqual(len(errors), 2)
+        self.assertTrue(any("line 3" in r["error"] for r in errors))
+        self.assertTrue(any("line 4" in r["error"] for r in errors))
+        self.assertTrue(all(r["route"] == "review" for r in errors))
+        self.assertEqual([r["id"] for r in rows if not r["error"]], ["1", "5"])
+
+    def test_run_csv_and_dir_inputs(self):
+        src = self.write("in.csv", "id,text\n1,fire\n2,spam\n")
+        code, out, err = self.main("run", self.setup_path, "--input", src, "--no-cache")
+        self.assertEqual([r["route"] for r in self.rows(out)], ["pass", "reject"])
+        folder = os.path.join(self.dir.name, "posts")
+        os.mkdir(folder)
+        for name, text in (("b.txt", "spam"), ("a.md", "fire")):
+            with open(os.path.join(folder, name), "w") as f:
+                f.write(text)
+        code, out, err = self.main("run", self.setup_path, "--input", folder, "--no-cache")
+        self.assertEqual([(r["id"], r["route"]) for r in self.rows(out)],
+                         [("a.md", "pass"), ("b.txt", "reject")])
+
+    def test_run_uses_cache_second_time(self):
+        src = self.write("in.jsonl", '{"id": "1", "text": "fire"}\n')
+        self.main("run", self.setup_path, "--input", src)
+        n = len(self.fake.requests)
+        code, out, err = self.main("run", self.setup_path, "--input", src)
+        self.assertEqual(len(self.fake.requests), n)
+        self.assertTrue(self.rows(out)[0]["cached"])
+
+    def test_run_failed_item_goes_to_review(self):
+        self.fake.script["/a"] = [(503, {"error": "down"})]
+        src = self.write("in.jsonl", '{"id": "1", "text": "fire"}\n')
+        code, out, err = self.main("run", self.setup_path, "--input", src, "--no-cache")
+        self.assertEqual(code, 4)
+        row = self.rows(out)[0]
+        self.assertEqual(row["route"], "review")
+        self.assertIn("503", row["error"])
+
+    def test_dry_run_sends_nothing_and_needs_no_key(self):
+        del self.setup["privacy"]
+        self.setup["providers"]["a"]["key_env"] = ["DECIDE_TEST_UNSET_KEY"]
+        self.save()
+        src = self.write("in.jsonl", '{"id": "1", "text": "fire"}\n')
+        code, out, err = self.main("run", self.setup_path, "--input", src, "--dry-run")
+        self.assertEqual(code, 0, err)
+        self.assertEqual(json.loads(out)["model"], "jev-1.13-free")
+        self.assertEqual(self.fake.requests, [])
+
+    def test_run_refuses_without_privacy_exit_3(self):
+        del self.setup["privacy"]
+        self.save()
+        src = self.write("in.jsonl", '{"id": "1", "text": "fire"}\n')
+        code, out, err = self.main("run", self.setup_path, "--input", src)
+        self.assertEqual(code, 3)
+        self.assertIn("privacy", err)
+        self.assertEqual(self.fake.requests, [])
+
+    def test_ask_requires_setup_or_test_data(self):
+        code, out, err = self.main("ask", "--provider", "typesafe", "--state", "x", "--yes", "Urgent?")
+        self.assertEqual(code, 3)
+        self.fake.script["/a"] = [(200, {"model": "m", "usage": {},
+                                         "answers": {"answer": {"type": "noul", "noul": 0.97}}})]
+        code, out, err = self.main("ask", self.setup_path, "--state", "fire", "--yes", "Urgent?")
+        self.assertEqual(code, 0, err)
+        self.assertIn("Yes", out)
+        self.assertIn("%", out)
+
+    def test_ask_choice_and_score_plain_language(self):
+        def reply(h, body):
+            q = body["questions"]
+            name = list(q)[0]
+            if q[name]["type"] == "choice":
+                a = {"type": "choice", "choice": "ops", "confidence": 0.9,
+                     "probabilities": {"ops": 0.97, "billing": 0.03}}
+            else:
+                a = {"type": "score", "score": 2.6, "confidence": 0.82,
+                     "probabilities": {}, "legend": {}}
+            return {"model": "m", "answers": {name: a}, "usage": {}}
+        self.fake.script["/a"] = [(200, reply)]
+        code, out, err = self.main("ask", self.setup_path, "--state", "x",
+                                   "--choice", "ops=outages", "billing=payments")
+        self.assertEqual(code, 0, err)
+        self.assertIn("ops (97%)", out)
+        self.assertIn("billing (3%)", out)
+        code, out, err = self.main("ask", self.setup_path, "--state", "x",
+                                   "--score", "junk", "weak", "plausible", "strong")
+        self.assertIn("2.6", out)
+
+    def test_providers_lists_names_only(self):
+        os.environ["OPENROUTER_API_KEY"] = "sk-or-secret-value"
+        self.addCleanup(os.environ.pop, "OPENROUTER_API_KEY", None)
+        code, out, err = self.main("providers")
+        self.assertEqual(code, 0)
+        self.assertIn("openrouter", out)
+        self.assertIn("OPENROUTER_API_KEY", out)
+        self.assertNotIn("sk-or-secret-value", out + err)
+
+    def test_privacy_subcommand_writes_entry(self):
+        code, out, err = self.main("privacy", self.setup_path, "--provider", "b",
+                                   "--policy-url", "https://example.com/p", "--summary", "30 days")
+        self.assertEqual(code, 0, err)
+        entry = decide.load_setup(self.setup_path)["privacy"]["b"]
+        self.assertEqual(entry["policy_url"], "https://example.com/p")
+
+    def test_version_flag(self):
+        with self.assertRaises(SystemExit):
+            with contextlib.redirect_stdout(io.StringIO()) as out:
+                decide.main(["--version"])
+        self.assertIn("0.1.0", out.getvalue())
+
+
 if __name__ == "__main__":
     unittest.main()
