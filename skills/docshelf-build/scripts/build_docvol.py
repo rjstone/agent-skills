@@ -120,7 +120,8 @@ def _db(plan: dict, pages_html: Dict[str, str], errors: Dict[str, str],
         uri = p["uri"]
         url = urllib.parse.urljoin(live, uri) if live else None
         if p["keep"] == "full" and uri in pages_html:
-            db[key] = rewrite_links(main_content(pages_html[uri]), key, uri, keys_by_uri, live)
+            content = main_content(pages_html[uri], doxygen=plan.get("kind") == "doxygen")
+            db[key] = rewrite_links(content, key, uri, keys_by_uri, live)
             continue
         old = previous.get(key)
         if p["keep"] == "full" and isinstance(old, str) and STUB_CLASS not in old:

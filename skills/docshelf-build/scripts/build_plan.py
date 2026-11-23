@@ -11,11 +11,15 @@ from collections import Counter, defaultdict
 from typing import Dict, List, Optional, Tuple
 from urllib.parse import urlsplit
 
+from build_docvol import role_label
+from build_doxygen import dropped_page
 from build_inventory import InvEntry, page_key, split_uri
 from build_llms import Tree
 
 FORMAT = 1
 CARRIED = ("signals", "fetched", "fetch_error")
+# Doxygen entries that only name a page; a page with nothing else is a stub
+DOXYGEN_HEADINGS = frozenset({"doxygen:File", "doxygen:Module", "doxygen:Namespace", "std:doc"})
 
 
 def _is_url(source: str) -> bool:
@@ -54,10 +58,14 @@ def _choose(key: str, rule_keep: str, rule_why: str, stored: List[List[str]],
 
 def make_plan(source: str, inv_sha256: str, header: dict, entries: List[InvEntry],
               overrides: List[Tuple[str, str]], old: Optional[dict] = None,
-              reset: bool = False, base_url: Optional[str] = None) -> dict:
+              reset: bool = False, base_url: Optional[str] = None,
+              kind: str = "sphinx") -> dict:
     """A plan for entries. With old, its overrides come first (unless reset),
     its base_url is kept unless given, and its "manual" pages keep their
-    choice; pages no longer in the inventory are dropped."""
+    choice; pages no longer in the inventory are dropped. kind "doxygen"
+    swaps the page rule (pages documenting members are full), the titles
+    and drops Doxygen's index and listing pages."""
+    doxygen = kind == "doxygen"
     stored = [] if (old is None or reset) else [list(o) for o in old.get("overrides", [])]
     cli = [[mode, pat] for mode, pat in overrides]
     all_overrides = stored + cli
@@ -69,12 +77,19 @@ def make_plan(source: str, inv_sha256: str, header: dict, entries: List[InvEntry
     roles: Dict[str, set] = defaultdict(set)
     uris: Dict[str, str] = {}
     titles: Dict[str, str] = {}
+    types: Counter = Counter()
     for e in entries:
-        page_uri, _ = split_uri(e.uri)
+        page_uri, anchor = split_uri(e.uri)
+        if doxygen and dropped_page(page_uri):
+            continue
         key = page_key(page_uri)
         roles[key].add(e.role)
         uris.setdefault(key, page_uri)
-        if e.role == "std:doc":
+        if doxygen:
+            types[role_label(e.role)] += 1
+            if anchor is None and e.role in DOXYGEN_HEADINGS | {"doxygen:Class", "doxygen:Struct"}:
+                titles.setdefault(key, e.name)
+        elif e.role == "std:doc":
             titles[key] = e.name if e.dispname == "-" else e.dispname
 
     old_pages = (old or {}).get("pages", {})
@@ -82,13 +97,18 @@ def make_plan(source: str, inv_sha256: str, header: dict, entries: List[InvEntry
     for key in sorted(roles):
         if _generated(key):
             continue
-        domain = sorted(r for r in roles[key] if not r.startswith("std:"))
-        keep, why = ("full", "roles: " + ", ".join(domain)) if domain \
-            else ("stub", "roles: std only")
+        if doxygen:
+            members = sorted(roles[key] - DOXYGEN_HEADINGS)
+            keep, why = ("full", "roles: " + ", ".join(members)) if members \
+                else ("stub", "roles: headings only")
+        else:
+            domain = sorted(r for r in roles[key] if not r.startswith("std:"))
+            keep, why = ("full", "roles: " + ", ".join(domain)) if domain \
+                else ("stub", "roles: std only")
         prev = old_pages.get(key)
         keep, why = _choose(key, keep, why, stored, cli, prev if not reset or
                             (prev or {}).get("why") == "manual" else None)
-        if "/" in key:
+        if "/" in key and not doxygen:
             group = _group(key)
             section = titles.get(group + "/index", group)
         else:
@@ -96,11 +116,15 @@ def make_plan(source: str, inv_sha256: str, header: dict, entries: List[InvEntry
         pages[key] = {"keep": keep, "title": titles.get(key, key), "section": section,
                       "description": (prev or {}).get("description"), "why": why,
                       "uri": uris[key]}
-    return {"format": FORMAT, "kind": "sphinx", "source": source, "base_url": live,
+    plan = {"format": FORMAT, "kind": kind, "source": source, "base_url": live,
             "inventory_sha256": inv_sha256,
             "project": header.get("project", ""), "version": header.get("version", ""),
-            "entry_count": len(entries), "rule": "roles",
+            "entry_count": len(entries), "rule": "doxygen-members" if doxygen else "roles",
             "overrides": all_overrides, "pages": pages}
+    if doxygen:
+        plan["doxygen"] = header.get("doxygen", "")
+        plan["types"] = dict(types.most_common())
+    return plan
 
 
 def summarize(plan: dict, old: Optional[dict]) -> List[str]:
@@ -114,6 +138,11 @@ def summarize(plan: dict, old: Optional[dict]) -> List[str]:
     for key, p in pages.items():
         groups[_group(key)][p["keep"]] += 1
     biggest = sorted(groups, key=lambda g: (-sum(groups[g].values()), g))
+    if plan.get("kind") == "doxygen":
+        lines.append("index: %s (Doxygen %s)" % (plan.get("index", "?"),
+                                                plan.get("doxygen") or "version unknown"))
+        lines.append("  " + ", ".join("%s %d" % t for t in plan.get("types", {}).items()))
+        biggest = []
     for g in biggest[:5]:
         lines.append("  %s: %d full, %d stub" % (g, groups[g]["full"], groups[g]["stub"]))
     if plan.get("archive"):

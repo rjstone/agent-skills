@@ -42,8 +42,9 @@
     },
     {
       "name": "docshelf-build",
-      "version": "0.4.1",
+      "version": "0.5.0",
       "files": [
+        "BUILD-doxygen.md",
         "BUILD-llmstxt.md",
         "BUILD-sphinx.md",
         "SKILL.md",
@@ -52,6 +53,7 @@
         "scripts/build_core.py",
         "scripts/build_detect.py",
         "scripts/build_docvol.py",
+        "scripts/build_doxygen.py",
         "scripts/build_fetch.py",
         "scripts/build_html.py",
         "scripts/build_inventory.py",

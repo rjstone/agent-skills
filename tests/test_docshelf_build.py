@@ -43,6 +43,10 @@ from build_classify import (RULES_ID, apply_choices, parse_choices, bucket, coun
                             rule_choice, run_rules)
 from build_llms import LlmsPage, Tree, is_llms_source, parse_index, read_tree, url_key  # noqa: E402
 from build_markdown import front_matter, md_to_html, page_signals, slugify  # noqa: E402
+import build_doxygen  # noqa: E402
+from build_doxygen import (DoxygenFormatError, js_value, member_name, page_uri,  # noqa: E402
+                           menu_pages, parse_list_page, parse_member_page, read_menu_index,
+                           read_doxygen, read_search_index, site_header)
 
 DOCSHELF = os.path.join(REPO_ROOT, "skills", "docshelf", "scripts", "docshelf.py")
 
@@ -2946,6 +2950,653 @@ class DeferredMinorsTests(unittest.TestCase):
         db._split_single_page(None, uris, html, errors)
         self.assertIn("A", html["a.html"])
         self.assertEqual(list(errors), ["b.html"])
+
+
+class DoxygenJsTests(unittest.TestCase):
+    def test_search_data(self):
+        text = "var searchData=\n[\n  ['_5fget_0',['_get',['../a.html#x',1,'ns::A::_get()']]]\n];\n"
+        self.assertEqual(js_value(text, "searchData"),
+                         [["_5fget_0", ["_get", ["../a.html#x", 1, "ns::A::_get()"]]]])
+
+    def test_menudata_bare_keys_and_comment(self):
+        text = '/* @licstart x */ var menudata={children:[{text:"Main Page",url:"index.html"}]}'
+        self.assertEqual(js_value(text, "menudata"),
+                         {"children": [{"text": "Main Page", "url": "index.html"}]})
+
+    def test_escapes(self):
+        self.assertEqual(js_value(r"var v=['it\'s','a\\b','\u00e9'];", "v"), ["it's", "a\\b", "\u00e9"])
+
+    def test_object_with_int_keys(self):
+        self.assertEqual(js_value('var s =\n{\n  0: "all",\n  1: "classes"\n};', "s"),
+                         {"0": "all", "1": "classes"})
+
+    def test_html_instead_of_js(self):
+        with self.assertRaisesRegex(DoxygenFormatError, "blocking automated requests"):
+            js_value("<!DOCTYPE html><title>Just a moment...</title>", "searchData")
+
+    def test_missing_var_and_garbage(self):
+        for text in ("var other=[1];", "var searchData=[1,", "var searchData=[foo()]"):
+            with self.assertRaises(DoxygenFormatError):
+                js_value(text, "searchData")
+
+
+class DoxygenSourceTests(unittest.TestCase):
+    BASE = "https://docs.example.org/docs/"
+
+    def src(self, responses, robots=None):
+        return build_fetch.open_source(self.BASE, opener=fake_opener(responses, robots),
+                                       sleep=lambda s: None)
+
+    def test_url_200_and_404(self):
+        self.assertEqual(self.src([(200, b"x")]).file("search/searchdata.js"), b"x")
+        self.assertIsNone(self.src([(404, b"")]).file("search/searchdata.js"))
+
+    def test_url_other_status_is_network_error(self):
+        with self.assertRaises(CLIError) as cm:
+            self.src([(503, b"")] * 4).file("menudata.js")
+        self.assertEqual(cm.exception.code, 4)
+        self.assertIn("menudata.js", str(cm.exception))
+
+    def test_url_blocked_by_robots(self):
+        with self.assertRaises(FetchError):
+            self.src([], robots="User-agent: *\nDisallow: /docs/search/").file("search/x.js")
+
+    def test_local(self):
+        with tempfile.TemporaryDirectory() as root:
+            write(root, "search/searchdata.js", "v")
+            s = build_fetch.open_source(root)
+            self.assertEqual(s.file("search/searchdata.js"), b"v")
+            self.assertIsNone(s.file("nope.js"))
+            self.assertIsNone(s.file("../outside"))
+
+
+DOXY_SEARCHDATA = """var indexSectionsWithContent =
+{
+  0: "abg",
+  1: "gm",
+  2: "g",
+  3: "abcdefghijk",
+  4: "g",
+  5: "i",
+  6: "g"
+};
+var indexSectionNames =
+{
+  0: "all",
+  1: "classes",
+  2: "files",
+  3: "functions",
+  4: "defines",
+  5: "groups",
+  6: "pages"
+};
+var indexSectionLabels =
+{
+  0: "All",
+  1: "Data Structures",
+  2: "Files",
+  3: "Functions",
+  4: "Macros",
+  5: "Modules",
+  6: "Pages"
+};
+"""
+
+
+def doxy_search_site():
+    """A hand-made Doxygen search index: rel path -> bytes."""
+    sd = lambda rows: ("var searchData=\n[\n  " + ",\n  ".join(rows) + "\n];\n").encode()
+    return {
+        "search/searchdata.js": DOXY_SEARCHDATA.encode(),
+        "search/classes_0.js": sd(["['glfwimage_0',['GLFWimage',['../structGLFWimage.html',1,'']]]"]),
+        "search/classes_1.js": sd(["['mat_0',['Mat',['../classcv_1_1Mat.html',1,'cv']]]"]),
+        "search/files_0.js": sd(["['glfw3_2eh_0',['glfw3.h',['../glfw3_8h.html',1,'']]]"]),
+        "search/functions_0.js": sd([
+            "['_5fget_0',['_get',['../a.html#x',1,'ns::A::_get()'],"
+            "['../a.html#y',1,'ns::A::_get(const std::vector&lt; int &gt; &amp;v)']]]"]),
+        "search/functions_a.js": sd([
+            "['glfwkey_0',['glfwKey',['../group__input.html#ga1',1,'glfw3.h'],"
+            "['../group__input.html#ga1',1,'glfw3.h']]]"]),
+        "search/defines_0.js": sd([
+            "['glfw_5fkey_5fescape_0',['GLFW_KEY_ESCAPE',['../group__keys.html#gaac',1,'glfw3.h']]]"]),
+        "search/groups_0.js": sd(["['input_0',['Input reference',['../group__input.html',1,'']]]"]),
+        "search/pages_0.js": sd(["['getting_0',['Getting started',['../quick_guide.html',1,'']]]",
+                                 "['started_1',['started',['../quick_guide.html',1,'Getting started']]]"]),
+        "search/all_0.js": sd([
+            "['glfw_5fkey_5fa_0',['GLFW_KEY_A',['../group__input.html#k1',1,'glfw3.h']]]",
+            "['glfwkey_1',['glfwKey',['../group__input.html#ga1',1,'glfw3.h']]]",
+            "['intro_2',['Introduction',['../quick_guide.html#intro',1,'Getting started']]]",
+            "['helper_3',['helper',['../group__input.html#h1',1,'glfw3.h']]]",
+            "['x_4',['x',['../x.html',1,'']]]"]),
+    }
+
+
+class DoxygenSearchIndexTests(unittest.TestCase):
+    def read(self, files):
+        asked = []
+
+        def get(rel):
+            asked.append(rel)
+            return files.get(rel)
+        return read_search_index(get), asked
+
+    def entry(self, idx, name):
+        found = [e for e in idx.entries if e.name == name]
+        self.assertTrue(found, name)
+        return found
+
+    def test_hex_file_names_and_bare_c_names(self):
+        idx, asked = self.read(doxy_search_site())
+        self.assertEqual(self.entry(idx, "glfwKey"),
+                         [InvEntry("glfwKey", "doxygen:Function", 1, "group__input.html#ga1", "-")])
+        self.assertIn("search/functions_a.js", asked)
+        self.assertNotIn("search/functions_10.js", asked)
+        self.assertIn("search/all_0.js", asked)
+        self.assertEqual(idx.kind, "search")
+
+    def test_overloads_and_entities(self):
+        idx, _ = self.read(doxy_search_site())
+        got = self.entry(idx, "ns::A::_get")
+        self.assertEqual([(e.uri, e.dispname, e.role) for e in got],
+                         [("a.html#x", "ns::A::_get()", "doxygen:Function"),
+                          ("a.html#y", "ns::A::_get(const std::vector< int > &v)", "doxygen:Function")])
+
+    def test_types(self):
+        idx, _ = self.read(doxy_search_site())
+        self.assertEqual(self.entry(idx, "cv::Mat")[0].role, "doxygen:Class")
+        self.assertEqual(self.entry(idx, "GLFWimage")[0].role, "doxygen:Struct")
+        self.assertEqual(self.entry(idx, "GLFW_KEY_ESCAPE")[0].role, "doxygen:Macro")
+        self.assertEqual(self.entry(idx, "glfw3.h")[0].role, "doxygen:File")
+        self.assertEqual(self.entry(idx, "Input reference")[0].role, "doxygen:Module")
+        self.assertEqual(self.entry(idx, "Getting started")[0].role, "std:doc")
+
+    def test_all_only_members(self):
+        idx, _ = self.read(doxy_search_site())
+        self.assertEqual(self.entry(idx, "GLFW_KEY_A"),
+                         [InvEntry("GLFW_KEY_A", "doxygen:Macro", 1, "group__input.html#k1", "-")])
+        self.assertEqual(self.entry(idx, "helper")[0].role, "doxygen:Symbol")
+        self.assertEqual(len(self.entry(idx, "glfwKey")), 1)
+        self.assertFalse([e for e in idx.entries if e.name in ("Introduction", "x")])
+
+    def test_title_keywords_use_full_title(self):
+        idx, _ = self.read(doxy_search_site())
+        self.assertEqual([e.name for e in idx.entries if e.uri == "quick_guide.html"], ["Getting started"])
+
+    def test_missing_files_warn(self):
+        idx, _ = self.read(doxy_search_site())
+        missing = [w for w in idx.warnings if "functions_" in w]
+        self.assertEqual(len(missing), 9)
+        self.assertIn("search/searchdata.js", [rel for rel, _ in idx.files])
+
+    def test_blocked_file_warns(self):
+        files = doxy_search_site()
+        files["search/functions_0.js"] = b"<html>blocked</html>"
+        idx, _ = self.read(files)
+        self.assertTrue([w for w in idx.warnings if "blocking automated requests" in w])
+        self.entry(idx, "glfwKey")
+
+    def test_no_searchdata(self):
+        with self.assertRaises(DoxygenFormatError):
+            self.read({})
+
+    def test_page_uri(self):
+        self.assertEqual(page_uri("../group__window.html#ga5c", "search/"), "group__window.html#ga5c")
+        self.assertEqual(page_uri("classwx_window.html#a9", ""), "classwx_window.html#a9")
+
+    def test_member_name(self):
+        ns = {"glfw3.h", "Input reference"}
+        self.assertEqual(member_name("glfwKey", "glfw3.h", "doxygen:Function", ns), ("glfwKey", "-"))
+        self.assertEqual(member_name("f", "Input reference", "doxygen:Function", ns), ("f", "-"))
+        self.assertEqual(member_name("f", "util.hpp", "doxygen:Function", set()), ("f", "-"))
+        self.assertEqual(member_name("SetSize", "wxWindow", "doxygen:Function", ns),
+                         ("wxWindow::SetSize", "-"))
+        self.assertEqual(member_name("_A", "cv::_A::_A(int (*f)(int)) const", "doxygen:Function", ns),
+                         ("cv::_A::_A", "cv::_A::_A(int (*f)(int)) const"))
+        self.assertEqual(member_name("x", "", "doxygen:Variable", ns), ("x", "-"))
+
+
+def doxy_page(contents, nav=""):
+    return ('<html><body><div id="top"><a href="nav_target.html">Navigation</a>%s</div>'
+            '<div class="contents">%s</div></body></html>' % (nav, contents))
+
+
+DOXY_MENU = {"children": [
+    {"text": "Main Page", "url": "index.html"},
+    {"text": "Related Pages", "url": "pages.html"},
+    {"text": "Categories", "url": "modules.html"},
+    {"text": "Classes", "url": "annotated.html", "children": [
+        {"text": "Class List", "url": "annotated.html"},
+        {"text": "Class Index", "url": "classes.html"},
+        {"text": "Class Members", "url": "functions.html", "children": [
+            {"text": "All", "url": "functions.html", "children": [
+                {"text": "a", "url": "functions_a.html#index_a"}]},
+            {"text": "Functions", "url": "functions_func.html", "children": [
+                {"text": "s", "url": "functions_func_s.html#index_s"}]}]}]},
+    {"text": "Files", "url": "files.html", "children": [
+        {"text": "File Members", "url": "globals.html", "children": [
+            {"text": "Macros", "url": "globals_defs.html", "children": [
+                {"text": "e", "url": "globals_defs_e.html#index_e"},
+                {"text": "e", "url": "globals_defs_e.html#index_e"},
+                {"text": "w", "url": "globals_defs_w.html#index_w"}]}]}]}]}
+
+DOXY_ANNOTATED = doxy_page(
+    '<div class="textblock">Here are the classes:</div><table class="directory">'
+    '<tr><td class="entry"><a class="el" href="classwx_window.html">wxWindow</a></td>'
+    '<td class="desc">Base, see <a class="el" href="overview_windows.html">Window overview</a></td></tr>'
+    '<tr><td class="entry"><a class="el" href="structwx_point.html">wxPoint</a></td>'
+    '<td class="desc">A point</td></tr></table>')
+DOXY_FUNC_S = doxy_page(
+    '<h3><a id="index_s"></a>- s -</h3><ul>'
+    '<li>SetSize()\n: <a class="el" href="classwx_window.html#a9">wxWindow</a>\n'
+    ', <a class="el" href="classwx_frame.html#a3">wxFrame</a>\n</li></ul>')
+DOXY_DEFS_W = doxy_page(
+    '<h3><a id="index_w"></a>- w -</h3><ul>'
+    '<li>wxUSE_X\n: <a class="el" href="defs_8h.html#a1">defs.h</a>\n</li></ul>')
+
+
+def doxy_menu_site():
+    return {
+        "menudata.js": ("/* @licstart */ var menudata=" + json.dumps(DOXY_MENU)).encode(),
+        "annotated.html": DOXY_ANNOTATED.encode(),
+        "files.html": doxy_page('<table class="directory"><tr><td class="entry">'
+                                '<a class="el" href="defs_8h.html">defs.h</a></td></tr></table>').encode(),
+        "functions_func.html": doxy_page("<ul></ul>").encode(),
+        "functions_func_s.html": DOXY_FUNC_S.encode(),
+        "globals_defs.html": doxy_page("<ul></ul>").encode(),
+        "globals_defs_e.html": doxy_page("<ul></ul>").encode(),
+        "globals_defs_w.html": DOXY_DEFS_W.encode(),
+    }
+
+
+class DoxygenMenuIndexTests(unittest.TestCase):
+    def read(self, files):
+        logged = []
+        idx = read_menu_index(files.get, log=logged.append)
+        return idx, logged
+
+    def names(self, entries):
+        return sorted((e.name, e.role, e.uri) for e in entries)
+
+    def test_menu_pages(self):
+        pages = menu_pages(DOXY_MENU)
+        self.assertEqual(pages.count(("globals_defs_e.html", "doxygen:Macro")), 1)
+        self.assertIn(("functions_func_s.html", "doxygen:Function"), pages)
+        self.assertIn(("annotated.html", "doxygen:Class"), pages)
+        self.assertIn(("modules.html", "doxygen:Module"), pages)
+        self.assertIn(("pages.html", "std:doc"), pages)
+        rels = [rel for rel, _ in pages]
+        for skipped in ("functions.html", "functions_a.html", "classes.html", "index.html"):
+            self.assertNotIn(skipped, rels)
+
+    def test_member_page_owners(self):
+        got = parse_member_page(DOXY_FUNC_S, "doxygen:Function", set())
+        self.assertEqual(self.names(got), [
+            ("wxFrame::SetSize", "doxygen:Function", "classwx_frame.html#a3"),
+            ("wxWindow::SetSize", "doxygen:Function", "classwx_window.html#a9")])
+
+    def test_member_page_file_scope_is_bare(self):
+        got = parse_member_page(DOXY_DEFS_W, "doxygen:Macro", {"defs.h"})
+        self.assertEqual(self.names(got), [("wxUSE_X", "doxygen:Macro", "defs_8h.html#a1")])
+
+    def test_navigation_outside_contents_ignored(self):
+        got = parse_member_page(doxy_page("<ul></ul>", '<ul><li>x : <a href="y.html#1">Y</a></li></ul>'),
+                                "doxygen:Function", set())
+        self.assertEqual(got, [])
+
+    def test_list_page(self):
+        got = parse_list_page(DOXY_ANNOTATED, "doxygen:Class")
+        self.assertEqual(self.names(got), [
+            ("wxPoint", "doxygen:Struct", "structwx_point.html"),
+            ("wxWindow", "doxygen:Class", "classwx_window.html")])
+
+    def test_read_with_menudata(self):
+        idx, logged = self.read(doxy_menu_site())
+        self.assertEqual(idx.kind, "menu")
+        names = self.names(idx.entries)
+        self.assertIn(("wxWindow::SetSize", "doxygen:Function", "classwx_window.html#a9"), names)
+        self.assertIn(("wxUSE_X", "doxygen:Macro", "defs_8h.html#a1"), names)
+        self.assertTrue([m for m in logged if re.search(r"reading \d+ Doxygen index pages", m)])
+        self.assertTrue([w for w in idx.warnings if "modules.html" in w])
+
+    def test_read_without_menudata(self):
+        files = doxy_menu_site()
+        del files["menudata.js"]
+        files["globals_defs.html"] = doxy_page(
+            '<div class="qindex"><a href="globals_defs_w.html#index_w">w</a></div><ul></ul>').encode()
+        files["functions_func.html"] = doxy_page(
+            '<div class="qindex"><a href="functions_func_s.html#index_s">s</a></div><ul></ul>').encode()
+        idx, _ = self.read(files)
+        names = self.names(idx.entries)
+        self.assertIn(("wxWindow::SetSize", "doxygen:Function", "classwx_window.html#a9"), names)
+        self.assertIn(("wxUSE_X", "doxygen:Macro", "defs_8h.html#a1"), names)
+
+    def test_nothing_found(self):
+        with self.assertRaises(DoxygenFormatError):
+            self.read({})
+
+
+
+def dx(name, role, uri, disp="-"):
+    return InvEntry(name, role, 1, uri, disp)
+
+
+class DoxygenPlanTests(unittest.TestCase):
+    def test_site_header(self):
+        h = site_header('<!-- Generated by Doxygen 1.9.1 --><title>GLFW: Main</title>'
+                        '<div id="projectname">GLFW<span id="projectnumber">&#160;3.4.0</span></div>')
+        self.assertEqual(h, {"project": "GLFW", "version": "3.4.0", "doxygen": "1.9.1"})
+        h = site_header('<title>Documentation | wxWidgets</title>'
+                        '<span id="projectnumber">Version: 3.2.13</span>')
+        self.assertEqual((h["project"], h["version"]), ("wxWidgets", "3.2.13"))
+        self.assertEqual(site_header(""), {"project": "", "version": "", "doxygen": ""})
+
+    def plan(self, entries, overrides=()):
+        return make_plan("https://docs.example.org/api/", "sha", {"project": "Demo", "version": "1"},
+                         entries, list(overrides), kind="doxygen")
+
+    ENTRIES = [
+        dx("Input reference", "doxygen:Module", "group__input.html"),
+        dx("glfwKey", "doxygen:Function", "group__input.html#ga1"),
+        dx("glfw3.h", "doxygen:File", "glfw3_8h.html"),
+        dx("Getting started", "std:doc", "quick_guide.html"),
+        dx("main.md", "doxygen:File", "main_8md.html"),
+        dx("src", "doxygen:File", "dir_abc.html"),
+        dx("cv::Mat", "doxygen:Class", "classcv_1_1Mat.html"),
+    ]
+
+    def test_rule(self):
+        plan = self.plan(self.ENTRIES)
+        pages = plan["pages"]
+        self.assertEqual(plan["kind"], "doxygen")
+        self.assertEqual(plan["rule"], "doxygen-members")
+        self.assertEqual(pages["group__input"]["keep"], "full")
+        self.assertEqual(pages["group__input"]["title"], "Input reference")
+        self.assertEqual(pages["glfw3_8h"]["keep"], "stub")
+        self.assertEqual(pages["quick_guide"]["keep"], "stub")
+        self.assertEqual(pages["classcv_1_1Mat"]["keep"], "full")
+        self.assertNotIn("main_8md", pages)
+        self.assertNotIn("dir_abc", pages)
+        self.assertEqual(plan["types"]["Function"], 1)
+
+    def test_override(self):
+        plan = self.plan(self.ENTRIES, [("stub", "group__*")])
+        self.assertEqual(plan["pages"]["group__input"]["keep"], "stub")
+
+    def test_sphinx_unchanged(self):
+        plan = make_plan("https://x/", "s", {}, [InvEntry("f", "py:function", 1, "a.html#f", "-")], [])
+        self.assertEqual(plan["kind"], "sphinx")
+        self.assertEqual(plan["rule"], "roles")
+
+    def test_summary(self):
+        plan = self.plan(self.ENTRIES)
+        plan["index"] = "search"
+        text = "\n".join(summarize(plan, None))
+        self.assertIn("index: search", text)
+        self.assertIn("Function 1", text)
+
+    def test_read_doxygen_prefers_search_and_hashes(self):
+        files = doxy_search_site()
+        files.update(doxy_menu_site())
+        files["index.html"] = b'<div id="projectname">Demo</div>'
+        sha1, header, entries, idx = read_doxygen(files.get)
+        sha2, _, _, _ = read_doxygen(files.get)
+        self.assertEqual(idx.kind, "search")
+        self.assertEqual(sha1, sha2)
+        self.assertEqual(header["project"], "Demo")
+        self.assertTrue(entries)
+
+    def test_sha_ignores_page_noise(self):
+        files = doxy_menu_site()
+        sha1 = read_doxygen(files.get, log=lambda m: None)[0]
+        files["annotated.html"] = files["annotated.html"].replace(
+            b"</body>", b"<script>ray='a5eb'</script></body>")
+        self.assertEqual(read_doxygen(files.get, log=lambda m: None)[0], sha1)
+        files["globals_defs_w.html"] = DOXY_DEFS_W.replace("wxUSE_X", "wxUSE_Y").encode()
+        self.assertNotEqual(read_doxygen(files.get, log=lambda m: None)[0], sha1)
+
+    def test_read_doxygen_falls_back_to_menu(self):
+        files = doxy_menu_site()
+        files["search/searchdata.js"] = b"var nothing = 1;"
+        logged = []
+        _, _, _, idx = read_doxygen(files.get, log=logged.append)
+        self.assertEqual(idx.kind, "menu")
+        self.assertTrue([w for w in idx.warnings if "search index not readable" in w])
+
+
+DOXY_MEMBER = ('<a id="ga5c"></a><h2 class="memtitle">glfwCreateWindow()</h2>'
+               '<div class="memitem"><div class="memproto">GLFWwindow * glfwCreateWindow (int width)</div>'
+               '<div class="memdoc">Creates a window.</div></div>')
+DOXY_GRAPH = ('<div class="dynheader">Collaboration diagram:</div><div class="dyncontent">'
+              '<img src="g.png" usemap="#m" alt=""/><map name="m"><area href="x.html" alt="X"/></map></div>')
+
+
+def doxy_full_page(wrap=lambda x: x):
+    return ('<html><head><script>var x;</script></head><body>'
+            '<div id="top"><div id="main-menu">MenuText</div><div id="MSearchBox">SearchBoxText</div></div>'
+            '<div id="side-nav"><div id="nav-tree">TreeText</div></div>'
+            '<div id="doc-content">' + wrap(
+                '<div class="header"><div class="summary"><a href="#func-members">Functions</a></div>'
+                '<div class="headertitle"><div class="title">Window reference</div></div></div>'
+                '<div class="contents"><p>Brief. <a href="#details">More...</a></p>'
+                + DOXY_GRAPH + DOXY_MEMBER + '</div>') +
+            '<hr class="footer"/><address class="footer">Generated by doxygen 1.9.1</address>'
+            '</div></body></html>')
+
+
+class DoxygenHtmlTests(unittest.TestCase):
+    def check(self, out):
+        for want in ("Window reference", 'id="ga5c"', "glfwCreateWindow (int width)", "Creates a window."):
+            self.assertIn(want, out)
+        for unwanted in ("More...", "<map", "Collaboration diagram", "MenuText", "TreeText",
+                         "SearchBoxText", "Generated by", "var x"):
+            self.assertNotIn(unwanted, out)
+
+    def test_doxygen_page(self):
+        self.check(main_content(doxy_full_page(), doxygen=True))
+
+    def test_doxygen_awesome_wrappers(self):
+        self.check(main_content(doxy_full_page(lambda x: '<div class="wrap"><div>' + x + '</div></div>'),
+                                doxygen=True))
+
+    def test_sphinx_contents_topic_kept(self):
+        page = ('<html><body><div role="main"><div class="contents local topic"><ul><li>'
+                '<a href="#foo">foo</a></li></ul></div><dl class="py function"><dt id="foo">foo()</dt>'
+                '<dd>Does foo.</dd></dl></div></body></html>')
+        self.assertIn("Does foo.", main_content(page))
+
+    def test_non_doxygen_page_unchanged(self):
+        page = '<html><body><nav>N</nav><div role="main"><p>Body</p></div></body></html>'
+        self.assertEqual(main_content(page), "<p>Body</p>")
+
+
+DOXY_CLI_SEARCHDATA = """var indexSectionsWithContent = { 0: "dg", 1: "d", 2: "g" };
+var indexSectionNames = { 0: "all", 1: "functions", 2: "pages" };
+var indexSectionLabels = { 0: "All", 1: "Functions", 2: "Pages" };
+"""
+
+
+def doxy_fn_js(*names):
+    rows = ["['%s_0',['%s',['../group__demo.html#ga%d',1,'demo.h']]]" % (n.lower(), n, i)
+            for i, n in enumerate(names)]
+    return "var searchData=\n[\n  " + ",\n  ".join(rows) + "\n];\n"
+
+
+class DoxygenCliTests(unittest.TestCase):
+    run_main = CliTests.run_main
+
+    def setUp(self):
+        CliTests.setUp(self)
+        self.dox = os.path.join(self.tmp, "dox")
+        write(self.dox, "index.html", '<div id="projectname">Demo<span id="projectnumber">1.2</span></div>')
+        write(self.dox, "search/searchdata.js", DOXY_CLI_SEARCHDATA)
+        write(self.dox, "search/functions_0.js", doxy_fn_js("doThing"))
+        write(self.dox, "search/pages_0.js",
+              "var searchData=[['guide_0',['Guide page',['../guide.html',1,'']]]];")
+        write(self.dox, "group__demo.html", doxy_page(
+            '<a id="ga0"></a><h2 class="memtitle">doThing()</h2><div class="memdoc">Thing doc</div>'
+            '<a id="ga1"></a><h2 class="memtitle">doMore()</h2><div class="memdoc">More doc</div>'))
+        write(self.dox, "guide.html", doxy_page("<p>Long prose</p>"))
+
+    def entries(self, name="demo"):
+        return load(os.path.join(self.cache, "built", name), "index.json")["entries"]
+
+    def test_detect_search(self):
+        code, out, err = self.run_main("detect", self.dox)
+        self.assertEqual(code, 0, err)
+        for want in ("type: doxygen\n", "index: search\n", "read: BUILD-doxygen.md\n",
+                     "source: %s\n" % self.dox):
+            self.assertIn(want, out)
+
+    def test_detect_from_page(self):
+        code, out, err = self.run_main("detect", os.path.join(self.dox, "group__demo.html"))
+        self.assertEqual(code, 0, err)
+        self.assertIn("source: %s\n" % self.dox, out)
+
+    def test_sphinx_wins(self):
+        shutil.copy(os.path.join(self.site, "objects.inv"), self.dox)
+        code, out, err = self.run_main("detect", self.dox)
+        self.assertIn("type: sphinx\n", out)
+        self.assertIn("also: doxygen", out)
+
+    def test_build_search(self):
+        code, out, err = self.run_main("build", self.dox, "--name", "demo")
+        self.assertEqual(code, 0, err)
+        self.assertIn("index: search", out)
+        entries = self.entries()
+        self.assertIn({"name": "doThing", "type": "Function", "path": "group__demo#ga0"}, entries)
+        self.assertIn({"name": "Guide page", "type": "Guide", "path": "guide"}, entries)
+        db = load(self.docvol, "db.json")
+        self.assertIn("Thing doc", db["group__demo"])
+        self.assertNotIn("Long prose", db["guide"])
+        self.assertEqual(load_plan(self.plan_path)["index"], "search")
+
+    def test_rebuild_sees_changed_index(self):
+        self.assertEqual(self.run_main("build", self.dox, "--name", "demo")[0], 0)
+        write(self.dox, "search/functions_0.js", doxy_fn_js("doThing", "doMore"))
+        code, out, err = self.run_main("build", "demo")
+        self.assertEqual(code, 0, err)
+        self.assertIn("the inventory changed", out)
+        self.assertIn({"name": "doMore", "type": "Function", "path": "group__demo#ga1"}, self.entries())
+
+    def test_build_source_reads_index_once(self):
+        calls = []
+        real = build_fetch.Source.file
+
+        def counting(src, rel):
+            calls.append(rel)
+            return real(src, rel)
+        with mock.patch.object(build_fetch.Source, "file", counting):
+            code, out, err = self.run_main("build", self.dox, "--name", "demo")
+        self.assertEqual(code, 0, err)
+        self.assertEqual(calls.count("search/functions_0.js"), 1)
+        self.assertNotIn("the inventory changed", out)
+
+    def test_build_menu(self):
+        menu = os.path.join(self.tmp, "menu")
+        write(menu, "menudata.js", 'var menudata={children:[{text:"Functions",url:"globals_func.html"}]}')
+        write(menu, "globals_func.html", doxy_page(
+            '<ul><li>doThing()\n: <a class="el" href="demo_8h.html#a1">demo.h</a>\n</li></ul>'))
+        write(menu, "demo_8h.html", doxy_page('<a id="a1"></a><h2 class="memtitle">doThing()</h2><p>T</p>'))
+        code, out, err = self.run_main("build", menu, "--name", "demo")
+        self.assertEqual(code, 0, err)
+        self.assertIn("index: menu", out)
+        self.assertIn({"name": "doThing", "type": "Function", "path": "demo_8h#a1"}, self.entries())
+
+    def test_neither(self):
+        empty = os.path.join(self.tmp, "empty")
+        os.makedirs(empty)
+        code, _, err = self.run_main("plan", empty, "--name", "demo")
+        self.assertNotEqual(code, 0)
+        self.assertIn("objects.inv", err)
+
+
+
+def doxy_url_opener(files, base="https://docs.example.org/docs/", robots=None, status=None):
+    """An opener over {rel: bytes} under base; status maps rel -> HTTP code."""
+    status = status or {}
+
+    def opener(url):
+        opener.urls.append(url)
+        if url.endswith("/robots.txt"):
+            return (404, b"") if robots is None else (200, robots.encode())
+        rel = url[len(base):] if url.startswith(base) else None
+        if rel in status:
+            return (status[rel], b"")
+        if rel is not None and rel in files:
+            return (200, files[rel])
+        return (404, b"")
+    opener.urls = []
+    return opener
+
+
+class DoxygenReviewFixTests(unittest.TestCase):
+    BASE = "https://docs.example.org/docs/"
+
+    def src(self, files, **kw):
+        return build_fetch.open_source(self.BASE, opener=doxy_url_opener(files, self.BASE, **kw),
+                                       sleep=lambda s: None)
+
+    def read(self, files, **kw):
+        get = docshelf_build._cached_getter(self.src(files, **kw))
+        return read_doxygen(get, log=lambda m: None)
+
+    def test_robots_blocked_search_falls_back_to_menu(self):
+        files = doxy_search_site()
+        files.update(doxy_menu_site())
+        _, _, _, idx = self.read(files, robots="User-agent: *\nDisallow: /docs/search/")
+        self.assertEqual(idx.kind, "menu")
+        self.assertTrue([w for w in idx.warnings if "robots.txt" in w])
+
+    def test_one_403_is_a_warning(self):
+        _, _, entries, idx = self.read(doxy_search_site(), status={"search/functions_a.js": 403})
+        self.assertTrue([w for w in idx.warnings if "functions_a.js" in w and "403" in w])
+        self.assertTrue([e for e in entries if e.name == "GLFW_KEY_ESCAPE"])
+
+    def test_all_letter_files_blocked_says_so(self):
+        files = {rel: (body if rel == "search/searchdata.js" else b"<html>Just a moment...</html>")
+                 for rel, body in doxy_search_site().items()}
+        with self.assertRaisesRegex(DoxygenFormatError, "blocking automated requests"):
+            self.read(files)
+
+    def test_menu_challenge_pages_say_so(self):
+        files = {rel: (body if rel == "menudata.js" else b"<html>Just a moment...</html>")
+                 for rel, body in doxy_menu_site().items()}
+        with self.assertRaisesRegex(DoxygenFormatError, "blocking automated requests"):
+            self.read(files)
+
+    def test_member_named_like_end_of_class(self):
+        self.assertEqual(member_name("fd", "pollfd", "doxygen:Variable", set()), ("pollfd::fd", "-"))
+        self.assertEqual(member_name("image", "GLFWimage", "doxygen:Variable", set()),
+                         ("GLFWimage::image", "-"))
+        self.assertEqual(member_name("get", "ns::A::get", "doxygen:Function", set()), ("ns::A::get", "-"))
+
+    def test_external_links_skipped(self):
+        files = doxy_search_site()
+        files["search/functions_0.js"] = (
+            "var searchData=[['ext_0',['extFn',['https://other.org/x.html#a',1,'x.h']]],"
+            "['loc_1',['locFn',['../group__input.html#l1',1,'x.h']]]];").encode()
+        files["search/all_0.js"] = (
+            "var searchData=[['ext_0',['EXT_M',['https://other.org/y.html#b',1,'x.h']]]];").encode()
+        idx = read_search_index(files.get)
+        names = {e.name for e in idx.entries}
+        self.assertIn("locFn", names)
+        self.assertFalse({"extFn", "EXT_M"} & names)
+
+
+class DoxygenRobotsCliTests(unittest.TestCase):
+    run_main = CliTests.run_main
+
+    def setUp(self):
+        CliTests.setUp(self)
+
+    def test_sphinx_objects_inv_disallowed_no_traceback(self):
+        inv = make_inv([(e.name, e.role, "1", e.uri, e.dispname) for e in ENTRIES])
+        op = doxy_url_opener({"objects.inv": inv}, robots="User-agent: *\nDisallow: /docs/objects.inv")
+        out, err = io.StringIO(), io.StringIO()
+        with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
+            code = docshelf_build.main(["plan", "https://docs.example.org/docs/", "--name", "demo"],
+                                       env=self.env, opener=op, sleep=lambda s: None)
+        self.assertEqual(code, 0, err.getvalue())
 
 
 if __name__ == "__main__":
