@@ -242,9 +242,13 @@ def check_privacy(provider: str, setup: dict | None, test_data: bool) -> None:
     if not setup or provider not in (setup.get("privacy") or {}):
         raise DecisionError(
             "privacy",
-            f"no privacy confirmation recorded for provider {provider!r}. Ask the user the three "
-            "privacy questions (references/privacy.md), then run: decide.py privacy SETUP "
-            f"--provider {provider} --policy-url URL --summary TEXT. Use --test-data only for made-up data.")
+            f"no privacy confirmation recorded for provider {provider!r}. Read the provider's current "
+            "data terms, summarize them for the user, and get an explicit yes to all three: "
+            "(1) this data is OK to send to the provider; (2) the provider's retention and training "
+            "terms are acceptable; (3) whoever owns the data (employer, client) agrees, or the user is "
+            "that party (references/privacy.md). Only then run: decide.py privacy SETUP "
+            f"--provider {provider} --policy-url URL --summary TEXT. Never confirm on the user's "
+            "behalf. Use --test-data only for made-up data.")
 
 
 def _hops(setup: dict, provider: str | None, model: str | None, fallbacks) -> list:

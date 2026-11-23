@@ -265,6 +265,13 @@ class EvaluateTest(unittest.TestCase):
         answers, _ = self.ev(test_data=True)
         self.assertIn("urgent", answers)
 
+    def test_privacy_error_lists_three_confirmations(self):
+        with self.assertRaises(decide.DecisionError) as cm:
+            decide.check_privacy("opencode", {"privacy": {}}, False)
+        msg = str(cm.exception)
+        for words in ("OK to send", "retention and training terms", "agree"):
+            self.assertIn(words, msg)
+
     def test_no_setup_needs_test_data(self):
         with self.assertRaises(decide.DecisionError) as cm:
             decide.evaluate("x", QUESTIONS, provider="typesafe")
