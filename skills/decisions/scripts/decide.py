@@ -195,10 +195,10 @@ def post_json(url: str, key: str | None, payload: dict, timeout: float) -> dict:
             return json.loads(r.read().decode("utf-8", "replace"))
     except urllib.error.HTTPError as e:
         try:
-            detail = e.read()[:400].decode("utf-8", "replace")
+            detail = e.read().decode("utf-8", "replace")
         except Exception:
             detail = ""
-        msg = redact(f"HTTP {e.code}: {detail}", key)
+        msg = redact(f"HTTP {e.code}: {detail}", key)[:400]
         if e.code >= 500 or e.code in FALLBACK_STATUSES:
             raise DecisionError("fallback", msg) from None
         raise DecisionError("request", msg) from None
@@ -223,12 +223,17 @@ def validate_answers(answers, questions: dict) -> None:
             ok = _prob(a.get("noul"))
         elif qtype == "choice":
             probs = a.get("probabilities") or {}
+            crit = q.get("criteria")
             ok = (isinstance(a.get("choice"), str) and _prob(a.get("confidence"))
-                  and all(_prob(v) for v in probs.values()))
+                  and all(_prob(v) for v in probs.values())
+                  and (not isinstance(crit, dict) or a["choice"] in crit))
         elif qtype == "score":
             s = a.get("score")
+            crit = q.get("criteria")
+            top = len(crit) - 1 if isinstance(crit, list) and crit else None
             ok = (isinstance(s, (int, float)) and not isinstance(s, bool) and math.isfinite(s)
-                  and _prob(a.get("confidence")))
+                  and _prob(a.get("confidence"))
+                  and (top is None or -1e-6 <= s <= top + 1e-6))
         else:
             ok = True
         if not ok:
@@ -239,7 +244,15 @@ def check_privacy(provider: str, setup: dict | None, test_data: bool) -> None:
     """Refuse to send real data to a provider without a recorded privacy confirmation."""
     if test_data:
         return
-    if not setup or provider not in (setup.get("privacy") or {}):
+    entry = ((setup or {}).get("privacy") or {}).get(provider)
+    if isinstance(entry, dict) and entry.get("confirmed") and entry.get("endpoint"):
+        current = provider_config(provider, setup)["endpoint"]
+        if entry["endpoint"] != current:
+            raise DecisionError(
+                "privacy", f"the privacy confirmation for {provider!r} was given for endpoint "
+                f"{entry['endpoint']}, but the provider now points at {current}; repeat the privacy "
+                "check for the new endpoint (references/privacy.md)")
+    if not (isinstance(entry, dict) and entry.get("confirmed")):
         raise DecisionError(
             "privacy",
             f"no privacy confirmation recorded for provider {provider!r}. Read the provider's current "
@@ -317,6 +330,11 @@ CAUTIOUS = {"noul": {"reject_below": 0.05, "pass_above": 0.90}, "min_confidence"
             "score_reject_below": 0.5, "score_pass_margin": 1.5}
 
 
+def answering_model(meta: dict):
+    """The model that answered: the id the provider returned, else the one requested."""
+    return (meta or {}).get("model_returned") or (meta or {}).get("model_requested")
+
+
 def is_cautious(setup: dict, model_returned: str | None = None):
     """(True, reason) unless the setup is calibrated for this model family."""
     policy = setup.get("policy") or {}
@@ -339,14 +357,20 @@ def effective_rules(policy: dict, questions: dict, cautious: bool) -> list:
         return rules
     for r in rules:
         qtype = (questions.get(r["question"]) or {}).get("type")
-        if qtype == "noul":
-            r["reject_below"] = min(r.get("reject_below", 1.0), CAUTIOUS["noul"]["reject_below"])
-            r["pass_above"] = max(r.get("pass_above", 0.0), CAUTIOUS["noul"]["pass_above"])
-        elif qtype == "score":
-            levels = len(questions[r["question"]].get("criteria") or [])
-            top = max(levels - CAUTIOUS["score_pass_margin"], 0.0)
-            r["reject_below"] = min(r.get("reject_below", float("inf")), CAUTIOUS["score_reject_below"])
-            r["pass_above"] = max(r.get("pass_above", 0.0), top)
+        if qtype in ("noul", "score"):
+            if qtype == "noul":
+                low, high = CAUTIOUS["noul"]["reject_below"], CAUTIOUS["noul"]["pass_above"]
+            else:
+                levels = len(questions[r["question"]].get("criteria") or [])
+                low, high = CAUTIOUS["score_reject_below"], max(levels - CAUTIOUS["score_pass_margin"], 0.0)
+            # a rule with no bounds gets both defaults; a partial rule keeps its missing bound missing
+            if "reject_below" not in r and "pass_above" not in r:
+                r["reject_below"], r["pass_above"] = low, high
+            else:
+                if "reject_below" in r:
+                    r["reject_below"] = min(r["reject_below"], low)
+                if "pass_above" in r:
+                    r["pass_above"] = max(r["pass_above"], high)
         if qtype in ("score", "choice"):
             r["min_confidence"] = max(r.get("min_confidence", 0.0), CAUTIOUS["min_confidence"])
     return rules
@@ -479,7 +503,8 @@ def record_privacy(setup: dict, provider: str, policy_url: str, summary: str, to
     """Record the user's privacy confirmation for a provider. Call only after the
     user explicitly confirmed all three items in references/privacy.md."""
     setup.setdefault("privacy", {})[provider] = {
-        "confirmed": today, "policy_url": policy_url, "summary": summary}
+        "confirmed": today, "policy_url": policy_url, "summary": summary,
+        "endpoint": provider_config(provider, setup)["endpoint"]}
     return setup
 
 
@@ -560,8 +585,14 @@ def read_items(source: str, fmt=None, id_field: str = "id", text_field=None):
                     yield name, None, f"{name}: {type(e).__name__}"
         return
     if fmt == "csv":
-        with open(source, newline="", encoding="utf-8-sig") as f:
-            for n, row in enumerate(csv.DictReader(f), start=2):
+        with open(source, newline="", encoding="utf-8-sig", errors="surrogateescape") as f:
+            reader = csv.DictReader(f, restkey="_extra")
+            for row in reader:
+                n = reader.line_num
+                if any(isinstance(v, str) and re.search("[\udc80-\udcff]", v)
+                       for v in row.values()):
+                    yield f"line {n}", None, f"line {n}: not UTF-8 text"
+                    continue
                 if not row.get(id_field):
                     yield f"line {n}", None, f"line {n}: missing {id_field!r}"
                     continue
@@ -655,6 +686,18 @@ def _usage_add(total: dict, usage: dict) -> None:
         total["cost"] = total.get("cost", 0.0) + usage["cost"]
 
 
+def _batches(iterable, size: int):
+    """Submit work in bounded batches so a fatal error stops before the rest is sent."""
+    batch = []
+    for x in iterable:
+        batch.append(x)
+        if len(batch) >= size:
+            yield batch
+            batch = []
+    if batch:
+        yield batch
+
+
 def cmd_run(args) -> int:
     setup = load_setup(args.setup)
     questions = setup["questions"]
@@ -680,6 +723,19 @@ def cmd_run(args) -> int:
     _, base_reason = is_cautious(setup)
 
     def one(entry):
+        try:
+            return _one(entry)
+        except DecisionError as e:
+            if e.kind == "privacy":
+                raise
+            return {"id": entry[0], "route": "review", "answers": None, "model": None,
+                    "provider": None, "cached": False, "error": str(e)}, None
+        except Exception as e:  # never drop an item: anything unexpected goes to review
+            return {"id": entry[0], "route": "review", "answers": None, "model": None,
+                    "provider": None, "cached": False,
+                    "error": redact(f"{type(e).__name__}: {e}")}, None
+
+    def _one(entry):
         item_id, item, error = entry
         row = {"id": item_id, "route": "review", "answers": None, "model": None,
                "provider": None, "cached": False, "error": error}
@@ -702,7 +758,7 @@ def cmd_run(args) -> int:
                     raise
                 row["error"] = str(e)
                 return row, None
-            returned = meta["model_returned"]
+            returned = answering_model(meta)
             row["provider"] = meta["provider"]
             if meta["provider"] == first:
                 cache.put(key, answers, returned)
@@ -716,8 +772,9 @@ def cmd_run(args) -> int:
     totals, fallbacks, failed, n, cautious_any = {}, 0, 0, 0, False
     out = open(args.out, "w", encoding="utf-8") if args.out else sys.stdout
     try:
-        with ThreadPoolExecutor(max_workers=max(1, args.workers)) as pool:
-            for row, meta in pool.map(one, items):
+        workers = max(1, args.workers)
+        with ThreadPoolExecutor(max_workers=workers) as pool:
+            for row, meta in (r for batch in _batches(items, workers * 8) for r in pool.map(one, batch)):
                 n += 1
                 counts[row["route"]] += 1
                 failed += bool(row["error"])
@@ -919,12 +976,15 @@ def _default_good_if(questions: dict) -> list:
 
 
 def suggest_rules(results, questions: dict, good_if, target_recall: float,
-                  target_precision: float) -> list:
-    """Cutoffs from scored labels. results: [{"answers", "expected", "good"}]."""
+                  target_precision: float, targets=None) -> list:
+    """Cutoffs from scored labels. results: [{"answers", "expected", "good"}].
+    targets: the questions to set cutoffs for (those with a rule); None = all."""
     good = [r for r in results if r["good"]]
     allowed = int((1 - target_recall) * len(good) + 1e-9)
     rules = []
     for name, q in questions.items():
+        if targets is not None and name not in targets:
+            continue
         qtype = q.get("type")
         if qtype in ("noul", "score"):
             rule = {"question": name, "source": "calibration"}
@@ -967,19 +1027,26 @@ def suggest_rules(results, questions: dict, good_if, target_recall: float,
 
 def calibrate(setup: dict, labels, *, target_recall: float = 0.95, target_precision: float = 0.90,
               replace_user_rules: bool = False, scorer=None, test_data: bool = False,
-              today=None, write: bool = True) -> dict:
+              today=None, write: bool = True, provider: str | None = None,
+              model: str | None = None, timeout: float = 60) -> dict:
     """Score labeled items, report agreement, and (write=True) store cutoffs and the
     calibration record in the setup. Labels: [{"id", "item", "expected": {question: value}}]."""
     scorer = scorer or evaluate
-    check_privacy(setup["provider"], setup, test_data)
+    if combine_of(setup) == "any":
+        raise DecisionError("config", "calibrate does not support policy.combine 'any' yet; set "
+                            "flagging cutoffs by hand, or run in cautious mode")
+    check_privacy(provider or setup["provider"], setup, test_data)
     questions = setup["questions"]
     policy = setup.setdefault("policy", {})
     good_if = policy.get("good_if") or _default_good_if(questions)
+    targets = {r["question"] for r in policy.get("rules") or []} or None
+    want_provider, want_model = provider, model
     results, model, provider = [], None, None
     for lab in labels:
         answers, meta = scorer(build_state(setup.get("reference"), lab["item"]), questions,
-                               setup=setup, test_data=test_data)
-        model = model or meta.get("model_returned")
+                               setup=setup, test_data=test_data, provider=want_provider,
+                               model=want_model, timeout=timeout)
+        model = model or answering_model(meta)
         provider = provider or meta.get("provider")
         results.append({"id": lab.get("id"), "answers": answers, "expected": lab["expected"],
                         "good": is_good(lab["expected"], good_if)})
@@ -1011,7 +1078,7 @@ def calibrate(setup: dict, labels, *, target_recall: float = 0.95, target_precis
     for cls, k in counts.items():
         if k < 3 and (cls in ("good", "not good") or "=" in cls):
             warnings.append(f"class {cls!r} has only {k} labels; add at least 3")
-    suggested = suggest_rules(results, questions, good_if, target_recall, target_precision)
+    suggested = suggest_rules(results, questions, good_if, target_recall, target_precision, targets)
     old = policy.get("rules") or []
     user = [r for r in old if r.get("source") != "calibration"]
     kept = [] if replace_user_rules else user
@@ -1051,12 +1118,20 @@ def cmd_calibrate(args) -> int:
     report = calibrate(setup, labels, target_recall=args.target_recall,
                        target_precision=args.target_precision,
                        replace_user_rules=args.replace_user_rules, test_data=args.test_data,
-                       write=not args.check)
+                       write=not args.check, provider=args.provider, model=args.model,
+                       timeout=args.timeout)
     if args.check:
         stored = setup.get("calibration") or {}
         report["stored"] = {"model": stored.get("model"), "metrics": stored.get("metrics")}
     else:
-        save_setup(args.setup, setup)
+        # re-read so edits made while scoring (privacy, questions) are kept; merge only our parts
+        with open(args.setup, encoding="utf-8") as f:
+            fresh = json.load(f)
+        fresh.setdefault("policy", {})
+        fresh["policy"]["rules"] = setup["policy"]["rules"]
+        fresh["policy"]["mode"] = setup["policy"]["mode"]
+        fresh["calibration"] = setup["calibration"]
+        save_setup(args.setup, fresh)
     print(json.dumps(report, indent=2))
     for w in report["warnings"]:
         _err("warning: " + w)

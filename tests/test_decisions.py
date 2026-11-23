@@ -461,7 +461,8 @@ class SetupFileTest(unittest.TestCase):
         entry = setup["privacy"]["opencode"]
         self.assertEqual(entry, {"confirmed": "2026-11-23",
                                  "policy_url": "https://example.com/privacy",
-                                 "summary": "keeps prompts 30 days"})
+                                 "summary": "keeps prompts 30 days",
+                                 "endpoint": decide.PROVIDERS["opencode"]["endpoint"]})
 
 
 class CacheTest(unittest.TestCase):
@@ -663,11 +664,15 @@ class CliTest(unittest.TestCase):
         self.assertNotIn("sk-or-secret-value", out + err)
 
     def test_privacy_subcommand_writes_entry(self):
-        code, out, err = self.main("privacy", self.setup_path, "--provider", "b",
+        code, out, err = self.main("privacy", self.setup_path, "--provider", "a",
                                    "--policy-url", "https://example.com/p", "--summary", "30 days")
         self.assertEqual(code, 0, err)
-        entry = decide.load_setup(self.setup_path)["privacy"]["b"]
+        entry = decide.load_setup(self.setup_path)["privacy"]["a"]
         self.assertEqual(entry["policy_url"], "https://example.com/p")
+        self.assertEqual(entry["endpoint"], self.fake.base + "/a")
+        code, out, err = self.main("privacy", self.setup_path, "--provider", "nope",
+                                   "--policy-url", "u", "--summary", "s")
+        self.assertEqual(code, 2)
 
     def test_version_flag(self):
         with self.assertRaises(SystemExit):
@@ -936,6 +941,180 @@ class CombineAnyTest(unittest.TestCase):
         setup = {"policy": {"combine": "any", "rules": self.RULES}}
         self.assertEqual(decide.combine_of(setup), "any")
         self.assertEqual(decide.combine_of({}), "all")
+
+
+class FinalReviewFixesTest(unittest.TestCase):
+    """Regression tests for the whole-branch review findings."""
+
+    def test_f1_score_out_of_range_and_unknown_choice_fail(self):
+        q = {"s": {"type": "score", "criteria": ["a", "b", "c"]},
+             "c": {"type": "choice", "criteria": {"x": None, "y": None}}}
+        ok = {"s": {"type": "score", "score": 1.5, "confidence": 0.9},
+              "c": {"type": "choice", "choice": "x", "confidence": 0.9, "probabilities": {}}}
+        decide.validate_answers(ok, q)
+        for bad in ({**ok, "s": {"type": "score", "score": 99, "confidence": 0.9}},
+                    {**ok, "c": {"type": "choice", "choice": "zzz", "confidence": 0.9}}):
+            with self.assertRaises(decide.DecisionError) as cm:
+                decide.validate_answers(bad, q)
+            self.assertEqual(cm.exception.kind, "fallback")
+
+    def test_f2_key_straddling_truncation_is_scrubbed(self):
+        key = "sk-" + "A" * 40
+        fake = FakeSystemOne()
+        self.addCleanup(fake.close)
+        fake.script["/x"] = [(400, ("x" * 390 + key + "y" * 50).encode())]
+        with self.assertRaises(decide.DecisionError) as cm:
+            decide.post_json(fake.base + "/x", key, {}, 5)
+        self.assertNotIn("sk-AAAA", str(cm.exception))
+
+    def test_f3_csv_bad_bytes_and_extra_fields(self):
+        with tempfile.TemporaryDirectory() as d:
+            path = os.path.join(d, "in.csv")
+            with open(path, "wb") as f:
+                f.write(b"id,text\n1,good\n2,\xff\xfe bad\n3,a,extra\n4,fine\n")
+            rows = list(decide.read_items(path))
+        self.assertEqual([r[0] for r in rows if not r[2]], ["1", "3", "4"])
+        errs = [r for r in rows if r[2]]
+        self.assertEqual(len(errs), 1)
+        self.assertIn("line 3", errs[0][2])
+        item3 = [r for r in rows if r[0] == "3"][0][1]
+        self.assertNotIn(None, item3)
+        decide.cache_key("p", "m", {}, None, item3)
+
+    def test_f3_unexpected_error_in_item_becomes_review_row(self):
+        fake = FakeSystemOne()
+        self.addCleanup(fake.close)
+        with tempfile.TemporaryDirectory() as d:
+            setup = {"provider": "a", "model": "jev-1.13-free", "questions": QUESTIONS,
+                     "providers": {"a": {"endpoint": fake.base + "/a", "key_env": []}},
+                     "privacy": {"a": {"confirmed": "2026-11-23"}}}
+            sp = os.path.join(d, "s.decisions.json")
+            with open(sp, "w") as f:
+                json.dump(setup, f)
+            src = os.path.join(d, "in.jsonl")
+            with open(src, "w") as f:
+                f.write('{"id": "1", "text": "x"}\n{"id": "2", "text": "y"}\n')
+            with mock.patch.object(decide, "evaluate", side_effect=[RuntimeError("boom"),
+                                                                     (good_answer()["answers"],
+                                                                      {"provider": "a", "model_returned": "jev-1.14.0",
+                                                                       "model_requested": "jev-1.13-free",
+                                                                       "usage": {}, "hops": []})]):
+                out, err = io.StringIO(), io.StringIO()
+                with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
+                    code = decide.main(["run", sp, "--input", src, "--no-cache", "--rate", "0"])
+        rows = [json.loads(x) for x in out.getvalue().splitlines()]
+        self.assertEqual(code, 0)
+        self.assertEqual(rows[0]["route"], "review")
+        self.assertIn("boom", rows[0]["error"])
+        self.assertIsNone(rows[1]["error"])
+
+    def test_f4_cautious_never_adds_a_missing_bound_to_a_partial_rule(self):
+        q = {"n": {"type": "noul"}}
+        r = decide.effective_rules({"rules": [{"question": "n", "pass_above": 0.8}]}, q, True)[0]
+        self.assertNotIn("reject_below", r)
+        self.assertEqual(r["pass_above"], 0.9)
+        r = decide.effective_rules({"rules": [{"question": "n", "reject_below": 0.2}]}, q, True)[0]
+        self.assertNotIn("pass_above", r)
+        self.assertEqual(r["reject_below"], 0.05)
+        r = decide.effective_rules({"rules": [{"question": "n"}]}, q, True)[0]
+        self.assertEqual((r["reject_below"], r["pass_above"]), (0.05, 0.9))
+
+    def test_f5_missing_returned_model_uses_requested_for_family(self):
+        cal = {"policy": {"mode": "calibrated"}, "calibration": {"model": "jev-1.13-free"}}
+        self.assertTrue(decide.is_cautious(cal, decide.answering_model(
+            {"model_returned": None, "model_requested": "pplx-decider-latest"}))[0])
+        self.assertEqual(decide.answering_model({"model_returned": None,
+                                                 "model_requested": "jev-1.13"}), "jev-1.13")
+
+    def cal_setup(self, **pol):
+        s = {"provider": "a", "model": "jev-1.13-free",
+             "questions": {"real": {"type": "noul"}, "info": {"type": "noul"}},
+             "policy": {"mode": "cautious", "good_if": [{"question": "real", "is": True}],
+                        "rules": [{"question": "real", "source": "calibration"}], **pol},
+             "privacy": {"a": {"confirmed": "2026-11-23"}}}
+        return s
+
+    @staticmethod
+    def labels_and_scorer(model=None, seen=None):
+        labels, vals = [], {}
+        for i in range(20):
+            good = i < 12
+            labels.append({"id": str(i), "item": str(i), "expected": {"real": good, "info": True}})
+            vals[str(i)] = {"real": {"type": "noul", "noul": 0.9 if good else 0.1},
+                            "info": {"type": "noul", "noul": 0.02}}
+        def scorer(state, questions, **kw):
+            if seen is not None:
+                seen.append(kw)
+            return vals[state if isinstance(state, str) else state["item"]], {
+                "provider": "a", "model_returned": model, "model_requested": "jev-1.13-free",
+                "usage": {}, "hops": []}
+        return labels, scorer
+
+    def test_f5_calibrate_records_requested_model_when_none_returned(self):
+        setup = self.cal_setup()
+        labels, scorer = self.labels_and_scorer(model=None)
+        decide.calibrate(setup, labels, scorer=scorer)
+        self.assertEqual(setup["calibration"]["model"], "jev-1.13-free")
+
+    def test_f6_calibrate_refuses_combine_any(self):
+        setup = self.cal_setup(combine="any")
+        labels, scorer = self.labels_and_scorer()
+        with self.assertRaises(decide.DecisionError) as cm:
+            decide.calibrate(setup, labels, scorer=scorer)
+        self.assertEqual(cm.exception.kind, "config")
+        self.assertIn("any", str(cm.exception))
+
+    def test_f7_calibrate_passes_provider_model_timeout(self):
+        setup = self.cal_setup()
+        seen = []
+        labels, scorer = self.labels_and_scorer(model="jev-1.14.0", seen=seen)
+        decide.calibrate(setup, labels, scorer=scorer, provider="a", model="jev-1.13", timeout=7)
+        self.assertEqual((seen[0]["provider"], seen[0]["model"], seen[0]["timeout"]), ("a", "jev-1.13", 7))
+
+    def test_f8_calibrate_cli_keeps_edits_made_during_scoring(self):
+        with tempfile.TemporaryDirectory() as d:
+            sp = os.path.join(d, "s.decisions.json")
+            setup = self.cal_setup()
+            with open(sp, "w") as f:
+                json.dump(setup, f)
+            lab = os.path.join(d, "l.jsonl")
+            labels, scorer = self.labels_and_scorer(model="jev-1.14.0")
+            with open(lab, "w") as f:
+                for x in labels:
+                    f.write(json.dumps(x) + "\n")
+            def editing_scorer(state, questions, **kw):
+                with open(sp) as f:
+                    cur = json.load(f)
+                if "b" not in cur["privacy"]:
+                    cur["privacy"]["b"] = {"confirmed": "2026-11-23"}
+                    with open(sp, "w") as f:
+                        json.dump(cur, f)
+                return scorer(state, questions, **kw)
+            with mock.patch.object(decide, "evaluate", editing_scorer):
+                with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
+                    code = decide.main(["calibrate", sp, "--labels", lab])
+            self.assertEqual(code, 0)
+            saved = decide.load_setup(sp)
+            self.assertIn("b", saved["privacy"])
+            self.assertEqual(saved["policy"]["mode"], "calibrated")
+
+    def test_f9_calibrate_leaves_informational_questions_alone(self):
+        setup = self.cal_setup()
+        labels, scorer = self.labels_and_scorer(model="jev-1.14.0")
+        decide.calibrate(setup, labels, scorer=scorer)
+        self.assertEqual([r["question"] for r in setup["policy"]["rules"]], ["real"])
+
+    def test_f10_privacy_tied_to_endpoint(self):
+        setup = {"privacy": {}}
+        decide.record_privacy(setup, "typesafe", "u", "s", "2026-11-23")
+        self.assertEqual(setup["privacy"]["typesafe"]["endpoint"], decide.PROVIDERS["typesafe"]["endpoint"])
+        decide.check_privacy("typesafe", setup, False)
+        setup["providers"] = {"typesafe": {"endpoint": "https://evil.example/v1/systemone"}}
+        with self.assertRaises(decide.DecisionError) as cm:
+            decide.check_privacy("typesafe", setup, False)
+        self.assertIn("endpoint", str(cm.exception))
+        with self.assertRaises(decide.DecisionError):
+            decide.check_privacy("x", {"privacy": {"x": {}}}, False)
 
 
 if __name__ == "__main__":

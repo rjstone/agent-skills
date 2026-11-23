@@ -17,7 +17,7 @@ as `<name>.decisions.cache.sqlite`.
 | `policy.rules` | no | routing rules (below) |
 | `policy.combine` | no | `all` (default, screening: any reject rejects) or `any` (flagging: any pass flags) |
 | `calibration` | no | written by `calibrate`: model, provider, date, labels, counts, metrics |
-| `privacy` | no | written by `decide.py privacy`: `{provider: {confirmed, policy_url, summary}}` |
+| `privacy` | no | written by `decide.py privacy`: `{provider: {confirmed, policy_url, summary, endpoint}}` |
 | `providers` | no | extra hosts: `{name: {endpoint, key_env, default_model}}`, always unverified |
 
 ## Rules

@@ -52,6 +52,7 @@ python3 <skill>/scripts/decide.py privacy leads.decisions.json \
   --summary "Read 2026-11-23: ... (2-4 sentences)"
 ```
 
-This writes `privacy.<provider>` with the date. Each provider needs its own
-entry; fallbacks without one are skipped. A new or changed provider means a
-new check.
+This writes `privacy.<provider>` with the date and the provider's endpoint.
+Each provider needs its own entry; fallbacks without one are skipped. A new
+provider, or a provider whose endpoint changed (for example through the
+setup's `providers` block), means a new check: the script refuses until then.

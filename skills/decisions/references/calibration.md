@@ -36,8 +36,15 @@ Without it, every yes/no must be yes and every score at least its middle level.
   (`--target-precision`), otherwise everything not rejected goes to review;
   `min_confidence` for choice questions where answers at or above it are at
   least 90% right.
+- Sets cutoffs only for questions that already have a rule (placeholders
+  like `{"question": "real", "source": "calibration"}` count); questions
+  without a rule stay informational. With no rules at all, it covers every
+  question.
 - Keeps rules the user wrote (`"source": "user"`) unless
   `--replace-user-rules`; its suggestions appear in the report.
+- Does not support `policy.combine: "any"` (flagging) yet: set those cutoffs
+  by hand, or stay in cautious mode.
+- `--provider`, `--model` and `--timeout` apply to the scoring calls.
 - Records model, provider, date, counts and metrics in `calibration`, and
   sets `policy.mode` to `calibrated`.
 
@@ -49,7 +56,8 @@ changing anything: run it after a model version change within the family.
 On when the setup is not calibrated, or the answering model is from another
 family than the calibrated one. It only widens the review band: yes/no
 rejects only below 0.05 and passes only above 0.90; scores reject below 0.5
-and pass only near the top level; choice and score answers with confidence
+and pass only near the top level (a rule with no bounds gets both; a rule
+with one bound keeps the other one unset); choice and score answers with confidence
 under 0.6 go to review. Every run's summary says cautious mode is on and why.
 
 When the user declines calibration, say so plainly (wording in `SKILL.md`
