@@ -3392,10 +3392,17 @@ class DoxygenHtmlTests(unittest.TestCase):
             self.assertNotIn(unwanted, out)
 
     def test_doxygen_page(self):
-        self.check(main_content(doxy_full_page()))
+        self.check(main_content(doxy_full_page(), doxygen=True))
 
     def test_doxygen_awesome_wrappers(self):
-        self.check(main_content(doxy_full_page(lambda x: '<div class="wrap"><div>' + x + '</div></div>')))
+        self.check(main_content(doxy_full_page(lambda x: '<div class="wrap"><div>' + x + '</div></div>'),
+                                doxygen=True))
+
+    def test_sphinx_contents_topic_kept(self):
+        page = ('<html><body><div role="main"><div class="contents local topic"><ul><li>'
+                '<a href="#foo">foo</a></li></ul></div><dl class="py function"><dt id="foo">foo()</dt>'
+                '<dd>Does foo.</dd></dl></div></body></html>')
+        self.assertIn("Does foo.", main_content(page))
 
     def test_non_doxygen_page_unchanged(self):
         page = '<html><body><nav>N</nav><div role="main"><p>Body</p></div></body></html>'
@@ -3501,6 +3508,95 @@ class DoxygenCliTests(unittest.TestCase):
         code, _, err = self.run_main("plan", empty, "--name", "demo")
         self.assertNotEqual(code, 0)
         self.assertIn("objects.inv", err)
+
+
+
+def doxy_url_opener(files, base="https://docs.example.org/docs/", robots=None, status=None):
+    """An opener over {rel: bytes} under base; status maps rel -> HTTP code."""
+    status = status or {}
+
+    def opener(url):
+        opener.urls.append(url)
+        if url.endswith("/robots.txt"):
+            return (404, b"") if robots is None else (200, robots.encode())
+        rel = url[len(base):] if url.startswith(base) else None
+        if rel in status:
+            return (status[rel], b"")
+        if rel is not None and rel in files:
+            return (200, files[rel])
+        return (404, b"")
+    opener.urls = []
+    return opener
+
+
+class DoxygenReviewFixTests(unittest.TestCase):
+    BASE = "https://docs.example.org/docs/"
+
+    def src(self, files, **kw):
+        return build_fetch.open_source(self.BASE, opener=doxy_url_opener(files, self.BASE, **kw),
+                                       sleep=lambda s: None)
+
+    def read(self, files, **kw):
+        get = docshelf_build._cached_getter(self.src(files, **kw))
+        return read_doxygen(get, log=lambda m: None)
+
+    def test_robots_blocked_search_falls_back_to_menu(self):
+        files = doxy_search_site()
+        files.update(doxy_menu_site())
+        _, _, _, idx = self.read(files, robots="User-agent: *\nDisallow: /docs/search/")
+        self.assertEqual(idx.kind, "menu")
+        self.assertTrue([w for w in idx.warnings if "robots.txt" in w])
+
+    def test_one_403_is_a_warning(self):
+        _, _, entries, idx = self.read(doxy_search_site(), status={"search/functions_a.js": 403})
+        self.assertTrue([w for w in idx.warnings if "functions_a.js" in w and "403" in w])
+        self.assertTrue([e for e in entries if e.name == "GLFW_KEY_ESCAPE"])
+
+    def test_all_letter_files_blocked_says_so(self):
+        files = {rel: (body if rel == "search/searchdata.js" else b"<html>Just a moment...</html>")
+                 for rel, body in doxy_search_site().items()}
+        with self.assertRaisesRegex(DoxygenFormatError, "blocking automated requests"):
+            self.read(files)
+
+    def test_menu_challenge_pages_say_so(self):
+        files = {rel: (body if rel == "menudata.js" else b"<html>Just a moment...</html>")
+                 for rel, body in doxy_menu_site().items()}
+        with self.assertRaisesRegex(DoxygenFormatError, "blocking automated requests"):
+            self.read(files)
+
+    def test_member_named_like_end_of_class(self):
+        self.assertEqual(member_name("fd", "pollfd", "doxygen:Variable", set()), ("pollfd::fd", "-"))
+        self.assertEqual(member_name("image", "GLFWimage", "doxygen:Variable", set()),
+                         ("GLFWimage::image", "-"))
+        self.assertEqual(member_name("get", "ns::A::get", "doxygen:Function", set()), ("ns::A::get", "-"))
+
+    def test_external_links_skipped(self):
+        files = doxy_search_site()
+        files["search/functions_0.js"] = (
+            "var searchData=[['ext_0',['extFn',['https://other.org/x.html#a',1,'x.h']]],"
+            "['loc_1',['locFn',['../group__input.html#l1',1,'x.h']]]];").encode()
+        files["search/all_0.js"] = (
+            "var searchData=[['ext_0',['EXT_M',['https://other.org/y.html#b',1,'x.h']]]];").encode()
+        idx = read_search_index(files.get)
+        names = {e.name for e in idx.entries}
+        self.assertIn("locFn", names)
+        self.assertFalse({"extFn", "EXT_M"} & names)
+
+
+class DoxygenRobotsCliTests(unittest.TestCase):
+    run_main = CliTests.run_main
+
+    def setUp(self):
+        CliTests.setUp(self)
+
+    def test_sphinx_objects_inv_disallowed_no_traceback(self):
+        inv = make_inv([(e.name, e.role, "1", e.uri, e.dispname) for e in ENTRIES])
+        op = doxy_url_opener({"objects.inv": inv}, robots="User-agent: *\nDisallow: /docs/objects.inv")
+        out, err = io.StringIO(), io.StringIO()
+        with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
+            code = docshelf_build.main(["plan", "https://docs.example.org/docs/", "--name", "demo"],
+                                       env=self.env, opener=op, sleep=lambda s: None)
+        self.assertEqual(code, 0, err.getvalue())
 
 
 if __name__ == "__main__":

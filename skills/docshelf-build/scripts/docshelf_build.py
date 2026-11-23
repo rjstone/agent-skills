@@ -68,8 +68,17 @@ def _cached_getter(source):
     return get
 
 
+def _probe(get, rel: str, catch=(FetchError, CLIError)) -> Optional[bytes]:
+    """get(rel), None when it is missing or cannot be read (robots.txt, a
+    failed answer): a probe only asks whether a file is there."""
+    try:
+        return get(rel)
+    except catch:
+        return None
+
+
 def _has_doxygen(get) -> bool:
-    return get("search/searchdata.js") is not None or get("menudata.js") is not None
+    return _probe(get, "search/searchdata.js") is not None or _probe(get, "menudata.js") is not None
 
 
 def _read_doxygen(get):
@@ -149,7 +158,9 @@ def do_plan(cache: str, args, opener=None, sleep=None) -> str:
         return do_plan_llms(cache, args, opener, sleep)
     source = open_source(args.source, base_url=args.base_url, opener=opener, sleep=sleep)
     get = _cached_getter(source)
-    inv = get("objects.inv")
+    # robots.txt blocking objects.inv: probe says None, then inventory()
+    # reads it as before 0.5.0 (that first request was never checked)
+    inv = _probe(get, "objects.inv", FetchError)
     if inv is None and _has_doxygen(get):
         return _plan_doxygen(cache, args, source, get)
     sha, header, entries = _read_inventory(source, inv)
@@ -525,6 +536,9 @@ def main(argv: Optional[List[str]] = None, env=None, opener=None,
     except CLIError as e:
         warn(str(e))
         return e.code
+    except FetchError as e:
+        warn(str(e))
+        return 4
     return 0
 
 

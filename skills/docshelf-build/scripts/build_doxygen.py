@@ -9,7 +9,8 @@ import urllib.parse
 from dataclasses import dataclass, field
 from typing import Callable, Dict, List, Optional, Set, Tuple
 
-from build_core import warn
+from build_core import CLIError, warn
+from build_fetch import FetchError
 from build_inventory import InvEntry
 
 
@@ -211,7 +212,7 @@ def member_name(display: str, scope: str, role: str, non_scopes: Set[str]) -> Tu
     display, scope = html.unescape(display).strip(), html.unescape(scope).strip()
     if not scope or scope in non_scopes or _FILE_EXT.search(scope):
         return display, "-"
-    if "(" in scope or scope.endswith(display):
+    if "(" in scope or scope == display or scope.endswith("::" + display):
         name = _strip_params(scope)
         return name, (scope if scope != name else "-")
     return scope + "::" + display, "-"
@@ -266,8 +267,29 @@ def read_search_index(get: Getter) -> DoxyIndex:
             _add_all_only(idx, _category_rows(get, idx, name, len(str(letters.get(str(num), "")))),
                           non_scopes, seen)
     if not idx.entries:
-        raise DoxygenFormatError("the search index lists no entries")
+        raise _blocked_error(idx) or DoxygenFormatError("the search index lists no entries")
     return idx
+
+
+def _try_get(get: Getter, rel: str, warnings: List[str]) -> Optional[bytes]:
+    """get(rel), with a robots.txt block or a failed answer (403, 5xx after
+    retries) recorded in warnings and returned as None."""
+    try:
+        return get(rel)
+    except FetchError as e:
+        warnings.append("%s: %s" % (rel, e.reason))
+    except CLIError as e:
+        warnings.append("%s: %s" % (rel, e))
+    return None
+
+
+def _blocked_error(idx: DoxyIndex) -> Optional[DoxygenFormatError]:
+    """The "blocking automated requests" error when that is why nothing was
+    read, else None."""
+    blocked = [w for w in idx.warnings if _BLOCKED in w]
+    if blocked:
+        return DoxygenFormatError("%s (%d index files)" % (_BLOCKED, len(blocked)))
+    return None
 
 
 def _category_rows(get: Getter, idx: DoxyIndex, name: str, count: int) -> list:
@@ -276,9 +298,11 @@ def _category_rows(get: Getter, idx: DoxyIndex, name: str, count: int) -> list:
     out: list = []
     for i in range(count):
         rel = "search/%s_%x.js" % (name, i)
-        body = get(rel)
+        before = len(idx.warnings)
+        body = _try_get(get, rel, idx.warnings)
         if body is None:
-            idx.warnings.append("%s: missing" % rel)
+            if len(idx.warnings) == before:
+                idx.warnings.append("%s: missing" % rel)
             continue
         try:
             rows = js_value(_decode(body), "searchData")
@@ -309,6 +333,8 @@ def _add_all_only(idx: DoxyIndex, rows: list, non_scopes: Set[str],
         for link in row[1][1:]:
             if not (isinstance(link, list) and link and isinstance(link[0], str)):
                 continue
+            if not _site_link(link[0]):
+                continue
             uri = page_uri(link[0], "search/")
             if "#" not in uri or uri in typed or uri.split("#", 1)[0] in prose:
                 continue
@@ -330,7 +356,8 @@ def _add_row(idx: DoxyIndex, row, category: str, label: str, non_scopes: Set[str
     if not isinstance(display, str):
         return
     for link in links:
-        if not (isinstance(link, list) and link and isinstance(link[0], str)):
+        if not (isinstance(link, list) and link and isinstance(link[0], str)) \
+                or not _site_link(link[0]):
             continue
         uri = page_uri(link[0], "search/")
         scope = link[2] if len(link) > 2 and isinstance(link[2], str) else ""
@@ -535,7 +562,7 @@ def read_menu_index(get: Getter, log: Callable[[str], None] = warn) -> DoxyIndex
     bare. A page the menu lists but the site lacks is a warning; a fixed
     name the site lacks is not (most sites have only some of them)."""
     idx = DoxyIndex("menu")
-    data = get("menudata.js")
+    data = _try_get(get, "menudata.js", idx.warnings)
     from_menu = data is not None
     if data is not None:
         idx.files.append(("menudata.js", data))
@@ -554,10 +581,14 @@ def read_menu_index(get: Getter, log: Callable[[str], None] = warn) -> DoxyIndex
         if rel in done:
             continue
         done.add(rel)
-        body = get(rel)
+        before = len(idx.warnings)
+        body = _try_get(get, rel, idx.warnings)
         if body is None:
-            if from_menu:
+            if from_menu and len(idx.warnings) == before:
                 idx.warnings.append("%s: missing" % rel)
+            continue
+        if b'class="contents"' not in body:
+            idx.warnings.append("%s: no Doxygen content (%s)" % (rel, _BLOCKED))
             continue
         idx.files.append((rel, body))
         text = _decode(body)
@@ -573,7 +604,8 @@ def read_menu_index(get: Getter, log: Callable[[str], None] = warn) -> DoxyIndex
                 seen.add((e.name, e.role, e.uri))
                 idx.entries.append(e)
     if not idx.entries:
-        raise DoxygenFormatError("no entries found in menudata.js or the Doxygen index pages")
+        raise _blocked_error(idx) or \
+            DoxygenFormatError("no entries found in menudata.js or the Doxygen index pages")
     return idx
 
 
@@ -627,17 +659,19 @@ def read_doxygen(get: Getter, log: Callable[[str], None] = warn
             cache[rel] = get(rel)
         return cache[rel]
 
-    if cached("search/searchdata.js") is not None:
+    pre: List[str] = []
+    if _try_get(cached, "search/searchdata.js", pre) is not None:
         try:
             idx = read_search_index(cached)
         except DoxygenFormatError as e:
-            if cached("menudata.js") is None:
+            if _try_get(cached, "menudata.js", pre) is None:
                 raise
             idx = read_menu_index(cached, log)
             idx.warnings.insert(0, "search index not readable (%s), using the index pages" % e)
     else:
         idx = read_menu_index(cached, log)
-    front = cached("index.html")
+    idx.warnings[:0] = [w for w in pre if w not in idx.warnings]
+    front = _try_get(cached, "index.html", [])
     header = site_header(_decode(front)) if front is not None else \
         {"project": "", "version": "", "doxygen": ""}
     # over the entries, not the files: served pages carry per-response noise

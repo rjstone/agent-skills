@@ -173,14 +173,16 @@ def _doxygen_content(tokens: List[Token]) -> Optional[List[Token]]:
     return out
 
 
-def main_content(page_html: str) -> str:
+def main_content(page_html: str, doxygen: bool = False) -> str:
     """The page's main content as clean HTML: no navigation, sidebars,
     scripts, styles, header-link pilcrows or images (images become their alt
     text)."""
     tokens = _tokens(page_html)
-    doxygen = _doxygen_content(tokens)
-    if doxygen is not None:
-        return _serialize(doxygen).strip()
+    # only for Doxygen sites: older Sphinx (docutils < 0.18) also writes a
+    # div.contents, for its local table of contents
+    dox = _doxygen_content(tokens) if doxygen else None
+    if dox is not None:
+        return _serialize(dox).strip()
     for match in _SELECTORS:
         for i, (kind, t, attrs) in enumerate(tokens):
             if kind == "start" and match(t, attrs or []):
