@@ -17,6 +17,28 @@
       ]
     },
     {
+      "name": "decisions",
+      "version": "0.1.0",
+      "files": [
+        "SKILL.md",
+        "evals/baseline-2026-11.md",
+        "evals/green-2026-11.md",
+        "evals/scenarios.md",
+        "examples/lead-vetting.decisions.json",
+        "references/advanced.md",
+        "references/calibration.md",
+        "references/new-setup.md",
+        "references/privacy.md",
+        "references/providers.md",
+        "references/questions.md",
+        "references/setup-file.md",
+        "scripts/adapters/README.md",
+        "scripts/adapters/levanto_sage.py",
+        "scripts/adapters/vercel_evaluate.py",
+        "scripts/decide.py"
+      ]
+    },
+    {
       "name": "docshelf",
       "version": "0.9.0",
       "files": [
