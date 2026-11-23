@@ -17,11 +17,16 @@ are never printed. See the skill's SKILL.md for the workflow.
 """
 from __future__ import annotations
 
+import hashlib
 import http.client
 import json
 import math
 import os
 import re
+import sqlite3
+import tempfile
+import threading
+import time
 import urllib.error
 import urllib.request
 
@@ -365,3 +370,93 @@ def route(answers: dict, rules: list) -> str:
     if "review" in results:
         return "review"
     return "pass"
+
+
+# --- setup file, privacy record, cache -----------------------------------------
+
+def load_setup(path: str) -> dict:
+    """Read a setup file (<name>.decisions.json). Requires "provider" and "questions"."""
+    try:
+        with open(path, encoding="utf-8") as f:
+            setup = json.load(f)
+    except OSError as e:
+        raise DecisionError("config", f"cannot read setup file {path}: {e}") from None
+    except ValueError as e:
+        raise DecisionError("config", f"setup file {path} is not valid JSON: {e}") from None
+    if not isinstance(setup, dict):
+        raise DecisionError("config", f"setup file {path} must hold a JSON object")
+    for key in ("provider", "questions"):
+        if not setup.get(key):
+            raise DecisionError("config", f"setup file {path} is missing {key!r}")
+    if not setup.get("model"):
+        setup["model"] = provider_config(setup["provider"], setup)["default_model"]
+    return setup
+
+
+def save_setup(path: str, setup: dict) -> None:
+    """Write atomically: a temp file in the same folder, then os.replace."""
+    folder = os.path.dirname(os.path.abspath(path))
+    fd, tmp = tempfile.mkstemp(prefix=".tmp-", suffix=".json", dir=folder)
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as f:
+            json.dump(setup, f, indent=2, ensure_ascii=False)
+            f.write("\n")
+        os.replace(tmp, path)
+    except BaseException:
+        try:
+            os.unlink(tmp)
+        except OSError:
+            pass
+        raise
+
+
+def record_privacy(setup: dict, provider: str, policy_url: str, summary: str, today: str) -> dict:
+    """Record the user's privacy confirmation for a provider. Call only after the
+    user explicitly confirmed all three items in references/privacy.md."""
+    setup.setdefault("privacy", {})[provider] = {
+        "confirmed": today, "policy_url": policy_url, "summary": summary}
+    return setup
+
+
+def cache_key(provider: str, model: str, questions: dict, reference, item) -> str:
+    blob = json.dumps([provider, model, questions, reference, item],
+                      sort_keys=True, ensure_ascii=False, separators=(",", ":"))
+    return hashlib.sha256(blob.encode("utf-8")).hexdigest()
+
+
+def default_cache_path(setup_path: str) -> str:
+    base = setup_path[:-5] if setup_path.endswith(".json") else setup_path
+    return base + ".cache.sqlite"
+
+
+class Cache:
+    """Answers keyed by cache_key(); path None disables caching."""
+
+    def __init__(self, path: str | None):
+        self.db = None
+        self.lock = threading.Lock()
+        if path:
+            self.db = sqlite3.connect(path, check_same_thread=False)
+            self.db.execute("CREATE TABLE IF NOT EXISTS answers (key TEXT PRIMARY KEY, "
+                            "answers TEXT, model_returned TEXT, saved REAL)")
+
+    def get(self, key: str):
+        if not self.db:
+            return None
+        with self.lock:
+            row = self.db.execute("SELECT answers, model_returned FROM answers WHERE key = ?",
+                                  (key,)).fetchone()
+        return {"answers": json.loads(row[0]), "model_returned": row[1]} if row else None
+
+    def put(self, key: str, answers: dict, model_returned) -> None:
+        if not self.db:
+            return
+        with self.lock:
+            self.db.execute("INSERT OR REPLACE INTO answers VALUES (?, ?, ?, ?)",
+                            (key, json.dumps(answers), model_returned, time.time()))
+            self.db.commit()
+
+    def close(self) -> None:
+        if self.db:
+            self.db.close()
+            self.db = None

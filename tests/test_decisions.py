@@ -403,5 +403,91 @@ class CautiousTest(unittest.TestCase):
         self.assertIn("family", why)
 
 
+import tempfile  # noqa: E402
+from unittest import mock  # noqa: E402
+
+
+class SetupFileTest(unittest.TestCase):
+    def setUp(self):
+        self.dir = tempfile.TemporaryDirectory()
+        self.addCleanup(self.dir.cleanup)
+        self.path = os.path.join(self.dir.name, "leads.decisions.json")
+
+    def write(self, data):
+        with open(self.path, "w", encoding="utf-8") as f:
+            json.dump(data, f)
+
+    def test_load_setup_missing_questions_names_key(self):
+        self.write({"provider": "typesafe"})
+        with self.assertRaises(decide.DecisionError) as cm:
+            decide.load_setup(self.path)
+        self.assertEqual(cm.exception.kind, "config")
+        self.assertIn("questions", str(cm.exception))
+
+    def test_load_setup_defaults_model(self):
+        self.write({"provider": "opencode", "questions": QUESTIONS})
+        self.assertEqual(decide.load_setup(self.path)["model"], "jev-1.13-free")
+
+    def test_load_setup_bad_json_is_config_error(self):
+        with open(self.path, "w") as f:
+            f.write("{not json")
+        with self.assertRaises(decide.DecisionError) as cm:
+            decide.load_setup(self.path)
+        self.assertEqual(cm.exception.kind, "config")
+
+    def test_save_setup_roundtrip(self):
+        decide.save_setup(self.path, {"provider": "opencode", "questions": QUESTIONS})
+        self.assertEqual(decide.load_setup(self.path)["provider"], "opencode")
+
+    def test_save_setup_atomic(self):
+        self.write({"provider": "opencode", "questions": QUESTIONS, "marker": 1})
+        with mock.patch.object(decide.os, "replace", side_effect=OSError("boom")):
+            with self.assertRaises(OSError):
+                decide.save_setup(self.path, {"provider": "x", "questions": {}})
+        with open(self.path, encoding="utf-8") as f:
+            self.assertEqual(json.load(f)["marker"], 1)
+        self.assertEqual(os.listdir(self.dir.name), ["leads.decisions.json"])
+
+    def test_record_privacy_fields(self):
+        setup = decide.record_privacy({}, "opencode", "https://example.com/privacy",
+                                      "keeps prompts 30 days", "2026-11-23")
+        entry = setup["privacy"]["opencode"]
+        self.assertEqual(entry, {"confirmed": "2026-11-23",
+                                 "policy_url": "https://example.com/privacy",
+                                 "summary": "keeps prompts 30 days"})
+
+
+class CacheTest(unittest.TestCase):
+    def test_cache_key_changes_with_questions_and_reference(self):
+        k = decide.cache_key("p", "m", QUESTIONS, "ref", "item")
+        self.assertNotEqual(k, decide.cache_key("p", "m", {"x": {"type": "noul"}}, "ref", "item"))
+        self.assertNotEqual(k, decide.cache_key("p", "m", QUESTIONS, "ref2", "item"))
+        self.assertNotEqual(k, decide.cache_key("p", "m2", QUESTIONS, "ref", "item"))
+        self.assertNotEqual(k, decide.cache_key("p", "m", QUESTIONS, "ref", "item2"))
+
+    def test_cache_key_stable_across_dict_order(self):
+        a = {"x": {"type": "noul", "instructions": "i"}, "y": {"type": "noul"}}
+        b = {"y": {"type": "noul"}, "x": {"instructions": "i", "type": "noul"}}
+        self.assertEqual(decide.cache_key("p", "m", a, None, {"b": 1, "a": 2}),
+                         decide.cache_key("p", "m", b, None, {"a": 2, "b": 1}))
+
+    def test_cache_roundtrip(self):
+        with tempfile.TemporaryDirectory() as d:
+            path = os.path.join(d, "c.sqlite")
+            c = decide.Cache(path)
+            self.assertIsNone(c.get("k"))
+            c.put("k", {"q": {"type": "noul", "noul": 0.5}}, "jev-1.14.0")
+            c.close()
+            got = decide.Cache(path).get("k")
+            self.assertEqual(got["answers"]["q"]["noul"], 0.5)
+            self.assertEqual(got["model_returned"], "jev-1.14.0")
+        self.assertIsNone(decide.Cache(None).get("k"))
+        decide.Cache(None).put("k", {}, "m")
+
+    def test_default_cache_path(self):
+        self.assertEqual(decide.default_cache_path(os.path.join("a", "leads.decisions.json")),
+                         os.path.join("a", "leads.decisions.cache.sqlite"))
+
+
 if __name__ == "__main__":
     unittest.main()
