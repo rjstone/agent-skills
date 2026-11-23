@@ -354,6 +354,10 @@ metadata:
   `/work/.claude/skills/<name>/` (opencode v2 finds it there) and placeholder
   keys. Grade from the tool calls in the JSON events, not from the model's own
   list of files it opened, which is often wrong (2026-11-21).
+- The `--work` folder must be readable by the sandbox user (not a root-only
+  scratchpad), and an `opencode` installed outside the system paths (for
+  example under `/opt/node22`) needs `--ro <that folder>` plus
+  `--setenv PATH=<its bin>:/usr/local/bin:/usr/bin:/bin` (2026-11-23).
 - A provider that isn't built in goes in `/work/.config/opencode/opencode.json`
   under `providers`: `{"name", "package": "aisdk:@ai-sdk/openai-compatible",
   "env": ["<KEY_VAR>"], "settings": {"baseURL"}, "models": {"<id>": {}}}`
