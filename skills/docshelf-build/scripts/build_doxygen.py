@@ -617,7 +617,7 @@ def site_header(front_html: str) -> dict:
 
 def read_doxygen(get: Getter, log: Callable[[str], None] = warn
                  ) -> Tuple[str, dict, List[InvEntry], DoxyIndex]:
-    """(sha256 of the index files read, site header, entries, the index).
+    """(sha256 of the entries, site header, entries, the index).
     The search index when the site has one; the menu and index pages when it
     has none or it cannot be read (then with a warning)."""
     cache: Dict[str, Optional[bytes]] = {}
@@ -640,7 +640,9 @@ def read_doxygen(get: Getter, log: Callable[[str], None] = warn
     front = cached("index.html")
     header = site_header(_decode(front)) if front is not None else \
         {"project": "", "version": "", "doxygen": ""}
+    # over the entries, not the files: served pages carry per-response noise
+    # (a CDN's request id), which would make every rebuild look changed
     digest = hashlib.sha256()
-    for rel, body in idx.files:
-        digest.update(rel.encode() + b"\0" + body)
+    for e in sorted(idx.entries, key=lambda x: (x.name, x.role, x.uri, x.dispname)):
+        digest.update("\0".join((e.name, e.role, e.uri, e.dispname)).encode() + b"\n")
     return digest.hexdigest(), header, idx.entries, idx

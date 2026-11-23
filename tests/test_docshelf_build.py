@@ -3345,6 +3345,15 @@ class DoxygenPlanTests(unittest.TestCase):
         self.assertEqual(header["project"], "Demo")
         self.assertTrue(entries)
 
+    def test_sha_ignores_page_noise(self):
+        files = doxy_menu_site()
+        sha1 = read_doxygen(files.get, log=lambda m: None)[0]
+        files["annotated.html"] = files["annotated.html"].replace(
+            b"</body>", b"<script>ray='a5eb'</script></body>")
+        self.assertEqual(read_doxygen(files.get, log=lambda m: None)[0], sha1)
+        files["globals_defs_w.html"] = DOXY_DEFS_W.replace("wxUSE_X", "wxUSE_Y").encode()
+        self.assertNotEqual(read_doxygen(files.get, log=lambda m: None)[0], sha1)
+
     def test_read_doxygen_falls_back_to_menu(self):
         files = doxy_menu_site()
         files["search/searchdata.js"] = b"var nothing = 1;"
@@ -3461,6 +3470,19 @@ class DoxygenCliTests(unittest.TestCase):
         self.assertEqual(code, 0, err)
         self.assertIn("the inventory changed", out)
         self.assertIn({"name": "doMore", "type": "Function", "path": "group__demo#ga1"}, self.entries())
+
+    def test_build_source_reads_index_once(self):
+        calls = []
+        real = build_fetch.Source.file
+
+        def counting(src, rel):
+            calls.append(rel)
+            return real(src, rel)
+        with mock.patch.object(build_fetch.Source, "file", counting):
+            code, out, err = self.run_main("build", self.dox, "--name", "demo")
+        self.assertEqual(code, 0, err)
+        self.assertEqual(calls.count("search/functions_0.js"), 1)
+        self.assertNotIn("the inventory changed", out)
 
     def test_build_menu(self):
         menu = os.path.join(self.tmp, "menu")

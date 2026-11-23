@@ -86,8 +86,14 @@ def _read_doxygen(get):
     return sha, header, entries, idx
 
 
+# Doxygen index reads of this run, by source base: `build SOURCE` plans and
+# then builds, and a menu-index site can take hundreds of requests to read
+_DOXYGEN_READS: dict = {}
+
+
 def _plan_doxygen(cache: str, args, source, get) -> str:
     sha, header, entries, idx = _read_doxygen(get)
+    _DOXYGEN_READS[source.base] = (sha, header, entries, idx)
     name = args.name or derive_name(header)
     check_name(cache, name)
     path = _plan_path(cache, name)
@@ -280,7 +286,8 @@ def do_build(cache: str, name: str, workers: int, refetch: bool = False, opener=
                          opener=opener, sleep=sleep)
     kind = plan.get("kind", "sphinx")
     if kind == "doxygen":
-        sha, header, entries, idx = _read_doxygen(_cached_getter(source))
+        sha, header, entries, idx = _DOXYGEN_READS.pop(source.base, None) or \
+            _read_doxygen(_cached_getter(source))
     else:
         sha, header, entries = _read_inventory(source)
     if sha != plan["inventory_sha256"]:
