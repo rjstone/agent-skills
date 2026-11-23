@@ -55,6 +55,12 @@ follow. Keep it in plain words for non-technical users, but never skip it:
 - "I'm sending 40 invoices to OpenCode's free model now; nothing else
   leaves this computer."
 
+`decide.py` writes files too. Say so once per command, before running it:
+"`decide.py` will write the results to `<path>/routed.jsonl` and keep the
+model's answers in `<path>/leads.decisions.cache.sqlite` so repeats cost
+nothing." Before any commit in a git folder, ask which files to include
+(new-setup.md step 2).
+
 
 ## Workflow
 

@@ -26,7 +26,11 @@ this session. It can be:
 1. a folder on the user's own computer;
 2. a folder in a long-lived account on a server or virtual machine;
 3. a folder in a git (or other version-control) repository that is pushed
-   or backed up;
+   or backed up. Before every commit, list the files you would commit and
+   ask the user which to include, pointing out the ones that hold their
+   data (item lists, results, labels, the `.cache.sqlite` score cache) and
+   that the setup file holds privacy records and reference text. Commit
+   only what they choose; offer a `.gitignore` for the rest;
 4. temporary storage that disappears when the session ends (a cloud agent's
    container, a temp folder), **only** after you tell the user that its
    files will be lost and they agree to download them. Then, at the end of
@@ -34,7 +38,8 @@ this session. It can be:
 
 Cloud agent workspaces and temp folders are temporary unless you know
 otherwise; when unsure whether storage lasts, ask. Then say it: "I'll keep
-this project's files in `<path>`."
+this project's files in `<path>`." The score cache
+(`<name>.decisions.cache.sqlite`) lives there too, beside the setup file.
 
 ## 3. Interview and draft the setup
 
