@@ -354,6 +354,8 @@ def _rule_route(answer: dict | None, rule: dict) -> str:
     conf = answer.get("confidence")
     low_conf = "min_confidence" in rule and (conf is None or conf < rule["min_confidence"])
     if answer.get("type") == "choice":
+        if answer.get("choice") is None:
+            return "review"
         routes = rule.get("routes")
         r = "pass" if routes is None else routes.get(answer.get("choice"), "review")
         return "review" if low_conf else r

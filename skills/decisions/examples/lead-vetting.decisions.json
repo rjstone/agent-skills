@@ -1,0 +1,27 @@
+{
+  "name": "lead-vetting",
+  "provider": "opencode",
+  "model": "jev-1.13-free",
+  "fallbacks": [{"provider": "typesafe", "model": "jev-latest"}],
+  "reference": "We sell <product> to <kind of customer>. A good lead names a concrete need we can meet, from an organization of <size>. Examples: 'We need 40 seats of a ticketing tool by March' -> real, quality 3. 'Top 10 SEO tricks!!' -> not real, quality 0. 'Looking into tools like yours someday' -> real, quality 1.",
+  "questions": {
+    "real": {
+      "type": "noul",
+      "instructions": "Is this a real, specific business need, not spam or a template?",
+      "criteria": {"true": "names a concrete need or project", "false": "generic, promotional or auto-generated"}
+    },
+    "quality": {
+      "type": "score",
+      "instructions": "How promising is this lead for us, by the reference's definition?",
+      "criteria": ["unrelated", "related but vague", "clear need, wrong size", "clear need, right size"]
+    }
+  },
+  "policy": {
+    "mode": "cautious",
+    "good_if": [{"question": "real", "is": true}, {"question": "quality", "at_least": 2}],
+    "rules": [
+      {"question": "real", "source": "calibration"},
+      {"question": "quality", "source": "calibration"}
+    ]
+  }
+}

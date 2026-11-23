@@ -825,5 +825,48 @@ class CalibrationTest(unittest.TestCase):
             self.assertEqual(code, 3)
 
 
+def _load_adapter(name):
+    path = os.path.join(SKILL_DIR, "scripts", "adapters", name + ".py")
+    sp = importlib.util.spec_from_file_location(name, path)
+    mod = importlib.util.module_from_spec(sp)
+    sp.loader.exec_module(mod)
+    return mod
+
+
+class AdapterTest(unittest.TestCase):
+    Q = {"urgent": {"type": "noul", "instructions": {"question": "Urgent?"},
+                    "criteria": {"true": "outage", "false": "anything else"}},
+         "team": {"type": "choice", "criteria": {"ops": "outages", "sales": None}},
+         "quality": {"type": "score", "criteria": ["junk", "ok", "great"]}}
+
+    def test_vercel_to_request_uses_boolean(self):
+        v = _load_adapter("vercel_evaluate")
+        req = v.to_request("convaiinnovations/laya", "text", self.Q)
+        q = req["questions"]
+        self.assertEqual(q["urgent"]["type"], "boolean")
+        self.assertIsInstance(q["urgent"]["instructions"], str)
+        self.assertEqual(q["quality"]["criteria"], ["junk", "ok", "great"])
+        self.assertTrue(all(isinstance(x, str) for x in q["team"]["criteria"].values()))
+        ans = v.from_response({"answers": {"urgent": {"type": "boolean", "boolean": 0.8}}})
+        self.assertEqual(ans["urgent"], {"type": "noul", "noul": 0.8})
+
+    def test_sage_null_answer_maps_to_review_marker(self):
+        sg = _load_adapter("levanto_sage")
+        names = ["team"]
+        ans = sg.from_response({"answers": [{"answer": None, "probability": 0.5}]}, names,
+                               {"team": self.Q["team"]})
+        self.assertTrue(ans["team"]["null_answer"])
+        self.assertEqual(ans["team"]["confidence"], 0)
+        self.assertEqual(decide.route(ans, [{"question": "team"}]), "review")
+
+    def test_sage_score_levels_without_level_key(self):
+        sg = _load_adapter("levanto_sage")
+        req, names = sg.to_request("levanto-sage-v1.3", {"text": "x"}, self.Q)
+        self.assertEqual(names, ["urgent", "team", "quality"])
+        kinds = [q["question"]["kind"] for q in req["questions"]]
+        self.assertEqual(kinds, ["yesno", "choice", "scale"])
+        self.assertEqual([lv["value"] for lv in req["questions"][2]["question"]["levels"]], [0, 1, 2])
+
+
 if __name__ == "__main__":
     unittest.main()

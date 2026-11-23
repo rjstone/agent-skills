@@ -1,0 +1,30 @@
+# Sample adapters (not tested against live services)
+
+`decide.py` speaks only the System One format. A few decision APIs use their
+own format; these files are a head start for those, not supported code.
+
+| File | Service | Status |
+|---|---|---|
+| `vercel_evaluate.py` | Vercel AI Gateway `/v1/evaluate` | sample, unverified |
+| `levanto_sage.py` | Levanto Sage `/decide` | sample, unverified |
+
+Every adapter exposes the same contract:
+
+```python
+evaluate(state, questions, *, key, model, timeout=60) -> answers
+```
+
+`questions` are System One questions and `answers` come back System One-shaped
+(`{"type": "noul", "noul": p}`, `{"type": "choice", ...}`, `{"type": "score", ...}`),
+so `decide.route()` and `decide.effective_rules()` work unchanged:
+
+```python
+import decide, vercel_evaluate as adapter
+answers = adapter.evaluate(state, setup["questions"], key=key, model="...")
+cautious, _ = decide.is_cautious(setup)
+print(decide.route(answers, decide.effective_rules(setup["policy"], setup["questions"], cautious)))
+```
+
+Before using one: read the service's current docs and fix the field names,
+run one call with made-up data, keep the privacy check (`references/privacy.md`)
+and calibrate again: a different service is a different model family.
