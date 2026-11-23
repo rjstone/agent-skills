@@ -1,8 +1,10 @@
 # Advanced patterns
 
 A few common patterns beyond the basics. For everything else, read TypeSafe's
-Patterns (https://docs.typesafe.ai/patterns.md) and Cookbooks
-(https://docs.typesafe.ai/cookbooks.md); they apply to any System One model.
+Patterns (https://docs.typesafe.ai/patterns), Cookbooks
+(https://docs.typesafe.ai/cookbooks) and structured questions
+(https://docs.typesafe.ai/primitives/advanced); they apply to any System One
+model. Append `.md` to a docs URL for the plain-text version.
 
 - **Screen with a yes/no first.** Ask one cheap yes/no ("is this a real
   lead at all?") and run the costly step (more questions, a large model) only
@@ -21,9 +23,13 @@ Patterns (https://docs.typesafe.ai/patterns.md) and Cookbooks
 - **Speculative fan-out.** Extra questions in the same request are nearly
   free; ask the ones a later step might need now.
   https://docs.typesafe.ai/patterns/fan-out.md
-- **Large option lists (hundreds of codes).** Two steps: a first setup picks
-  the group (expenses, assets, ...), then a second setup per group picks the
-  code within it; route low confidence at either step to review. `decide.py`
+- **Large option lists (hundreds of codes).** Walk the tree: a first choice
+  picks the group (expenses, assets, ...), with each option's value being
+  that group's subtree (its codes, trimmed to direct children and a few
+  leaves if large) so the model sees what lives under a branch; then a second
+  choice per group picks the code within it. Route low confidence at either
+  step to review; when the top two groups are close, try both.
+  https://docs.typesafe.ai/primitives/advanced.md (Walking a taxonomy) `decide.py`
   has no chaining in this version: run the first setup, split the output by
   group, run the second. See
   https://docs.typesafe.ai/cookbooks/hierarchical_classification.md ,
