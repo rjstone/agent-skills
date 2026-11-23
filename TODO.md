@@ -136,7 +136,12 @@ column is from memory: verify each against real output before building.
 - [ ] 8.2 Generic HTML importer driven by CSS selectors, Dashing-style;
       maybe read existing `dashing.json` files.
 - [ ] 8.3 Javadoc search indexes.
-- [ ] 8.4 Doxygen tagfile.
+- [ ] 8.4 Doxygen HTML sites: docshelf-build 0.5.0 (`doxygen` type, search
+      index or `menudata.js`; spec
+      `docs/superpowers/specs/2026-11-23-docshelf-build-doxygen-design.md`).
+      Ticked when the GLFW and wxWidgets trials pass.
+- [ ] 8.15 Doxygen tagfiles and XML output (local builds), richer than the
+      HTML indexes (argument lists, member-of); not in 0.5.0.
 - [ ] 8.5 MkDocs `search/search_index.json` (not on Kapeli's list; common
       on current project sites; full text and headings, no API types).
 - [ ] 8.6 The rest of the table, by value.

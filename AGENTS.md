@@ -302,6 +302,14 @@ metadata:
   `BUILD-<type>.md` and a `detect` rule (the user, 2026-11-22). A site's
   HTML archive (`build_archive.py`) is a delivery shortcut for Sphinx pages,
   not a type (the user, 2026-11-22).
+  0.5.0 adds the `doxygen` type (`build_doxygen.py`, `BUILD-doxygen.md`):
+  Doxygen HTML read from its search index (`search/*.js`) or, without one,
+  from `menudata.js` and the typed index pages, into `doxygen:<Type>`
+  entries for the Sphinx plan/build path; pages that document members are
+  full, prose pages stubs. One docvol per Doxygen site (CMSIS components
+  separately), the Pico SDK site is not Doxygen and out of scope,
+  tagfiles/XML later, and the PR waits for GLFW and wxWidgets real-site
+  trials (the user, 2026-11-23).
 - `sandboxing` - run a nested agent CLI or test harness in a bubblewrap
   sandbox (Linux) that hides the caller's environment, processes and files:
   `scripts/sandbox.py` (`env -i` + bwrap `--clearenv`, `/work` as `HOME`,
