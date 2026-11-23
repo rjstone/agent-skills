@@ -24,92 +24,52 @@ the calibrated probabilities this skill depends on.
 `<skill>` below means this skill's folder. Run the script as
 `python3 <skill>/scripts/decide.py ...`.
 
+## Hard rules
+
+- **No real data before the privacy check is recorded** for that provider:
+  the user reads the provider's current data-handling policy at its source,
+  and confirms the three points in
+  [references/new-setup.md](references/new-setup.md) step 4. Never record
+  it on the user's behalf; a summary you write never replaces their reading.
+- **No run on real data without calibration** unless the user has said yes
+  to the cautious-mode drawbacks (wording in new-setup.md step 5).
+- **Errors and uncertain answers go to `review`,** never dropped.
+
 ## Workflow
 
-Do the steps in order. Say each step's outcome to the user in plain words.
+### 1. Find existing work first
 
-### 1. Fit check
+Before setting anything up, look for a decision-model project this request
+continues, especially when the user refers to earlier work:
 
-A decision model fits when **all** are true:
+- check the environment's memory (memory tools or files, `AGENTS.md` /
+  `CLAUDE.md` notes, the project README) for recorded locations of
+  `*.decisions.json` setups;
+- search the user's project for `*.decisions.json`;
+- if still unsure, ask the user.
 
-- there are many items (rule of thumb: more than about 50, or a stream);
-- each decision is yes/no, pick-one from a known list, or a rating;
-- a wrong call can be caught by a later step (review, a person, a rule).
+**Found one:** load it (`python3 <skill>/scripts/decide.py run <setup>
+--dry-run --state "test"` checks it). Most setup questions are answered by
+the file: questions, reference text, provider, calibration and privacy
+records. Then check two things with the user before running:
 
-It does not fit reasoning, writing, multi-step work, or extracting fields (see
-"Out of scope"). For a handful of items, read them yourself. Tell the user
-which case this is before going on.
+- **Privacy still current:** show each provider's confirmation date and
+  policy link. Policies change; if the confirmation is older than about 90
+  days (the script warns), or the provider's page shows a newer update,
+  the user re-reads the policy and confirms again (new-setup.md step 4).
+- **Calibration status:** `mode` and the `calibration` record. Cautious or
+  poor calibration needs the user's yes to the drawbacks (step 5 there).
 
-### 2. Interview and draft the setup
+Then go to step 3.
 
-Ask, in the user's terms, one or two questions at a time:
+### 2. New use case
 
-- What is a good item and a bad one? Ask for 2-3 real examples of each.
-- What happens to each outcome (read, skip, flag, act automatically)?
-- What reference material defines the domain: code lists, definitions,
-  policies, a rubric? Decision models assume **no domain knowledge**.
+No existing project fits: follow
+[references/new-setup.md](references/new-setup.md) (fit check, interview,
+setup file, provider, privacy check, calibration, remembering the project's
+location). Then go to step 3.
 
-Then write `<name>.decisions.json` in the user's project. Start from a copy
-of `<skill>/examples/lead-vetting.decisions.json`: `questions` is an object
-keyed by name, `policy.good_if` a list of conditions (format:
-[references/setup-file.md](references/setup-file.md), question writing:
-[references/questions.md](references/questions.md)). `decide.py run
-<setup> --dry-run --state "test"` checks the file's shape without sending. Put the definitions and
-3-10 labeled examples in its `reference` field: `decide.py` adds them to
-**every** request. Set `policy.good_if` to what the user called a good item.
-Show the questions back to the user before any call.
-
-### 3. Provider and model
-
-Run `python3 <skill>/scripts/decide.py providers` to see which keys are set.
-Prefer free first, within one model family: OpenCode `jev-1.13-free`, with
-paid Jev on TypeSafe or OpenRouter as fallbacks. Provider details, sign-up
-pages and model quirks: [references/providers.md](references/providers.md).
-Fallbacks must be the **same model family**; the script refuses others.
-
-### 4. Privacy check (required before any real data is sent)
-
-Sending items to a provider the user has no agreement with is the user's
-decision, not yours. Assume free or very cheap models keep data indefinitely
-and may train on it; paid ones may too unless the user opts out. For each
-provider, read its current data, retention and training terms (links in
-[references/privacy.md](references/privacy.md)), summarize them in plain
-words, and ask the user to confirm **all three**:
-
-1. **The data is OK to send:** what kind of data it is, and that nothing
-   regulated or confidential goes out beyond what is allowed.
-2. **The terms are acceptable:** they read your retention and training
-   summary and accept it.
-3. **The responsible parties agree:** employer, client or whoever owns the
-   data agrees, or the user is that party.
-
-Only after an explicit yes to all three, record it:
-`python3 <skill>/scripts/decide.py privacy <setup> --provider <name> --policy-url <url> --summary "<one line>"`.
-Never record it on the user's behalf. Until it is recorded, `run`, `ask` and
-`calibrate` refuse to send (exit 3); `--test-data` is only for made-up data.
-
-### 5. Calibrate, or run cautious
-
-Ask the user for labeled examples: items with the right answer, as many as
-they can, covering every class and the borderline cases (20+ is good, a few
-is the bare minimum, more is better). Then:
-
-- **Labels available:** write them as JSONL (format in
-  [references/calibration.md](references/calibration.md)) and run
-  `python3 <skill>/scripts/decide.py calibrate <setup> --labels labels.jsonl`.
-  Report the agreement and warnings to the user in plain words. The cutoffs
-  are tied to the answering model's family; another family needs its own
-  calibration.
-- **User declines or has no labels:** tell them, in these words or close:
-  "Without checking the model on examples you've judged, we can't know how
-  often it gets your items wrong. Expect more good items marked low, bad ones
-  marked high, and wrong choices, so the confidence numbers matter more. I'll
-  run in cautious mode: only near-certain rejects are skipped and everything
-  uncertain goes to a full read. That costs more but loses fewer good items.
-  We can calibrate any time later." Then go on; the setup stays in cautious
-  mode.
-
-### 6. Run and act on the routes
+### 3. Run and act on the routes
 
 `python3 <skill>/scripts/decide.py run <setup> --input items.jsonl --out routed.jsonl`
 (also CSV, a folder of .txt/.md files, or `-`; `--dry-run` shows the first
@@ -121,15 +81,15 @@ request and sends nothing). Each output row has `route`:
 | `review` | read it in full (or a person does); errors and malformed answers land here |
 | `reject` | skip it; mention the count |
 
-Never drop `review` items to save tokens.
+Never drop `review` items to save tokens. Report the summary line (counts,
+mode, tokens, cost) to the user.
 
 For **flagging** jobs (moderation, alerts: "act if any harm question says
 yes"), set `"combine": "any"` in `policy`: then `pass` means flagged by any
 rule, `reject` means every rule says clean, and the rest is `review`. The
-default `"all"` suits screening (any disqualifier rejects). Report the summary line (counts,
-mode, tokens, cost) to the user.
+default `"all"` suits screening (any disqualifier rejects).
 
-### 7. Hand over code the user keeps
+### 4. Hand over code the user keeps
 
 For a hook, a bot or a scheduled job, copy `scripts/decide.py` and the setup
 file into the user's project and show the import:
@@ -155,7 +115,7 @@ question); keep their names and rules fixed so the cutoffs still apply.
 | `providers` | built-in providers, whether a key is set (names only) |
 | `models [--provider X] [--setup F]` | list models where the provider has a list endpoint (with `--setup`, its extra providers too) |
 | `ask [setup] --state T --yes Q` | one question, plain-language answer (`--choice`, `--score` too) |
-| `privacy setup --provider X --policy-url U --summary S` | record the user's confirmation |
+| `privacy setup --provider X --policy-url U --summary S` | record the user's confirmation (S: what they confirmed, with the date) |
 | `calibrate setup --labels F [--check]` | score labels, set cutoffs (`--check` compares only) |
 | `run setup --input F [--out F] [--dry-run]` | score a batch, route each item |
 
@@ -167,12 +127,22 @@ provider failed.
 | Mistake | Instead |
 |---|---|
 | Calling a chat endpoint and parsing JSON "confidence" | System One via `decide.py`; probabilities come from the model |
-| One "is it OK to send?" question | All three privacy confirmations, recorded per provider |
+| One "is it OK to send?" question, or your summary of the policy | The user reads the policy at its source; all three confirmations, recorded per provider |
 | Treating a failed or malformed answer as low score | It routes to `review` |
-| Cutoffs picked by feel and never checked | Calibrate on labels, or cautious mode with the warning |
+| Cutoffs picked by feel and never checked | Calibrate on labels, or the user's yes to cautious-mode drawbacks |
 | Reusing cutoffs after switching model family | Recalibrate; the script drops to cautious mode |
 | Questions without definitions or examples | Put them in `reference`; the model knows nothing of the domain |
-| Jumping into the user's existing routines first | Fit check and interview first, generically |
+| Starting a new setup when one already exists | Check memory and `*.decisions.json` first (step 1) |
+
+## References
+
+- [references/new-setup.md](references/new-setup.md) - setting up a new use case, step by step
+- [references/questions.md](references/questions.md) - writing questions and reference text
+- [references/setup-file.md](references/setup-file.md) - the setup file and routing rules
+- [references/calibration.md](references/calibration.md) - labels, cutoffs, cautious mode
+- [references/privacy.md](references/privacy.md) - the privacy check and keeping it current
+- [references/providers.md](references/providers.md) - providers, models, families, policy pages
+- [references/advanced.md](references/advanced.md) - common patterns; links to TypeSafe docs
 
 ## Out of scope
 

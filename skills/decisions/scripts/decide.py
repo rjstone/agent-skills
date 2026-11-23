@@ -255,13 +255,14 @@ def check_privacy(provider: str, setup: dict | None, test_data: bool) -> None:
     if not (isinstance(entry, dict) and entry.get("confirmed")):
         raise DecisionError(
             "privacy",
-            f"no privacy confirmation recorded for provider {provider!r}. Read the provider's current "
-            "data terms, summarize them for the user, and get an explicit yes to all three: "
-            "(1) this data is OK to send to the provider; (2) the provider's retention and training "
-            "terms are acceptable; (3) whoever owns the data (employer, client) agrees, or the user is "
-            "that party (references/privacy.md). Only then run: decide.py privacy SETUP "
-            f"--provider {provider} --policy-url URL --summary TEXT. Never confirm on the user's "
-            "behalf. Use --test-data only for made-up data.")
+            f"no privacy confirmation recorded for provider {provider!r}. Give the user the link to "
+            "the provider's current data-handling policy; they must read it at its source (a summary "
+            "from you is no substitute). Then get an explicit yes to all three: (1) this data is OK to "
+            "send to the provider; (2) they read the policy at its source and accept it for this data; "
+            "(3) whoever is liable and principally responsible for proper handling of the data under "
+            "applicable laws agrees, or the user is that party (references/privacy.md). Only then run: "
+            f"decide.py privacy SETUP --provider {provider} --policy-url URL --summary TEXT. Never "
+            "confirm on the user's behalf. Use --test-data only for made-up data.")
 
 
 def _hops(setup: dict, provider: str | None, model: str | None, fallbacks) -> list:
@@ -341,6 +342,8 @@ def is_cautious(setup: dict, model_returned: str | None = None):
     policy = setup.get("policy") or {}
     cal = setup.get("calibration")
     if policy.get("mode") != "calibrated":
+        if cal and cal.get("warnings"):
+            return True, "calibration is weak: " + cal["warnings"][0]
         return True, "not calibrated (policy.mode is not 'calibrated')"
     if not cal or not cal.get("model"):
         return True, "no calibration record"
@@ -504,6 +507,31 @@ def save_setup(path: str, setup: dict) -> None:
         except OSError:
             pass
         raise
+
+
+PRIVACY_MAX_AGE_DAYS = 90
+
+
+def privacy_age_warning(setup: dict, provider: str, today: str):
+    """A warning when the provider's privacy confirmation is older than 90 days
+    (policies change), else None."""
+    entry = ((setup or {}).get("privacy") or {}).get(provider)
+    try:
+        then = datetime.date.fromisoformat(entry["confirmed"])
+        age = (datetime.date.fromisoformat(today) - then).days
+    except (TypeError, KeyError, ValueError):
+        return None
+    if age <= PRIVACY_MAX_AGE_DAYS:
+        return None
+    return (f"privacy confirmation for {provider!r} is from {entry['confirmed']} ({age} days old). "
+            "Policies change: ask the user to re-read the provider's current policy at its source "
+            f"({entry.get('policy_url') or 'its site'}) and confirm again (references/privacy.md).")
+
+
+def _warn_privacy_age(setup: dict, provider) -> None:
+    msg = privacy_age_warning(setup, provider, datetime.date.today().isoformat()) if provider else None
+    if msg:
+        _err("warning: " + msg)
 
 
 def record_privacy(setup: dict, provider: str, policy_url: str, summary: str, today: str) -> dict:
@@ -742,6 +770,8 @@ def cmd_run(args) -> int:
         return 2
     first = args.provider or setup["provider"]
     check_privacy(first, setup, args.test_data)
+    if not args.test_data:
+        _warn_privacy_age(setup, first)
     cache = Cache(None if args.no_cache else default_cache_path(args.setup))
     limiter = RateLimiter(args.rate)
     base_cautious, base_reason = is_cautious(setup)
@@ -836,6 +866,8 @@ def cmd_ask(args) -> int:
     if not questions:
         raise DecisionError("config", "give --yes, --choice or --score (or a setup file with questions)")
     provider = args.provider or setup.get("provider") or "opencode"
+    if setup and not args.test_data:
+        _warn_privacy_age(setup, provider)
     state = build_state(setup.get("reference"), args.state)
     answers, meta = evaluate(state, questions, provider=provider, model=args.model,
                              fallbacks=None if setup else [], setup=setup or None,
@@ -943,7 +975,8 @@ def build_parser() -> argparse.ArgumentParser:
     pv.add_argument("setup")
     pv.add_argument("--provider", required=True)
     pv.add_argument("--policy-url", required=True)
-    pv.add_argument("--summary", required=True)
+    pv.add_argument("--summary", required=True,
+                    help="what the user confirmed, with the date (they read the policy at its source)")
     pv.set_defaults(func=cmd_privacy)
 
     pr = sub.add_parser("providers", help="built-in providers and whether a key is set")
@@ -1115,6 +1148,12 @@ def calibrate(setup: dict, labels, *, target_recall: float = 0.95, target_precis
     for cls, k in counts.items():
         if k < 3 and (cls in ("good", "not good") or "=" in cls):
             warnings.append(f"class {cls!r} has only {k} labels; add at least 3")
+    for name, m in metrics.items():
+        if targets is not None and name not in targets:
+            continue  # informational questions set no cutoffs, so their ranking can't weaken them
+        if m.get("auroc") is not None and m["auroc"] < 0.75:
+            warnings.append(f"question {name!r}: AUROC {m['auroc']:.2f} (weak ranking; reword the "
+                            "question or add reference text and labels)")
     suggested = suggest_rules(results, questions, good_if, target_recall, target_precision, targets)
     old = policy.get("rules") or []
     user = [r for r in old if r.get("source") != "calibration"]
@@ -1125,16 +1164,17 @@ def calibrate(setup: dict, labels, *, target_recall: float = 0.95, target_precis
     item_recall = (sum(x != "reject" for x in good_routes) / len(good_routes)) if good_routes else None
     report = {"labels": len(results), "counts": counts, "questions": metrics, "warnings": warnings,
               "suggested_rules": suggested, "kept_user_rules": kept, "rules": final,
-              "item_recall": item_recall, "model": model, "provider": provider}
+              "item_recall": item_recall, "model": model, "provider": provider,
+              "weak": bool(warnings)}
     if write:
         policy["rules"] = final
-        policy["mode"] = "calibrated"
+        policy["mode"] = "cautious" if warnings else "calibrated"
         setup["calibration"] = {
             "model": model, "provider": provider,
             "date": today or datetime.date.today().isoformat(),
             "labels": len(results), "counts": counts, "metrics": metrics,
             "targets": {"recall": target_recall, "precision": target_precision},
-            "item_recall": item_recall}
+            "item_recall": item_recall, "warnings": warnings}
     return report
 
 
@@ -1152,6 +1192,8 @@ def read_labels(path: str) -> list:
 def cmd_calibrate(args) -> int:
     setup = load_setup(args.setup)
     _check_override(args, setup)
+    if not args.test_data:
+        _warn_privacy_age(setup, args.provider or setup["provider"])
     labels = read_labels(args.labels)
     report = calibrate(setup, labels, target_recall=args.target_recall,
                        target_precision=args.target_precision,

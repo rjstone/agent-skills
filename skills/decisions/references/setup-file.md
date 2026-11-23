@@ -12,11 +12,11 @@ as `<name>.decisions.cache.sqlite`.
 | `fallbacks` | no | `[{"provider", "model"}]`, tried in order; same model family only |
 | `reference` | no | definitions and labeled examples sent with every item |
 | `questions` | yes | see `questions.md` |
-| `policy.mode` | no | `cautious` (default) or `calibrated` (set by `calibrate`) |
+| `policy.mode` | no | `cautious` (default) or `calibrated` (set by `calibrate` when its warning list is empty) |
 | `policy.good_if` | no | what a good item is, for calibration |
 | `policy.rules` | no | routing rules (below) |
 | `policy.combine` | no | `all` (default, screening: any reject rejects) or `any` (flagging: any pass flags) |
-| `calibration` | no | written by `calibrate`: model, provider, date, labels, counts, metrics |
+| `calibration` | no | written by `calibrate`: model, provider, date, labels, counts, metrics, warnings |
 | `privacy` | no | written by `decide.py privacy`: `{provider: {confirmed, policy_url, summary, endpoint}}` |
 | `providers` | no | extra hosts: `{name: {endpoint, key_env, default_model}}`, always unverified |
 

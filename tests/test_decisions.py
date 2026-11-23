@@ -269,7 +269,7 @@ class EvaluateTest(unittest.TestCase):
         with self.assertRaises(decide.DecisionError) as cm:
             decide.check_privacy("opencode", {"privacy": {}}, False)
         msg = str(cm.exception)
-        for words in ("OK to send", "retention and training terms", "agree"):
+        for words in ("OK to send", "at its source", "liable", "agree"):
             self.assertIn(words, msg)
 
     def test_no_setup_needs_test_data(self):
@@ -1237,6 +1237,60 @@ class SummaryAndSaveTest(unittest.TestCase):
                 decide.save_setup(sp, {"provider": "opencode", "questions": QUESTIONS})
         self.assertIn("fsync", calls)
         self.assertLess(calls.index("fsync"), calls.index("replace"))
+
+
+class ReviewRoundTwoTest(unittest.TestCase):
+    Q = {"real": {"type": "noul"}}
+
+    def scorer(self, good_vals, bad_vals):
+        labels, vals = [], {}
+        for i, v in enumerate(good_vals):
+            labels.append({"id": f"g{i}", "item": f"g{i}", "expected": {"real": True}})
+            vals[f"g{i}"] = {"real": {"type": "noul", "noul": v}}
+        for i, v in enumerate(bad_vals):
+            labels.append({"id": f"b{i}", "item": f"b{i}", "expected": {"real": False}})
+            vals[f"b{i}"] = {"real": {"type": "noul", "noul": v}}
+        def sc(state, questions, **kw):
+            return vals[state], {"provider": "a", "model_returned": "jev-1.14.0",
+                                 "model_requested": "jev-1.13-free", "usage": {}, "hops": []}
+        return labels, sc
+
+    def setup_(self):
+        return {"provider": "a", "model": "jev-1.13-free", "questions": self.Q,
+                "policy": {"mode": "cautious", "rules": [{"question": "real", "source": "calibration"}]},
+                "privacy": {"a": {"confirmed": "2026-11-23"}}}
+
+    def test_weak_calibration_stays_cautious(self):
+        labels, sc = self.scorer([0.9] * 10, [0.1, 0.2])
+        setup = self.setup_()
+        report = decide.calibrate(setup, labels, scorer=sc)
+        self.assertEqual(setup["policy"]["mode"], "cautious")
+        self.assertTrue(report["weak"])
+        self.assertTrue(setup["calibration"]["warnings"])
+        on, why = decide.is_cautious(setup, "jev-1.14.0")
+        self.assertTrue(on)
+        self.assertIn("weak", why)
+
+    def test_poor_ranking_is_weak(self):
+        vals = [0.5 + (i % 2) * 0.01 for i in range(20)]
+        labels, sc = self.scorer(vals[:12], vals[12:])
+        setup = self.setup_()
+        report = decide.calibrate(setup, labels, scorer=sc)
+        self.assertTrue(any("AUROC" in w for w in report["warnings"]))
+        self.assertEqual(setup["policy"]["mode"], "cautious")
+
+    def test_strong_calibration_is_calibrated(self):
+        labels, sc = self.scorer([0.9] * 15, [0.1] * 10)
+        setup = self.setup_()
+        report = decide.calibrate(setup, labels, scorer=sc)
+        self.assertFalse(report["weak"])
+        self.assertEqual(setup["policy"]["mode"], "calibrated")
+
+    def test_privacy_age_warning(self):
+        setup = {"privacy": {"a": {"confirmed": "2026-01-01"}, "b": {"confirmed": "2026-11-01"}}}
+        self.assertIn("2026-01-01", decide.privacy_age_warning(setup, "a", "2026-11-23"))
+        self.assertIsNone(decide.privacy_age_warning(setup, "b", "2026-11-23"))
+        self.assertIsNone(decide.privacy_age_warning(setup, "zz", "2026-11-23"))
 
 
 if __name__ == "__main__":

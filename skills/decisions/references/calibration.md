@@ -45,21 +45,26 @@ Without it, every yes/no must be yes and every score at least its middle level.
 - Does not support `policy.combine: "any"` (flagging) yet: set those cutoffs
   by hand, or stay in cautious mode.
 - `--provider`, `--model` and `--timeout` apply to the scoring calls.
-- Records model, provider, date, counts and metrics in `calibration`, and
-  sets `policy.mode` to `calibrated`.
+- Records model, provider, date, counts, metrics and warnings in
+  `calibration`, and sets `policy.mode` to `calibrated` only when the warning
+  list is empty (otherwise `cautious`, and the report says `"weak": true`).
 
 `calibrate --check` rescoring compares against the stored record without
 changing anything: run it after a model version change within the family.
 
 ## Cautious mode
 
-On when the setup is not calibrated, or the answering model is from another
-family than the calibrated one. It only widens the review band: yes/no
+On when the setup is not calibrated, when the calibration is weak (too few
+labels, a class with fewer than 3, an AUROC under 0.75 on a question with
+cutoffs: `calibrate` then keeps `mode` at `cautious` and records the
+warnings), or when the answering model is from another family than the
+calibrated one. It only widens the review band: yes/no
 rejects only below 0.05 and passes only above 0.90; scores reject below 0.5
 and pass only near the top level (a rule with no bounds gets both; a rule
 with one bound keeps the other one unset); choice and score answers with confidence
 under 0.6 go to review. Every run's summary says cautious mode is on and why.
 
-When the user declines calibration, say so plainly (wording in `SKILL.md`
-step 5) and keep cautious mode. Read every `review` item. Offer calibration
+When the user declines calibration, or it comes out weak, tell them the
+drawbacks plainly (wording in `new-setup.md` step 5) and get their explicit
+yes before running on real data. Read every `review` item. Offer calibration
 again once there are reviewed items: those make good labels.

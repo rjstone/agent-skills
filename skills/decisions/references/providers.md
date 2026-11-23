@@ -1,6 +1,9 @@
 # Providers and models
 
-All prices and model lists change; check before quoting. Prices are USD per
+All prices and model lists change; check before quoting. Data retention and
+use policies change too: the user confirms the provider's current policy at
+its source for each new setup, and again when reusing an old one
+([privacy.md](privacy.md)). Prices are USD per
 1M **input** tokens (output is free or not billed on most decision models). A
 typical decision is 100-1,500 input tokens.
 
