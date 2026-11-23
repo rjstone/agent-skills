@@ -12,8 +12,6 @@
 
 - [ ] `decisions`: image input and `box` questions (TypeSafe `assets`,
       Perplexity image parts).
-- [ ] `decisions`: a `then` mapping in `decide.py` for two-step choices,
-      if large code lists turn out common (a manual pattern for now).
 - [ ] `decisions`: from the first code review: warn on a model version
       change within a family; rate limit retries and fallback hops, with a
       backoff on 429; Windows (cp1252 stdout, `os.replace` while the setup

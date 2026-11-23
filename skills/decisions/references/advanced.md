@@ -32,8 +32,9 @@ One model.
   choice per group picks the code within it. Route low confidence at either
   step to review; when the top two groups are close, try both.
   https://docs.typesafe.ai/primitives/advanced.md (Walking a taxonomy).
-  `decide.py` has no chaining in this version: run the first setup, split the output by
-  group, run the second. See
+  `decide.py` doesn't chain steps (by design; your own code or the agent
+  does): run a setup for the group question, split its output by the chosen
+  group, then run one setup per group for the code. See
   https://docs.typesafe.ai/cookbooks/hierarchical_classification.md ,
   https://docs.typesafe.ai/cookbooks/classification_using_confidence.md and
   https://docs.typesafe.ai/cookbooks/infinite_cardinality_choice.md
@@ -42,5 +43,5 @@ One model.
 
 System One models such as Jev can read images in `state`, in instructions
 and as criteria, and `box` questions locate things in an image. `decide.py`
-v0.1 sends text only. See https://docs.typesafe.ai/images.md and
+sends text only. See https://docs.typesafe.ai/images.md and
 https://docs.typesafe.ai/primitives/box.md
