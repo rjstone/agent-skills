@@ -24,12 +24,15 @@ spec.loader.exec_module(decide)
 
 
 class ProviderTableTest(unittest.TestCase):
-    def test_version_constant(self):
-        self.assertEqual(decide.VERSION, "0.1.0")
+    def test_version_matches_skill_md(self):
+        import re
+        with open(os.path.join(SKILL_DIR, "SKILL.md"), encoding="utf-8") as f:
+            m = re.search(r'version: "(\d+\.\d+\.\d+)"', f.read())
+        self.assertEqual(decide.VERSION, m.group(1))
 
     def test_builtin_providers(self):
         p = decide.PROVIDERS
-        self.assertEqual(set(p), {"typesafe", "openrouter", "opencode", "perplexity"})
+        self.assertEqual(set(p), {"typesafe", "openrouter", "opencode", "perplexity", "liquid"})
         self.assertEqual(p["typesafe"]["endpoint"], "https://api.typesafe.ai/v1/systemone")
         self.assertEqual(p["openrouter"]["endpoint"], "https://openrouter.ai/api/v1/systemone")
         self.assertEqual(p["opencode"]["endpoint"],
@@ -37,6 +40,10 @@ class ProviderTableTest(unittest.TestCase):
         self.assertEqual(p["perplexity"]["endpoint"], "https://api.perplexity.ai/v1/decisions")
         self.assertEqual(p["typesafe"]["key_env"], ["TYPESAFE_AI_API_KEY", "TYPESAFE_API_KEY"])
         self.assertEqual(p["perplexity"]["key_env"], ["PERPLEXITY_API_KEY"])
+        self.assertEqual(p["liquid"]["endpoint"], "https://api.liquid.ai/decisions/v1/systemone")
+        self.assertEqual(p["liquid"]["key_env"], ["LIQUID_API_KEY"])
+        self.assertEqual(p["liquid"]["models_url"], "https://api.liquid.ai/decisions/v1/models")
+        self.assertEqual(p["liquid"]["default_model"], "d1.1")
         for name, cfg in p.items():
             self.assertTrue(cfg["verified"], name)
             self.assertTrue(cfg["default_model"], name)
@@ -112,7 +119,8 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer  # noqa: E40
 
 class FakeSystemOne:
     """Local stand-in for System One hosts. script[path] is a list of
-    (status, body) replies used in order; the last one repeats."""
+    (status, body) or (status, body, headers) replies used in order; the
+    last one repeats."""
 
     def __init__(self):
         self.script = {}
@@ -132,13 +140,17 @@ class FakeSystemOne:
                     body = None
                 fake.requests.append((self.path, dict(self.headers), body))
                 replies = fake.script.get(self.path) or [(404, {"error": "no route"})]
-                status, out = replies.pop(0) if len(replies) > 1 else replies[0]
+                reply = replies.pop(0) if len(replies) > 1 else replies[0]
+                status, out = reply[0], reply[1]
+                extra = reply[2] if len(reply) > 2 else {}
                 if callable(out):
                     out = out(self.headers, body)
                 data = out if isinstance(out, bytes) else json.dumps(out).encode()
                 self.send_response(status)
                 self.send_header("Content-Type", "application/json")
                 self.send_header("Content-Length", str(len(data)))
+                for k, v in extra.items():
+                    self.send_header(k, v)
                 self.end_headers()
                 self.wfile.write(data)
 
@@ -211,10 +223,67 @@ class EvaluateTest(unittest.TestCase):
     def test_fallback_on_429_then_success(self):
         self.fake.script["/a"] = [(429, {"error": "rate"})]
         self.fake.script["/b"] = [(200, good_answer())]
-        answers, meta = self.ev()
+        with mock.patch.object(decide, "_sleep"):
+            answers, meta = self.ev()
         self.assertEqual(meta["provider"], "b")
         self.assertEqual(len(meta["hops"]), 1)
         self.assertIn("429", meta["hops"][0])
+
+    def test_429_long_retry_after_falls_back_at_once(self):
+        self.fake.script["/a"] = [(429, {}, {"Retry-After": "3600"})]
+        self.fake.script["/b"] = [(200, good_answer())]
+        with mock.patch.object(decide, "_sleep") as sl:
+            _, meta = self.ev()
+        sl.assert_not_called()
+        self.assertEqual(len(self.fake.calls("/a")), 1)
+        self.assertEqual(meta["provider"], "b")
+        self.assertIn("429", meta["hops"][0])
+
+    def test_429_backs_off_then_same_hop_succeeds(self):
+        self.fake.script["/a"] = [(429, {"error": "rate"}), (200, good_answer())]
+        with mock.patch.object(decide, "_sleep") as sl:
+            answers, meta = self.ev()
+        self.assertEqual(meta["provider"], "a")
+        self.assertEqual(meta["hops"], [])
+        sl.assert_called_once_with(1.0)
+
+    def test_429_honours_retry_after(self):
+        self.fake.script["/a"] = [(429, {}, {"Retry-After": "3"}), (429, {}, {"Retry-After": "30"}),
+                                  (200, good_answer())]
+        with mock.patch.object(decide, "_sleep") as sl:
+            self.ev()
+        self.assertEqual([c.args[0] for c in sl.call_args_list], [3.0, 30.0])
+
+    def test_429_exhausted_falls_back_after_backoff(self):
+        self.fake.script["/a"] = [(429, {"error": "rate"})]
+        self.fake.script["/b"] = [(200, good_answer())]
+        with mock.patch.object(decide, "_sleep") as sl:
+            answers, meta = self.ev()
+        self.assertEqual(len(self.fake.calls("/a")), 3)
+        self.assertEqual([c.args[0] for c in sl.call_args_list], [1.0, 2.0])
+        self.assertEqual(meta["provider"], "b")
+        self.assertIn("429", meta["hops"][0])
+
+    def test_429_on_fallback_hop_also_backs_off(self):
+        self.fake.script["/a"] = [(500, {})]
+        self.fake.script["/b"] = [(429, {}), (200, good_answer())]
+        with mock.patch.object(decide, "_sleep") as sl:
+            _, meta = self.ev()
+        self.assertEqual(meta["provider"], "b")
+        sl.assert_called_once_with(1.0)
+
+    def test_parse_retry_after(self):
+        for raw, want in [("2", 2.0), ("0", 0.0), ("999", 999.0), ("-1", None), ("", None), (None, None),
+                          ("Wed, 21 Oct 2026 07:28:00 GMT", None), ("soon", None), ("nan", None)]:
+            self.assertEqual(decide.parse_retry_after(raw), want, raw)
+
+    def test_limiter_runs_before_every_post(self):
+        self.fake.script["/a"] = [(200, {"no": "answers"})]
+        self.fake.script["/b"] = [(200, good_answer())]
+        ticks = []
+        self.ev(limiter=lambda: ticks.append(1))
+        self.assertEqual(len(self.fake.requests), 3)
+        self.assertEqual(len(ticks), 3)
 
     def test_no_fallback_on_422(self):
         self.fake.script["/a"] = [(422, {"detail": "bad question"})]
@@ -279,7 +348,7 @@ class EvaluateTest(unittest.TestCase):
         del self.setup["privacy"]["b"]
         self.fake.script["/a"] = [(429, {"error": "rate"})]
         self.fake.script["/b"] = [(200, good_answer())]
-        with self.assertRaises(decide.DecisionError) as cm:
+        with self.assertRaises(decide.DecisionError) as cm, mock.patch.object(decide, "_sleep"):
             self.ev()
         self.assertEqual(cm.exception.kind, "fallback")
         self.assertIn("privacy", str(cm.exception))
@@ -676,7 +745,7 @@ class CliTest(unittest.TestCase):
         with self.assertRaises(SystemExit):
             with contextlib.redirect_stdout(io.StringIO()) as out:
                 decide.main(["--version"])
-        self.assertIn("0.1.0", out.getvalue())
+        self.assertIn(decide.VERSION, out.getvalue())
 
 
 class CalibrationTest(unittest.TestCase):
@@ -860,23 +929,47 @@ class AdapterTest(unittest.TestCase):
         ans = v.from_response({"answers": {"urgent": {"type": "boolean", "boolean": 0.8}}})
         self.assertEqual(ans["urgent"], {"type": "noul", "noul": 0.8})
 
+    def test_systemone_minimal_request_and_answers(self):
+        m = _load_adapter("systemone_minimal")
+        self.assertEqual(m.to_request("jev-1.13-free", "x", self.Q),
+                         {"model": "jev-1.13-free", "state": "x", "questions": self.Q})
+        self.assertEqual(m.from_response({"model": "m", "answers": {"q": {"type": "noul", "noul": 0.5}}}),
+                         {"q": {"type": "noul", "noul": 0.5}})
+
     def test_sage_null_answer_maps_to_review_marker(self):
         sg = _load_adapter("levanto_sage")
-        names = ["team"]
-        ans = sg.from_response({"answers": [{"answer": None, "probability": 0.5}]}, names,
-                               {"team": self.Q["team"]})
+        reply = {"results": [{"answers": [
+            {"ok": True, "result": {"id": "team", "kind": "choice",
+                                    "result": {"chosen": None, "probability": 0.5, "probabilities": []}}},
+            {"ok": False, "result": None, "error": "boom"}]}]}
+        ans = sg.from_response(reply, {"team": self.Q["team"], "urgent": self.Q["urgent"]})
         self.assertTrue(ans["team"]["null_answer"])
         self.assertEqual(ans["team"]["confidence"], 0)
         self.assertEqual(decide.route(ans, [{"question": "team"}]), "review")
+        self.assertNotIn("urgent", ans)
 
-    def test_sage_score_levels_without_level_key(self):
+    def test_sage_batch_request_and_answers_by_id(self):
         sg = _load_adapter("levanto_sage")
-        req, names = sg.to_request("levanto-sage-v1.3", {"text": "x"}, self.Q)
-        self.assertEqual(names, ["urgent", "team", "quality"])
-        kinds = [q["question"]["kind"] for q in req["questions"]]
-        self.assertEqual(kinds, ["yesno", "choice", "scale"])
-        self.assertEqual([lv["value"] for lv in req["questions"][2]["question"]["levels"]], [0, 1, 2])
-
+        req = sg.to_request({"text": "x"}, self.Q)
+        qs = req["requests"][0]["questions"]
+        self.assertEqual([q["id"] for q in qs], ["urgent", "team", "quality"])
+        self.assertEqual([q["kind"] for q in qs], ["yesno", "choice", "scale"])
+        self.assertEqual(qs[1]["options"][0]["option"], "ops")
+        self.assertEqual([lv["level"] for lv in qs[2]["levels"]], [0, 1, 2])
+        self.assertTrue(all("instructions" in q for q in qs))
+        reply = {"results": [{"answers": [
+            {"ok": True, "result": {"id": "quality", "kind": "scale", "result": {
+                "expectation": 1.9, "confidence": 0.9, "probabilities": [{"level": 2, "probability": 0.9}]}}},
+            {"ok": True, "result": {"id": "urgent", "kind": "yesno",
+                                    "result": {"answer": "no", "probability": 0.8}}},
+            {"ok": True, "result": {"id": "team", "kind": "choice", "result": {
+                "chosen": "ops", "probability": 0.97,
+                "probabilities": [{"option": "ops", "probability": 0.97}]}}}]}]}
+        ans = sg.from_response(reply, self.Q)
+        self.assertAlmostEqual(ans["urgent"]["noul"], 0.2)
+        self.assertEqual(ans["team"]["choice"], "ops")
+        self.assertEqual(ans["team"]["probabilities"], {"ops": 0.97})
+        self.assertEqual(ans["quality"]["score"], 1.9)
 
 class SetupValidationTest(unittest.TestCase):
     def check(self, setup, word):
@@ -1166,7 +1259,7 @@ class PrFollowupTest(unittest.TestCase):
         self.assertIn("a: m2  no description", out)
 
     def test_adapters_refuse_until_privacy_check_wired(self):
-        for name in ("vercel_evaluate", "levanto_sage"):
+        for name in ("vercel_evaluate", "levanto_sage", "systemone_minimal"):
             mod = _load_adapter(name)
             with self.assertRaises(RuntimeError) as cm:
                 mod.evaluate("x", {"q": {"type": "noul"}}, key="k", model="m")
@@ -1290,6 +1383,239 @@ class ReviewRoundTwoTest(unittest.TestCase):
         self.assertIsNone(decide.privacy_age_warning(setup, "b", "2026-11-23"))
         self.assertIsNone(decide.privacy_age_warning(setup, "zz", "2026-11-23"))
 
+
+
+class ReviewMinorsTest(unittest.TestCase):
+    """Deferred review minors: version drift, 429 backoff, Windows."""
+
+    def _calibrated_setup(self, fake, d):
+        setup = {"provider": "a", "model": "jev-1.13.0", "questions": QUESTIONS,
+                 "providers": {"a": {"endpoint": fake.base + "/a", "key_env": []}},
+                 "privacy": {"a": {"confirmed": "2026-11-23"}},
+                 "policy": {"mode": "calibrated",
+                            "rules": [{"question": "urgent", "reject_below": 0.1, "pass_above": 0.8}]},
+                 "calibration": {"model": "jev-1.13.0", "provider": "a"}}
+        sp = os.path.join(d, "s.decisions.json")
+        with open(sp, "w") as f:
+            json.dump(setup, f)
+        return sp
+
+    # --- version drift (Task 1) ---
+    def test_version_drift_same_family_other_version(self):
+        s = {"policy": {"mode": "calibrated"}, "calibration": {"model": "jev-1.13.0"}}
+        msg = decide.version_drift(s, "jev-1.14.0")
+        self.assertIn("jev-1.13.0", msg)
+        self.assertIn("jev-1.14.0", msg)
+        self.assertIn("calibrate", msg)
+        self.assertIn("--check", msg)
+
+    def test_version_drift_none_when_same_model_other_family_uncalibrated_or_unknown(self):
+        s = {"policy": {"mode": "calibrated"}, "calibration": {"model": "jev-1.13.0"}}
+        self.assertIsNone(decide.version_drift(s, "jev-1.13.0"))
+        self.assertIsNone(decide.version_drift(s, "d1.1"))
+        self.assertIsNone(decide.version_drift(s, None))
+        self.assertIsNone(decide.version_drift({"policy": {}}, "jev-1.14.0"))
+
+    def test_run_summary_warns_once_per_drifted_model(self):
+        fake = FakeSystemOne()
+        self.addCleanup(fake.close)
+        fake.script["/a"] = [(200, good_answer("jev-1.14.0"))]
+        with tempfile.TemporaryDirectory() as d:
+            sp = self._calibrated_setup(fake, d)
+            src = os.path.join(d, "in.jsonl")
+            with open(src, "w") as f:
+                f.write('{"id": "1", "text": "x"}\n{"id": "2", "text": "y"}\n{"id": "3", "text": "z"}\n')
+            out, err = io.StringIO(), io.StringIO()
+            with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
+                code = decide.main(["run", sp, "--input", src, "--no-cache", "--rate", "0"])
+        self.assertEqual(code, 0)
+        self.assertEqual(err.getvalue().count("jev-1.14.0 answered"), 1)
+
+    def test_run_no_drift_warning_for_the_calibrated_model(self):
+        fake = FakeSystemOne()
+        self.addCleanup(fake.close)
+        fake.script["/a"] = [(200, good_answer("jev-1.13.0"))]
+        with tempfile.TemporaryDirectory() as d:
+            sp = self._calibrated_setup(fake, d)
+            src = os.path.join(d, "in.jsonl")
+            with open(src, "w") as f:
+                f.write('{"id": "1", "text": "x"}\n')
+            err = io.StringIO()
+            with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(err):
+                decide.main(["run", sp, "--input", src, "--no-cache", "--rate", "0"])
+        self.assertNotIn(" answered, but", err.getvalue())
+
+    def test_run_rate_limits_fallback_hops_too(self):
+        fake = FakeSystemOne()
+        self.addCleanup(fake.close)
+        fake.script["/a"] = [(500, {})]
+        fake.script["/b"] = [(200, good_answer())]
+        with tempfile.TemporaryDirectory() as d:
+            setup = {"provider": "a", "model": "jev-1.13.0", "questions": QUESTIONS,
+                     "fallbacks": [{"provider": "b", "model": "jev-1.14.0"}],
+                     "providers": {"a": {"endpoint": fake.base + "/a", "key_env": []},
+                                   "b": {"endpoint": fake.base + "/b", "key_env": []}},
+                     "privacy": {"a": {"confirmed": "2026-11-23"}, "b": {"confirmed": "2026-11-23"}}}
+            sp = os.path.join(d, "s.decisions.json")
+            with open(sp, "w") as f:
+                json.dump(setup, f)
+            src = os.path.join(d, "in.jsonl")
+            with open(src, "w") as f:
+                f.write('{"id": "1", "text": "x"}\n{"id": "2", "text": "y"}\n')
+            with mock.patch.object(decide.RateLimiter, "wait") as w, \
+                    contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
+                decide.main(["run", sp, "--input", src, "--no-cache"])
+        self.assertEqual(len(fake.requests), 4)
+        self.assertEqual(w.call_count, 4)
+
+    def test_ask_warns_on_drift(self):
+        fake = FakeSystemOne()
+        self.addCleanup(fake.close)
+        fake.script["/a"] = [(200, good_answer("jev-1.14.0"))]
+        with tempfile.TemporaryDirectory() as d:
+            sp = self._calibrated_setup(fake, d)
+            err = io.StringIO()
+            with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(err):
+                code = decide.main(["ask", sp, "--state", "server down"])
+        self.assertEqual(code, 0)
+        self.assertIn("jev-1.14.0 answered", err.getvalue())
+
+
+class WindowsMinorsTest(unittest.TestCase):
+    """Non-UTF-8 stdout (Windows cp1252 when redirected) and a setup file held open."""
+
+    def _setup(self, fake, d, questions=QUESTIONS):
+        setup = {"provider": "a", "model": "jev-1.13.0", "questions": questions,
+                 "providers": {"a": {"endpoint": fake.base + "/a", "key_env": []}},
+                 "privacy": {"a": {"confirmed": "2026-11-23"}}}
+        sp = os.path.join(d, "s.decisions.json")
+        with open(sp, "w") as f:
+            json.dump(setup, f)
+        return sp
+
+    def test_run_to_cp1252_stdout_keeps_valid_json(self):
+        fake = FakeSystemOne()
+        self.addCleanup(fake.close)
+        fake.script["/a"] = [(200, good_answer())]
+        buf = io.BytesIO()
+        stream = io.TextIOWrapper(buf, encoding="cp1252")
+        with tempfile.TemporaryDirectory() as d:
+            sp = self._setup(fake, d)
+            src = os.path.join(d, "in.jsonl")
+            with open(src, "w", encoding="utf-8") as f:
+                f.write('{"id": "\u9879\u76ee-1", "text": "x"}\n')
+            with contextlib.redirect_stdout(stream), contextlib.redirect_stderr(io.StringIO()):
+                code = decide.main(["run", sp, "--input", src, "--no-cache", "--rate", "0"])
+            stream.flush()
+        row = json.loads(buf.getvalue().decode("cp1252").splitlines()[0])
+        self.assertEqual(row["id"], "\u9879\u76ee-1")
+        self.assertEqual(code, 0)
+
+    def _run_lone_surrogate(self, out_args, stream=None):
+        fake = FakeSystemOne()
+        self.addCleanup(fake.close)
+        fake.script["/a"] = [(200, good_answer())]
+        with tempfile.TemporaryDirectory() as d:
+            sp = self._setup(fake, d)
+            src = os.path.join(d, "in.jsonl")
+            with open(src, "w", encoding="utf-8") as f:
+                f.write('{"id": "x\\ud83d", "text": "y"}\n')
+            args = ["run", sp, "--input", src, "--no-cache", "--rate", "0"]
+            if out_args:
+                args += ["--out", os.path.join(d, "out.jsonl")]
+            with contextlib.redirect_stdout(stream or io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
+                code = decide.main(args)
+            if out_args:
+                with open(os.path.join(d, "out.jsonl"), encoding="utf-8") as f:
+                    return code, f.read()
+        return code, None
+
+    def test_lone_surrogate_id_round_trips_on_utf8_stdout(self):
+        buf = io.BytesIO()
+        stream = io.TextIOWrapper(buf, encoding="utf-8")
+        code, _ = self._run_lone_surrogate(False, stream)
+        stream.flush()
+        row = json.loads(buf.getvalue().decode("utf-8").splitlines()[0])
+        self.assertEqual(row["id"], "x\ud83d")
+        self.assertEqual(code, 0)
+
+    def test_lone_surrogate_id_round_trips_in_out_file(self):
+        code, text = self._run_lone_surrogate(True)
+        self.assertEqual(json.loads(text.splitlines()[0])["id"], "x\ud83d")
+        self.assertEqual(code, 0)
+
+    def test_run_out_file_keeps_real_characters(self):
+        fake = FakeSystemOne()
+        self.addCleanup(fake.close)
+        fake.script["/a"] = [(200, good_answer())]
+        with tempfile.TemporaryDirectory() as d:
+            sp = self._setup(fake, d)
+            src = os.path.join(d, "in.jsonl")
+            with open(src, "w", encoding="utf-8") as f:
+                f.write('{"id": "\u9879\u76ee-1", "text": "x"}\n')
+            out = os.path.join(d, "out.jsonl")
+            with contextlib.redirect_stderr(io.StringIO()):
+                decide.main(["run", sp, "--input", src, "--no-cache", "--rate", "0", "--out", out])
+            with open(out, encoding="utf-8") as f:
+                self.assertIn("\u9879\u76ee-1", f.read())
+
+    def test_ask_human_output_to_cp1252_does_not_crash(self):
+        fake = FakeSystemOne()
+        self.addCleanup(fake.close)
+        team = {"team": {"type": "choice", "instructions": "Which team?",
+                         "criteria": {"\u56e2\u961f": "people", "other": None}}}
+        fake.script["/a"] = [(200, {"model": "jev-1.13.0",
+                                    "answers": {"team": {"type": "choice", "choice": "\u56e2\u961f",
+                                                         "confidence": 0.9,
+                                                         "probabilities": {"\u56e2\u961f": 0.9, "other": 0.1}}}})]
+        buf = io.BytesIO()
+        stream = io.TextIOWrapper(buf, encoding="cp1252")
+        with tempfile.TemporaryDirectory() as d:
+            sp = self._setup(fake, d, team)
+            with contextlib.redirect_stdout(stream), contextlib.redirect_stderr(io.StringIO()):
+                code = decide.main(["ask", sp, "--state", "x"])
+            stream.flush()
+        self.assertEqual(code, 0)
+        self.assertIn("?", buf.getvalue().decode("cp1252"))
+
+    def test_main_tolerates_stdout_without_reconfigure(self):
+        with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
+            self.assertEqual(decide.main(["providers"]), 0)
+
+    def test_save_setup_retries_permission_error(self):
+        with tempfile.TemporaryDirectory() as d:
+            path = os.path.join(d, "s.decisions.json")
+            with open(path, "w") as f:
+                json.dump({"x": 0}, f)
+            real = os.replace
+            calls = []
+
+            def flaky(a, b):
+                calls.append(1)
+                if len(calls) == 1:
+                    raise PermissionError("in use")
+                return real(a, b)
+            with mock.patch("os.replace", side_effect=flaky), mock.patch.object(decide, "_sleep") as sl:
+                decide.save_setup(path, {"x": 1})
+            with open(path) as f:
+                self.assertEqual(json.load(f), {"x": 1})
+        self.assertEqual(len(calls), 2)
+        sl.assert_called_once_with(0.2)
+
+    def test_save_setup_gives_up_cleanly(self):
+        with tempfile.TemporaryDirectory() as d:
+            path = os.path.join(d, "s.decisions.json")
+            with open(path, "w") as f:
+                json.dump({"x": 0}, f)
+            with mock.patch("os.replace", side_effect=PermissionError("in use")), \
+                    mock.patch.object(decide, "_sleep"):
+                with self.assertRaises(decide.DecisionError) as cm:
+                    decide.save_setup(path, {"x": 2})
+            with open(path) as f:
+                self.assertEqual(json.load(f), {"x": 0})
+            self.assertEqual(os.listdir(d), ["s.decisions.json"])
+        self.assertEqual(cm.exception.kind, "config")
+        self.assertIn("open in another program", str(cm.exception))
 
 if __name__ == "__main__":
     unittest.main()

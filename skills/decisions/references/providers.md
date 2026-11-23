@@ -12,9 +12,10 @@ typical decision is 100-1,500 input tokens.
 | Provider | Endpoint (POST) | Key env var | Default model | Sign-up / docs |
 |---|---|---|---|---|
 | `opencode` | `https://opencode.ai/inference/systemone/v1/systemone` | `OPENCODE_API_KEY` | `jev-1.13-free` ($0) | https://opencode.ai (Console); https://opencode.ai/docs/console/models/ |
-| `typesafe` | `https://api.typesafe.ai/v1/systemone` | `TYPESAFE_AI_API_KEY` (or `TYPESAFE_API_KEY`) | `jev-latest` | https://typesafe.ai; https://docs.typesafe.ai |
+| `typesafe` | `https://api.typesafe.ai/v1/systemone` | `TYPESAFE_AI_API_KEY` (or `TYPESAFE_API_KEY`) | `jev-latest` | https://typesafe.ai; docs index https://docs.typesafe.ai/llms.txt |
 | `openrouter` | `https://openrouter.ai/api/v1/systemone` | `OPENROUTER_API_KEY` | `typesafe/jev-1.14` | https://openrouter.ai; many decision models, some `:free` |
 | `perplexity` | `https://api.perplexity.ai/v1/decisions` | `PERPLEXITY_API_KEY` | `pplx-decider-latest` | https://docs.perplexity.ai (same body, different path) |
+| `liquid` | `https://api.liquid.ai/decisions/v1/systemone` | `LIQUID_API_KEY` | `d1.1` | https://www.liquid.ai; every question needs `instructions` |
 
 `GET https://api.typesafe.ai/v1/models` lists TypeSafe's names (`jev-latest`,
 `jev-preview`). OpenRouter's `/api/v1/models` does **not** list decision
@@ -27,7 +28,7 @@ models; find them with the `provider-onboarding` skill
 |---|---|---|
 | `jev` | `jev-1.13-free`, `jev-latest` (-> `jev-1.14.0`), `typesafe/jev-1.14` | ~32K context; no domain knowledge assumed; `noul` has no confidence |
 | `pplx-decider` | `pplx-decider-latest`, `perplexity/pplx-decider-flash-v1.3:free` | 1-255 choices, 1-10 score levels, 256K context; questions in one request can see each other's answers (v1.2), so keep grouping fixed once calibrated |
-| `liquid-d1` | `liquid/d1.2`, `liquid/d1-ultra` | via OpenRouter, or Liquid direct (unverified) |
+| `liquid-d1` | `d1`, `d1.1`, `d1.2`, `d1.2-ultra`, `d1-ultra`; on OpenRouter `liquid/d1.2` | Liquid direct verified 2026-11-23; requires `instructions` on every question (422 otherwise) |
 | `asi-super-decider` | `super-decider` | answers noul and choice |
 
 Cheapest listings seen 2026-11-23 (input $/1M): `jev-1.13-free`,
@@ -42,6 +43,13 @@ Perplexity Decider Flash $0.01; Liquid d1.2 $0.02; Jev $0.042; Gemini Decision
 - Mercury Decide (gone from OpenRouter by 2026-11): near-binary scores;
   cutoffs fitted on Jev lost about half the good items. Lesson: cutoffs never
   transfer across families (live tests, 2026-10).
+- Through Vercel AI Gateway (2026-11-23, one made-up item, three questions):
+  `microsoft/microsoft-decision-1` sharp and confident, about $0.0000034 a
+  call; `google/gemini-decision-1` fine, about $0.00002, adds a free-text
+  `text` field; `openai/gpt-6-luna-decisions` returns probabilities rounded
+  to 0 or 1 (near-binary like Mercury: calibrate before trusting cutoffs),
+  about $0.00004; `nace-ai/drex-v2.0` cheapest (about $0.0000018) and much
+  less certain (choice confidence 0.50 on a clear case).
 - Probabilities wobble in the second decimal between identical calls: keep a
   margin around cutoffs (Perplexity docs; observed 2026-10).
 - Jev reads `state` as given; put definitions and examples in it
@@ -55,19 +63,19 @@ Read the current page before the privacy check; these change.
 |---|---|---|
 | OpenRouter | https://openrouter.ai/privacy ; per-provider retention and training: https://openrouter.ai/docs/guides/privacy/provider-logging ; zero data retention routing: https://openrouter.ai/docs/guides/features/zdr | page reachable 2026-11-23 |
 | OpenCode | https://opencode.ai/legal/privacy-policy ; model terms: https://opencode.ai/docs/console/models/ | page reachable 2026-11-23 |
-| TypeSafe | https://typesafe.ai (privacy/terms links) | not checked |
-| Perplexity | https://www.perplexity.ai (legal: privacy policy, API terms) | not checked |
-| ASI Cloud | the provider's site (privacy/terms) | not checked |
+| TypeSafe | https://typesafe.ai/legal/privacy-policy ; terms: https://typesafe.ai/legal/terms ; acceptable use: https://typesafe.ai/legal/acceptable-use-policy | page found 2026-11-23 |
+| Perplexity | API privacy and security (retention, training): https://docs.perplexity.ai/docs/resources/privacy-security ; API terms: https://www.perplexity.ai/hub/legal/perplexity-api-terms-of-service ; data processing addendum: https://www.perplexity.ai/hub/legal/dpa ; privacy notice: https://www.perplexity.ai/hub/legal/privacy-notice | page found 2026-11-23 |
+| Liquid | https://www.liquid.ai/privacy-policy ; terms: https://www.liquid.ai/terms-conditions | page found 2026-11-23 |
 
-## Unverified System One hosts
+## Other System One hosts (not built in)
 
-models.dev lists these with the TypeSafe SDK; none was called live. Add one
-to a setup file's `providers` block (marked unverified automatically):
+Add one to a setup file's `providers` block (marked unverified
+automatically), for example:
 
 ```json
 "providers": {
-  "liquid": {"endpoint": "https://api.liquid.ai/decisions/v1/systemone",
-             "key_env": ["LIQUID_API_KEY"], "default_model": "d1.1"}
+  "decisionmodels": {"endpoint": "https://api.decisionmodels.io/v1/systemone",
+                     "key_env": ["DECISIONMODELS_API_KEY"], "default_model": "s1-fast"}
 }
 ```
 
@@ -76,16 +84,20 @@ is experimental): ASI Cloud, `https://inference.asicloud.cudos.org/v1/systemone`
 model `super-decider` (answers noul and choice), key env var unconfirmed
 (`ASI_API_KEY` used in testing), price not published in the catalogs used.
 
-Others listed: decisionmodels.io (`https://api.decisionmodels.io/v1` +
+Listed by models.dev with the TypeSafe SDK but never called live:
+decisionmodels.io (`https://api.decisionmodels.io/v1` +
 `/systemone`; `s1-fast`, `s1-pro`, `reax-1`), Butler (`cicero`), GreenPT
 (`metis`), Melious (`clef`, `clef-flash`), NEAR AI (`typesafe/jev-1.13`),
 Vivgrid (`jev`). Try one call with `ask --test-data` before real use.
 
 ## Not System One
 
-- Vercel AI Gateway `/v1/evaluate`: `boolean` instead of `noul`, simpler
-  criteria; sample converter in `scripts/adapters/vercel_evaluate.py`.
-- Levanto Sage `/decide`: its own schema, `null` on near-ties; sample in
-  `scripts/adapters/levanto_sage.py`.
+- Vercel AI Gateway `/v1/evaluate` (`AI_GATEWAY_API_KEY`, ids like
+  `typesafe-ai/jev`): `boolean` instead of `noul`, simpler criteria; decision
+  models need paid gateway credits. Checked live 2026-11-23 through
+  `scripts/adapters/vercel_evaluate.py`.
+- Levanto Sage `/decide/batch`: its own schema (one item per request,
+  questions with `kind`/`id`/`instructions`), `null` on near-ties; checked
+  live 2026-11-23 through `scripts/adapters/levanto_sage.py`.
 - Cloudflare Workers AI `@cf/cloudflare/clef*` via `/ai/run`: own format
   (not covered).

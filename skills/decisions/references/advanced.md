@@ -1,10 +1,12 @@
 # Advanced patterns
 
-A few common patterns beyond the basics. For everything else, read TypeSafe's
-Patterns (https://docs.typesafe.ai/patterns), Cookbooks
-(https://docs.typesafe.ai/cookbooks) and structured questions
-(https://docs.typesafe.ai/primitives/advanced); they apply to any System One
-model. Append `.md` to a docs URL for the plain-text version.
+A few common patterns beyond the basics. For everything else, start from
+TypeSafe's docs index, https://docs.typesafe.ai/llms.txt (every page with a
+one-line summary and its plain-text `.md` link), then read Patterns
+(https://docs.typesafe.ai/patterns.md), Cookbooks
+(https://docs.typesafe.ai/cookbooks.md) or structured questions
+(https://docs.typesafe.ai/primitives/advanced.md). They apply to any System
+One model.
 
 - **Screen with a yes/no first.** Ask one cheap yes/no ("is this a real
   lead at all?") and run the costly step (more questions, a large model) only
@@ -30,8 +32,9 @@ model. Append `.md` to a docs URL for the plain-text version.
   choice per group picks the code within it. Route low confidence at either
   step to review; when the top two groups are close, try both.
   https://docs.typesafe.ai/primitives/advanced.md (Walking a taxonomy).
-  `decide.py` has no chaining in this version: run the first setup, split the output by
-  group, run the second. See
+  `decide.py` doesn't chain steps (by design; your own code or the agent
+  does): run a setup for the group question, split its output by the chosen
+  group, then run one setup per group for the code. See
   https://docs.typesafe.ai/cookbooks/hierarchical_classification.md ,
   https://docs.typesafe.ai/cookbooks/classification_using_confidence.md and
   https://docs.typesafe.ai/cookbooks/infinite_cardinality_choice.md
@@ -40,5 +43,5 @@ model. Append `.md` to a docs URL for the plain-text version.
 
 System One models such as Jev can read images in `state`, in instructions
 and as criteria, and `box` questions locate things in an image. `decide.py`
-v0.1 sends text only. See https://docs.typesafe.ai/images.md and
+sends text only. See https://docs.typesafe.ai/images.md and
 https://docs.typesafe.ai/primitives/box.md

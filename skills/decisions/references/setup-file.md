@@ -7,7 +7,7 @@ as `<name>.decisions.cache.sqlite`.
 | Field | Required | Meaning |
 |---|---|---|
 | `name` | no | a label |
-| `provider` | yes | built-in name (`opencode`, `typesafe`, `openrouter`, `perplexity`) or one in `providers` |
+| `provider` | yes | built-in name (`opencode`, `typesafe`, `openrouter`, `perplexity`, `liquid`) or one in `providers` |
 | `model` | no | model id for the primary provider; defaults to the provider's default |
 | `fallbacks` | no | `[{"provider", "model"}]`, tried in order; same model family only |
 | `reference` | no | definitions and labeled examples sent with every item |

@@ -1,14 +1,19 @@
 """SAMPLE adapter: System One questions -> Vercel AI Gateway /v1/evaluate, and back.
 
-Not tested against the live service. Start here only if a user must use the
-Vercel gateway; check every field against Vercel's current docs first.
+Checked live 2026-11-23 with typesafe-ai/jev (boolean, choice, score; the
+reply converts with from_response below). Decision models need paid AI
+Gateway credits: a free-tier account gets 403 "Free tier users do not have
+access to this model", the old free id convaiinnovations/laya-free is gone,
+and "providerOptions": {"gateway": {"has": ["free"]}} finds no free
+provider. The reply's providerMetadata.gateway.cost is the call's price in
+USD; providerMetadata.typesafe carries confidence and the score legend.
 
 Known differences from System One (from earlier hands-on notes):
 - yes/no questions are type "boolean", not "noul"
 - "instructions" must be a plain string
 - score criteria are ordered label strings; choice/boolean criteria are {name: string}
-- the free Laya model has an 8K context, answers 422 on large payloads and
-  allows about 5 requests per minute
+- Laya (convaiinnovations/laya) has an 8K context and answered 422 on large
+  payloads in earlier tests
 - model ids are provider/model slugs (for example "convaiinnovations/laya")
 
 Same contract as every adapter: evaluate(state, questions, *, key, model,

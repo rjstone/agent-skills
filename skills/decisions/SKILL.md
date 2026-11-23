@@ -1,12 +1,12 @@
 ---
 name: decisions
 description: Use when an agent must classify, score, filter, triage, moderate or route many items (leads, invoices, posts, documents, game moves) cheaply, when a user asks to save model tokens or cost with a "decision model" (TypeSafe Jev, System One, Perplexity Decider, Liquid d1), or wants code that makes yes/no, pick-one or rating decisions automatically.
-compatibility: Needs network access to a decision-model provider (api.typesafe.ai, openrouter.ai, opencode.ai, api.perplexity.ai or another System One host) and an API key for it. Python 3.9+, standard library only.
+compatibility: Needs network access to a decision-model provider (api.typesafe.ai, openrouter.ai, opencode.ai, api.perplexity.ai, api.liquid.ai or another System One host) and an API key for it. Python 3.9+, standard library only.
 license: MIT
 metadata:
   author: Robert Stone
   source: https://github.com/rjstone/agent-skills
-  version: "0.1.0"
+  version: "0.2.0"
 ---
 
 # Decisions
@@ -116,10 +116,15 @@ yes"), set `"combine": "any"` in `policy`: then `pass` means flagged by any
 rule, `reject` means every rule says clean, and the rest is `review`. The
 default `"all"` suits screening (any disqualifier rejects).
 
-### 4. Hand over code the user keeps
+### 4. Copy code into the project folder
 
-For a hook, a bot or a scheduled job, copy `scripts/decide.py` and the setup
-file into the user's project and show the import:
+You may copy `scripts/decide.py`, the sample scripts and any code you write
+into the project folder (the skill's code is MIT-licensed). Prefer doing so
+when the work will be reused: the user can see exactly what runs, the copy
+keeps working the same even when the skill is updated, and changes the user
+asks for are kept there. Say what you copy, where, and why. For a hook, a bot
+or a scheduled job, copy `scripts/decide.py` beside the setup file and show
+the import:
 
 ```python
 from decide import load_setup, evaluate, route, effective_rules, is_cautious, build_state, combine_of

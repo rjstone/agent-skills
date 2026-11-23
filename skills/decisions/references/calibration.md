@@ -49,8 +49,9 @@ Without it, every yes/no must be yes and every score at least its middle level.
   `calibration`, and sets `policy.mode` to `calibrated` only when the warning
   list is empty (otherwise `cautious`, and the report says `"weak": true`).
 
-`calibrate --check` rescoring compares against the stored record without
-changing anything: run it after a model version change within the family.
+`calibrate --check` re-scores the labels and compares them with the stored
+record without changing anything. `run` and `ask` print a warning when a
+newer version of the calibrated family answers; run the check then.
 
 ## Cautious mode
 

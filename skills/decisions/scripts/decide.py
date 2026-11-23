@@ -35,7 +35,7 @@ import urllib.error
 import urllib.request
 from concurrent.futures import ThreadPoolExecutor
 
-VERSION = "0.1.0"
+VERSION = "0.2.0"
 
 # Built-in providers: only hosts verified with a live System One call.
 # Unverified hosts go in a setup file's "providers" block (see references/providers.md).
@@ -62,6 +62,14 @@ PROVIDERS = {
         "models_url": None,
         "default_model": "jev-1.13-free",
         "docs": "https://opencode.ai/docs/console/models/",
+        "verified": True,
+    },
+    "liquid": {
+        "endpoint": "https://api.liquid.ai/decisions/v1/systemone",
+        "key_env": ["LIQUID_API_KEY"],
+        "models_url": "https://api.liquid.ai/decisions/v1/models",
+        "default_model": "d1.1",
+        "docs": "https://www.liquid.ai",  # every question needs "instructions"
         "verified": True,
     },
     "perplexity": {
@@ -104,9 +112,11 @@ class DecisionError(Exception):
     """kind: "request" (fix the request), "fallback" (try another provider),
     "privacy" (no confirmed privacy record), "config" (setup or usage problem)."""
 
-    def __init__(self, kind: str, message: str):
+    def __init__(self, kind: str, message: str, *, status=None, retry_after=None):
         super().__init__(message)
         self.kind = kind
+        self.status = status  # HTTP status when the provider answered with an error
+        self.retry_after = retry_after  # seconds from a 429's Retry-After header, if usable
 
 
 _AUTH_PATTERNS = [
@@ -169,6 +179,24 @@ def build_request(model: str, state, questions: dict) -> dict:
 # --- calling a provider ------------------------------------------------------
 
 FALLBACK_STATUSES = {401, 402, 403, 429}
+RETRIES_429 = 2  # extra tries on the same provider after a 429, before falling back
+BACKOFF_429 = (1.0, 2.0)  # seconds to wait before each of those tries without a Retry-After
+MAX_RETRY_AFTER = 30.0  # a longer Retry-After (a spent quota) falls back at once
+_sleep = time.sleep  # one place to wait, so tests can patch it
+
+
+def parse_retry_after(value):
+    """Seconds from a Retry-After header. None for a missing, negative,
+    non-numeric or HTTP-date value (the default backoff applies)."""
+    try:
+        secs = float(value)
+    except (TypeError, ValueError):
+        return None
+    if secs != secs or secs < 0:  # NaN or negative
+        return None
+    return secs
+
+
 USER_AGENT = f"decide.py/{VERSION}"
 
 
@@ -191,8 +219,11 @@ def post_json(url: str, key: str | None, payload: dict, timeout: float) -> dict:
         except Exception:
             detail = ""
         msg = redact(f"HTTP {e.code}: {detail}", key)[:400]
+        if e.code == 429:
+            raise DecisionError("fallback", msg, status=429,
+                                retry_after=parse_retry_after(e.headers.get("Retry-After"))) from None
         if e.code >= 500 or e.code in FALLBACK_STATUSES:
-            raise DecisionError("fallback", msg) from None
+            raise DecisionError("fallback", msg, status=e.code) from None
         raise DecisionError("request", msg) from None
     except (urllib.error.URLError, TimeoutError, OSError, http.client.HTTPException, ValueError) as e:
         raise DecisionError("fallback", redact(f"{type(e).__name__}: {e}", key)) from None
@@ -275,14 +306,35 @@ def _hops(setup: dict, provider: str | None, model: str | None, fallbacks) -> li
     return hops
 
 
+def _post_hop(url: str, key, payload: dict, timeout: float, limiter) -> dict:
+    """One provider call: waits for the rate limiter before every POST, and on a
+    429 waits (Retry-After, else BACKOFF_429) and tries the same provider again,
+    up to RETRIES_429 times; then the 429 falls through to the next provider.
+    A Retry-After above MAX_RETRY_AFTER (a spent quota) falls through at once."""
+    for attempt in range(RETRIES_429 + 1):
+        if limiter:
+            limiter()
+        try:
+            return post_json(url, key, payload, timeout)
+        except DecisionError as e:
+            if e.status != 429 or attempt == RETRIES_429:
+                raise
+            if e.retry_after is not None and e.retry_after > MAX_RETRY_AFTER:
+                raise
+            _sleep(e.retry_after if e.retry_after is not None else BACKOFF_429[attempt])
+    raise AssertionError("unreachable")
+
+
 def evaluate(state, questions: dict, *, provider: str | None = None, model: str | None = None,
              fallbacks=None, setup: dict | None = None, timeout: float = 60,
-             test_data: bool = False):
+             test_data: bool = False, limiter=None):
     """Ask the questions about one state. Returns (answers, meta).
 
     Tries the primary provider, then each same-family fallback once. Each hop
     uses its own model; `model` overrides the primary hop only. Without a setup
-    file holding a privacy entry for a provider, only test_data=True may send."""
+    file holding a privacy entry for a provider, only test_data=True may send.
+    `limiter`, a no-argument callable, runs before every HTTP call (retries and
+    fallback hops included)."""
     setup = setup or {}
     hops = _hops(setup, provider, model, fallbacks)
     check_privacy(hops[0][0], setup or None, test_data)
@@ -299,7 +351,7 @@ def evaluate(state, questions: dict, *, provider: str | None = None, model: str 
         payload = build_request(m, state, questions)
         try:
             for attempt in range(2):
-                reply = post_json(cfg["endpoint"], key, payload, timeout)
+                reply = _post_hop(cfg["endpoint"], key, payload, timeout, limiter)
                 if isinstance(reply, dict) and "answers" in reply:
                     break
                 if attempt:
@@ -343,6 +395,19 @@ def is_cautious(setup: dict, model_returned: str | None = None):
         return True, (f"answering model {model_returned} is family {family_of(model_returned)!r}; "
                       f"calibrated on {cal['model']} (family {family_of(cal['model'])!r})")
     return False, f"calibrated on {cal['model']}"
+
+
+def version_drift(setup: dict, model_returned):
+    """A warning when another version of the calibrated model family answered
+    (the calibration is kept; a family change is cautious mode instead)."""
+    cal = (setup or {}).get("calibration") or {}
+    cal_model = cal.get("model")
+    if ((setup or {}).get("policy") or {}).get("mode") != "calibrated" or not cal_model:
+        return None
+    if not model_returned or model_returned == cal_model or family_of(model_returned) != family_of(cal_model):
+        return None
+    return (f"{model_returned} answered, but the cutoffs were calibrated on {cal_model} (same family). "
+            "The calibration is kept; re-check it with: decide.py calibrate SETUP --labels FILE --check")
 
 
 def effective_rules(policy: dict, questions: dict, cautious: bool) -> list:
@@ -478,6 +543,10 @@ def validate_setup(setup: dict, path: str = "setup") -> None:
         bad("'policy.combine' must be 'all' (screening) or 'any' (flagging)")
 
 
+SAVE_RETRIES = 5
+SAVE_RETRY_DELAY = 0.2
+
+
 def save_setup(path: str, setup: dict) -> None:
     """Write atomically: a temp file in the same folder, then os.replace."""
     folder = os.path.dirname(os.path.abspath(path))
@@ -492,7 +561,17 @@ def save_setup(path: str, setup: dict) -> None:
             os.chmod(tmp, os.stat(path).st_mode & 0o7777)
         except OSError:
             pass
-        os.replace(tmp, path)
+        for attempt in range(SAVE_RETRIES):
+            try:
+                os.replace(tmp, path)
+                break
+            except PermissionError as e:  # Windows: another program has the file open
+                if attempt == SAVE_RETRIES - 1:
+                    raise DecisionError(
+                        "config", f"could not save {path}: {e}. It may be open in another program "
+                        "(an editor, a sync or backup tool); close it and run the command again. "
+                        "The file was not changed.") from None
+                _sleep(SAVE_RETRY_DELAY)
     except BaseException:
         try:
             os.unlink(tmp)
@@ -674,6 +753,21 @@ class RateLimiter:
             time.sleep(delay)
 
 
+def json_line(obj, stream) -> str:
+    """JSON for one output line: real characters when the stream's encoding can
+    hold them all, else \\u escapes (a redirected Windows console is often cp1252;
+    a lone surrogate fits no encoding), so the line is valid and nothing is lost."""
+    enc = getattr(stream, "encoding", None)
+    if enc:
+        text = json.dumps(obj, ensure_ascii=False)
+        try:
+            text.encode(enc)
+            return text
+        except (UnicodeEncodeError, LookupError):
+            pass
+    return json.dumps(obj, ensure_ascii=True)
+
+
 def _err(msg: str) -> None:
     print(f"decide: {msg}", file=sys.stderr)
 
@@ -794,11 +888,10 @@ def cmd_run(args) -> int:
             answers, returned = hit["answers"], hit["model_returned"]
             row.update(cached=True, provider=first)
         else:
-            limiter.wait()
             try:
                 answers, meta = evaluate(build_state(reference, item), questions, provider=args.provider,
                                          model=args.model, setup=setup, timeout=args.timeout,
-                                         test_data=args.test_data)
+                                         test_data=args.test_data, limiter=limiter.wait)
             except DecisionError as e:
                 if e.kind == "privacy":
                     raise
@@ -816,6 +909,7 @@ def cmd_run(args) -> int:
 
     counts = {r: 0 for r in ROUTES}
     totals, fallbacks, failed, n, cautious_any, answered = {}, 0, 0, 0, False, 0
+    drift = []
     out = open(args.out, "w", encoding="utf-8") if args.out else sys.stdout
     try:
         workers = max(1, args.workers)
@@ -831,10 +925,13 @@ def cmd_run(args) -> int:
                     if flag and not cautious_any:
                         base_reason = why or base_reason
                     cautious_any = cautious_any or flag
+                    msg = version_drift(setup, row["model"])
+                    if msg and msg not in drift:
+                        drift.append(msg)
                 if meta:
                     _usage_add(totals, meta["usage"])
                     fallbacks += bool(meta["hops"])
-                out.write(json.dumps(row, ensure_ascii=False) + "\n")
+                out.write(json_line(row, out) + "\n")
     finally:
         if out is not sys.stdout:
             out.close()
@@ -848,6 +945,8 @@ def cmd_run(args) -> int:
          f"out {totals.get('output_tokens', 0)}{cost} | items that used a fallback: {fallbacks}")
     if cautious_any:
         _err("cautious mode: wider review band; read every 'review' item. Calibrate to narrow it.")
+    for msg in drift:
+        _err(msg)
     return 4 if n and failed == n else 0
 
 
@@ -870,6 +969,9 @@ def cmd_ask(args) -> int:
         for name, a in answers.items():
             print(describe(name, a))
         print(f"(model {meta['model_returned']} via {meta['provider']})")
+    msg = version_drift(setup, answering_model(meta))
+    if msg:
+        _err(msg)
     return 0
 
 
@@ -941,7 +1043,7 @@ def build_parser() -> argparse.ArgumentParser:
     r.add_argument("--dry-run", action="store_true", help="print the first request; send nothing")
     r.add_argument("--no-cache", action="store_true")
     r.add_argument("--workers", type=int, default=1)
-    r.add_argument("--rate", type=float, default=2.0, help="max calls per second (default 2)")
+    r.add_argument("--rate", type=float, default=2.0, help="max calls per second across all workers, retries and fallbacks included (default 2)")
     r.set_defaults(func=cmd_run)
 
     a = sub.add_parser("ask", parents=[common], help="ask one question about one text")
@@ -983,6 +1085,13 @@ def build_parser() -> argparse.ArgumentParser:
 
 
 def main(argv=None) -> int:
+    for stream in (sys.stdout, sys.stderr):  # plain text the console can't show becomes "?", not a crash
+        reconfigure = getattr(stream, "reconfigure", None)
+        if reconfigure:
+            try:
+                reconfigure(errors="replace")
+            except (ValueError, OSError):
+                pass
     args = build_parser().parse_args(argv)
     try:
         return args.func(args)
