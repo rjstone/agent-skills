@@ -1,6 +1,6 @@
 # docshelf-build: Doxygen sites (design)
 
-Date: 2026-11-23. Status: draft for the user's review. TODO 8.4.
+Date: 2026-11-23. Status: draft for the user's review (PR stays draft until real-site trials pass). TODO 8.4.
 
 ## Intent
 
@@ -320,8 +320,11 @@ Used when `search/searchdata.js` is missing (404) or unusable.
   enum value.
 - Optionally Arm CMSIS Core
   (`https://arm-software.github.io/CMSIS_6/latest/Core/`).
-- Note: this session's sandbox network blocks these hosts; a trial needs
-  an environment that can reach them (or the user's machine).
+- The PR waits for these trials: it stays a draft and is not merged to
+  `main` until GLFW and wxWidgets both build and spot-check cleanly (the
+  user, 2026-11-23). They run in the cloud session, with
+  `www.glfw.org` and `docs.wxwidgets.org` added to its network allowlist
+  (the user approves the change).
 
 ## TODO.md (my call, from the builder check)
 
