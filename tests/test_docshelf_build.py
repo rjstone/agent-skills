@@ -2978,5 +2978,35 @@ class DoxygenJsTests(unittest.TestCase):
                 js_value(text, "searchData")
 
 
+class DoxygenSourceTests(unittest.TestCase):
+    BASE = "https://docs.example.org/docs/"
+
+    def src(self, responses, robots=None):
+        return build_fetch.open_source(self.BASE, opener=fake_opener(responses, robots),
+                                       sleep=lambda s: None)
+
+    def test_url_200_and_404(self):
+        self.assertEqual(self.src([(200, b"x")]).file("search/searchdata.js"), b"x")
+        self.assertIsNone(self.src([(404, b"")]).file("search/searchdata.js"))
+
+    def test_url_other_status_is_network_error(self):
+        with self.assertRaises(CLIError) as cm:
+            self.src([(503, b"")] * 4).file("menudata.js")
+        self.assertEqual(cm.exception.code, 4)
+        self.assertIn("menudata.js", str(cm.exception))
+
+    def test_url_blocked_by_robots(self):
+        with self.assertRaises(FetchError):
+            self.src([], robots="User-agent: *\nDisallow: /docs/search/").file("search/x.js")
+
+    def test_local(self):
+        with tempfile.TemporaryDirectory() as root:
+            write(root, "search/searchdata.js", "v")
+            s = build_fetch.open_source(root)
+            self.assertEqual(s.file("search/searchdata.js"), b"v")
+            self.assertIsNone(s.file("nope.js"))
+            self.assertIsNone(s.file("../outside"))
+
+
 if __name__ == "__main__":
     unittest.main()
