@@ -33,6 +33,13 @@ class TestClassify(unittest.TestCase):
                   ".github/workflows/ci.yml", "scripts/ci_changed_skills.py"):
             self.assertEqual(ccs.classify([p], SKILLS)[0], ccs.ALL, p)
 
+    def test_plugin_files_select_all_without_bump(self):
+        for p in ("skill-sets.json", "package.json", "opencode-plugin/index.ts",
+                  "opencode-plugin/sets.json", ".claude-plugin/marketplace.json",
+                  "tests/test_plugins.py"):
+            with self.subTest(p):
+                self.assertEqual(ccs.classify([p], SKILLS), (ccs.ALL, set()))
+
     def test_generated_index_selects_nothing(self):
         # skills/index.json is generated, not a skill folder
         self.assertEqual(ccs.classify(["skills/index.json"], SKILLS), (set(), set()))

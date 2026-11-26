@@ -22,8 +22,9 @@ import subprocess
 import sys
 
 ALL = "all"
-SHARED_PREFIXES = (".github/", "scripts/")
-SHARED_TESTS = re.compile(r"^tests/(?:_.*|test_skills\.py|test_public_safety\.py|test_ci_changed_skills\.py|test_skills_index\.py|test_skillspector_ci\.py)$")
+SHARED_PREFIXES = (".github/", "scripts/", ".claude-plugin/", "opencode-plugin/")
+SHARED_FILES = {"skill-sets.json", "package.json"}
+SHARED_TESTS = re.compile(r"^tests/(?:_.*|test_skills\.py|test_public_safety\.py|test_ci_changed_skills\.py|test_skills_index\.py|test_skillspector_ci\.py|test_plugins\.py)$")
 VERSION_LINE = re.compile(r'^\s+version:\s*(\S+)\s*$', re.M)
 
 
@@ -32,7 +33,7 @@ def classify(paths, skills):
     test, own = set(), set()
     by_test = {"tests/test_%s.py" % s.replace("-", "_"): s for s in skills}
     for p in paths:
-        if p.startswith(SHARED_PREFIXES) or SHARED_TESTS.match(p):
+        if p.startswith(SHARED_PREFIXES) or p in SHARED_FILES or SHARED_TESTS.match(p):
             test = ALL
             continue
         m = re.match(r"^skills/([^/]+)/", p)

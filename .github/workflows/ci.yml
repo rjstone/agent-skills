@@ -54,6 +54,11 @@ jobs:
       - name: Repo-wide safety scan (always; fast)
         run: python3 -m unittest tests.test_public_safety -v
 
+      - name: Plugin files are current (always)
+        # skill-sets.json -> .claude-plugin/marketplace.json, opencode-plugin/sets.json;
+        # also fails when a set names a renamed or deleted skill
+        run: python3 scripts/build_plugins.py --check
+
       - name: Unit tests for the chosen skills
         if: steps.pick.outputs.any == 'true'
         env:
@@ -61,9 +66,11 @@ jobs:
         run: python3 -m unittest discover -s tests -v
 
       - uses: actions/setup-node@v7
-        if: steps.pick.outputs.any == 'true'
         with:
-          node-version: 22 # skills CLI needs Node 22.20+
+          node-version: 22 # skills CLI needs Node 22.20+; the opencode plugin tests 22.18+
+
+      - name: opencode plugin unit tests (always)
+        run: node --test "opencode-plugin/test/*.test.ts"
 
       - name: skills.sh discovers the chosen skills
         if: steps.pick.outputs.any == 'true'
@@ -89,11 +96,13 @@ jobs:
           exit $missing
 
   skills-index:
-    # Keep skills/index.json (the opencode HTTP skill catalog, served from
-    # raw.githubusercontent.com) in step with skills/ on main. Works only when
-    # skills/ changed, the file is missing, or it is stale (e.g. an earlier
-    # run was cancelled); commits only a real change. Pushes made with
-    # GITHUB_TOKEN do not start another workflow run.
+    # Keep the generated files in step on main: skills/index.json (the
+    # opencode HTTP skill catalog, served from raw.githubusercontent.com) and
+    # the plugin files from skill-sets.json (.claude-plugin/marketplace.json,
+    # opencode-plugin/sets.json). Works only when skills/ or skill-sets.json
+    # changed, or a file is missing or stale (e.g. an earlier run was
+    # cancelled); commits only a real change. Pushes made with GITHUB_TOKEN
+    # do not start another workflow run.
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     needs: test
     runs-on: ubuntu-latest
@@ -104,32 +113,35 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: Regenerate and commit skills/index.json if needed
+      - name: Regenerate and commit the skills index and plugin files if needed
         env:
           BEFORE: ${{ github.event.before }}
         run: |
           changed=0
           if [ -n "$BEFORE" ] && [ "$BEFORE" != 0000000000000000000000000000000000000000 ] \
              && git cat-file -e "$BEFORE^{commit}" 2>/dev/null; then
-            git diff --name-only "$BEFORE" HEAD -- skills/ | grep -qv '^skills/index.json$' && changed=1
+            git diff --name-only "$BEFORE" HEAD -- skills/ skill-sets.json \
+              | grep -qv '^skills/index.json$' && changed=1
           else
             changed=1
           fi
           if [ "$changed" = 0 ] && [ -f skills/index.json ] \
-             && python3 scripts/build_skills_index.py --check; then
-            echo "No skill changes and the index is current; nothing to do."
+             && python3 scripts/build_skills_index.py --check \
+             && python3 scripts/build_plugins.py --check; then
+            echo "No skill or set changes and the generated files are current; nothing to do."
             exit 0
           fi
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           for attempt in 1 2 3; do
             python3 scripts/build_skills_index.py
-            git add skills/index.json
+            python3 scripts/build_plugins.py
+            git add skills/index.json .claude-plugin/marketplace.json opencode-plugin/sets.json
             if git diff --cached --quiet; then
-              echo "skills/index.json already up to date."
+              echo "Generated files already up to date."
               exit 0
             fi
-            git commit -q -m "chore: regenerate skills/index.json"
+            git commit -q -m "chore: regenerate skills index and plugin files"
             git push origin HEAD:main && exit 0
             # main moved: start again from the new main (never force-push)
             git fetch -q origin main
