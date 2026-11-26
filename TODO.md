@@ -2,11 +2,18 @@
 
 ## Formats
 
-- [ ] Claude Code plugin: `.claude-plugin/plugin.json` (+ `marketplace.json`)
-      pointing at `skills/`; the skills CLI also reads these manifests.
+- [x] Claude Code plugins, one per skill set (`skill-sets.json`; phase 1,
+      2026-11-26).
+- [ ] Skill-set plugins phase 2: list the sets in `rjstone/plugin-marketplace`
+      (`{type:'github', repo:'rjstone/agent-skills', path:'skills'}` +
+      `claude: {skills: [...]}`), install each from there and check its
+      skills; test Codex (exclude it if it ignores the list); consider a
+      first-class `skills` field there, generated from `skill-sets.json`.
+- [ ] Skill-set plugins phase 3: publish the opencode plugin to npm; add
+      `opencode: {package, options: {sets}}` to each marketplace entry.
 - [ ] Claude desktop/web plugin (zip upload).
-- [ ] opencode v2 plugin (and v1, if still worth it).
-- [ ] Versioning, once a format with a version field exists.
+- [ ] Versioning: repo release tags `vX.Y.Z` (shared by all sets), first
+      `v0.1.0` after phase 1 merges.
 
 ## Skills
 

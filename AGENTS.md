@@ -141,6 +141,31 @@ vendors' plugin formats):
   regenerates and commits it when `skills/` changed, it is missing, or it is
   stale (the user, 2026-11-08). opencode re-downloads a skill only when its
   version changes, which "Updating a skill" already requires.
+- `skill-sets.json` - the skill sets (plugins), one per use case (the user,
+  2026-11-26): `opencode-dev`, `docshelf`, `special-agents`. Each lists
+  skill names; every skill stays in `skills/<name>/` (no copies, no links).
+  Edit only this file, then run `python3 scripts/build_plugins.py`, which
+  writes `.claude-plugin/marketplace.json` and `opencode-plugin/sets.json`
+  (`--check`: exit 1 when stale; exit 2 when a set names a missing skill).
+  CI runs the check on every push, and the `skills-index` job regenerates
+  both files on `main`. A set change needs no skill version bump. Rules
+  found by testing (2026-11-26, Claude Code 2.1.332):
+  - Each plugin's root is `skills/` (`"source": "./skills"`, `"skills":
+    ["./<name>", ...]`). With a repo-root source the list *adds to* the
+    default `skills/` scan and every skill loads. A central marketplace
+    points here with a `git-subdir` source, `path: "skills"`, plus the list.
+  - The marketplace name `agent-skills` is reserved for Anthropic's own
+    marketplaces (`marketplace add` refuses it; `claude plugin validate`
+    doesn't), so ours is `rjstone-agent-skills`.
+  - skills.sh lists every skill once, grouped by set (others under
+    "General"); it has no per-plugin install (`--skill <name>` picks).
+- `opencode-plugin/` - opencode v2 server plugin (`index.ts`, logic in
+  `skills.ts`, `node --test "opencode-plugin/test/*.test.ts"`) that adds the
+  sets named in its `sets` option, reading skills in place. Imports only
+  `@opencode/plugin` (from opencode) and `node:` built-ins. Root
+  `package.json` (`private` until npm publishing) points at it. Not named
+  `opencode/`: docshelf-build resolves `build opencode` to a same-named
+  folder in the working directory (2026-11-26).
 - `docs/plans/` - finished plans (`YYYY-MM-<topic>.md`) for work done
   without the superpowers skills.
 - `docs/superpowers/` - specs, plans and other files of work done with the
@@ -464,9 +489,14 @@ metadata:
   `skills` in `opencode.json(c)`; opencode reads `skills/index.json` there.
   Not `https://github.com/...` (a web page; opencode gets 403 for
   `index.json`). Explicit `skills` entries take precedence over local copies.
-- Claude Code plugin (`.claude-plugin/plugin.json` / `marketplace.json`) - TODO.
+- Claude Code plugins - **supported** (one per skill set): `/plugin
+  marketplace add rjstone/agent-skills`, then `/plugin install
+  <set>@rjstone-agent-skills`. Central listing in `rjstone/plugin-marketplace`
+  is phase 2 (spec: `docs/superpowers/specs/2026-11-26-skill-set-plugins-design.md`).
 - Claude desktop/web plugins - TODO.
-- opencode v1/v2 plugins - TODO.
+- opencode v2 plugin - **local path only** (verification): `{"package":
+  "<clone>", "options": {"sets": ["docshelf"]}}` in `opencode.json`. npm is
+  phase 3. v1: undecided (only if still worth it).
 
 ## Standing policies
 
