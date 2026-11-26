@@ -147,8 +147,11 @@ vendors' plugin formats):
   Edit only this file, then run `python3 scripts/build_plugins.py`, which
   writes `.claude-plugin/marketplace.json` and `opencode-plugin/sets.json`
   (`--check`: exit 1 when stale; exit 2 when a set names a missing skill).
-  CI runs the check on every push, and the `skills-index` job regenerates
-  both files on `main`. A set change needs no skill version bump. Rules
+  Run the generator before committing: CI runs the check on every push and
+  fails a stale file (the bot does not regenerate these; its job needs the
+  failing one). After changing the marketplace, also run `claude plugin
+  validate .` (manual: the Claude CLI isn't in CI). A set change needs no
+  skill version bump. Rules
   found by testing (2026-11-26, Claude Code 2.1.332):
   - Each plugin's root is `skills/` (`"source": "./skills"`, `"skills":
     ["./<name>", ...]`). With a repo-root source the list *adds to* the

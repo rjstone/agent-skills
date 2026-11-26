@@ -67,7 +67,12 @@ def validate(config, skills_dir):
         skills = s.get("skills")
         if not isinstance(skills, list) or not skills or not all(isinstance(k, str) for k in skills):
             raise SetsError('set "%s" needs a non-empty "skills" list of names' % name)
+        if len(set(skills)) != len(skills):
+            raise SetsError('set "%s" lists a skill more than once' % name)
         for skill in skills:
+            if not KEBAB.match(skill):
+                raise SetsError('set "%s" lists %r, which is not a lowercase kebab-case skill name'
+                                % (name, skill))
             if not os.path.isfile(os.path.join(skills_dir, skill, "SKILL.md")):
                 raise SetsError('set "%s" lists skill "%s", but skills/%s/SKILL.md does not exist'
                                 % (name, skill, skill))

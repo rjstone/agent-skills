@@ -95,6 +95,23 @@ class TestBuildPlugins(unittest.TestCase):
                 self.assertEqual(err.strip().count("\n"), 0, err)
                 self.assertNotIn("Traceback", err)
 
+    def test_bad_skill_names_in_a_set_exit_2(self):
+        for label, skills in {"duplicate": ["a", "a"], "traversal": ["a/../a"],
+                              "not kebab": ["A"]}.items():
+            with self.subTest(label):
+                self.write_sets(config([{"name": "ab", "description": "x", "skills": skills}]))
+                code, _, err = self.run_main()
+                self.assertEqual(code, 2, err)
+                self.assertTrue(err.startswith("error:"), err)
+
+    def test_ci_bot_does_not_regenerate_plugin_files(self):
+        # The always-run --check in the test job fails a stale push, and the
+        # bot job needs that job, so bot regeneration could never run.
+        with open(os.path.join(REPO_ROOT, ".github", "workflows", "ci.yml"), encoding="utf-8") as f:
+            ci = f.read()
+        self.assertEqual(ci.count("build_plugins.py"), 1)
+        self.assertIn("python3 scripts/build_plugins.py --check", ci)
+
     def test_missing_sets_file_exit_2(self):
         code, _, err = self.run_main()
         self.assertEqual(code, 2)

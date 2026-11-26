@@ -163,10 +163,10 @@ No `plugin.json` files are generated: the entries are the manifests.
   `build_plugins.py --check` passes. Uses fixture repos for the rule failures.
 - `ci.yml` runs `python3 scripts/build_plugins.py --check` on **every** push
   and PR, like the safety scan, not only when a skill is selected: a renamed
-  or deleted skill or an edit to `skill-sets.json` must trip it. On pushes to
-  `main`, the existing `skills-index` job also runs the generator and commits
-  stale outputs, the same way it handles `skills/index.json` (my call,
-  2026-11-26).
+  or deleted skill or an edit to `skill-sets.json` must trip it. Authors run the
+  generator before committing; the bot does not regenerate these files,
+  because its job needs the test job, which fails a stale push first
+  (changed after the final review, 2026-11-26).
 - `claude plugin validate .` in CI if the Claude CLI is cheap to install there;
   otherwise documented as a manual step.
 - An opencode smoke test runs in the `sandboxing` skill's sandbox (as in
