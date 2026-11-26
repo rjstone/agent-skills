@@ -1,0 +1,18 @@
+{
+  "name": "agent-skills",
+  "private": true,
+  "description": "opencode plugin that adds chosen skill sets from this repo (see skill-sets.json)",
+  "license": "MIT",
+  "type": "module",
+  "exports": {
+    ".": "./opencode-plugin/index.ts",
+    "./server": "./opencode-plugin/index.ts"
+  },
+  "files": [
+    "opencode-plugin/",
+    "skills/"
+  ],
+  "engines": {
+    "node": ">=22.18"
+  }
+}
