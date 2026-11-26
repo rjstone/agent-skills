@@ -1,0 +1,16 @@
+{
+  "opencode-dev": [
+    "opencode-build",
+    "opencode-cli",
+    "opencode-api",
+    "opencode-console"
+  ],
+  "docshelf": [
+    "docshelf",
+    "docshelf-build"
+  ],
+  "special-agents": [
+    "provider-onboarding",
+    "decisions"
+  ]
+}

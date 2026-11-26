@@ -1,0 +1,40 @@
+{
+  "name": "agent-skills",
+  "owner": {
+    "name": "Robert Stone"
+  },
+  "metadata": {
+    "description": "Skill sets from rjstone/agent-skills"
+  },
+  "plugins": [
+    {
+      "name": "opencode-dev",
+      "description": "Build, script and administer opencode v2: plugins and SDK, the CLI, the server HTTP API and OpenCode Console.",
+      "source": "./skills",
+      "skills": [
+        "./opencode-build",
+        "./opencode-cli",
+        "./opencode-api",
+        "./opencode-console"
+      ]
+    },
+    {
+      "name": "docshelf",
+      "description": "Offline, version-pinned documentation: look things up in DevDocs and Dash/Zeal docsets, and build new docvols from Sphinx, Doxygen or llms.txt sites.",
+      "source": "./skills",
+      "skills": [
+        "./docshelf",
+        "./docshelf-build"
+      ]
+    },
+    {
+      "name": "special-agents",
+      "description": "Wire up LLM providers and models, and use cheap decision models to classify, filter and route many items.",
+      "source": "./skills",
+      "skills": [
+        "./provider-onboarding",
+        "./decisions"
+      ]
+    }
+  ]
+}
