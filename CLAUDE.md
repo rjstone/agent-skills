@@ -63,6 +63,16 @@ with a cloud container: archive it to `docs/plans/` before the session ends.
   unpushed duplicate commit. To catch up with a remote branch that moved,
   `git fetch` and `git merge` it instead (2026-11-21).
 
+- Two repositories with the same name (a fork `<user>/x` and upstream `<org>/x`)
+  can't both be attached to one session: each is checked out at `<cwd>/<name>`.
+  Upstream PRs from a fork then can't be opened or watched from that session:
+  hand the user the compare URL and PR text (2026-11-28).
+- This container commits as `Claude <noreply@anthropic.com>`. CLA bots
+  (e.g. `open-cla`) read that author, and any `Co-Authored-By` line with that
+  address, as the contributor `@claude`, who can't sign. For PRs to repos with
+  a CLA, commit as the user (their GitHub noreply address) without the
+  co-author line (2026-11-28).
+
 ## Delegating to subagents
 
 - Hand long, mechanical runs (batch jobs, long waits, log sweeps) to a cheap
