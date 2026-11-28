@@ -23,12 +23,13 @@ with a cloud container: archive it to `docs/plans/` before the session ends.
 
 ## Claude Code on the web: skills CLI
 
-- `npx skills find <query>` returns "No skills found" for every query in the
-  web container (even `react`): its search service isn't reachable there.
-  To find a skill, identify the source repo (e.g. a plugin's
+- `npx skills find <query>` works in the web container (2026-11-28: results
+  with install counts and skills.sh links). It used to return "No skills
+  found" for every query; if that happens again, its search service is
+  unreachable: identify the source repo (e.g. a plugin's
   `.claude-plugin/plugin.json`, or Anthropic's
   `anthropics/claude-plugins-official`) and run
-  `npx skills add <owner/repo> --list`, which works.
+  `npx skills add <owner/repo> --list`, which also works.
 
 ## Claude Code on the web: bubblewrap
 
