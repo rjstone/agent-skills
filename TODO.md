@@ -20,17 +20,13 @@
       adapter (`scripts/adapters/levanto_sage.py`) with a live call, sooner
       if Levanto announces a `/decide/batch` change; update its "Checked
       live" date.
-- [ ] `opencode-console`: the skill exists (configuring a workspace, the
-      Console MCP server, CLI and inference endpoints). Still missing upstream
-      (checked 2026-11-08, still true in the skill 2026-11-22): a REST API for
-      members, usage, budgets and billing. Usage is readable only through the
-      Console MCP tools (`get_usage`, `get_member_usage`). Revisit if a REST
-      account API appears.
 - [ ] Docs-cache skills copy their refresh script (each skill must stand
       alone when installed). If they drift, generate the copies from one
       template instead of hand-editing each.
-- [ ] `opencode-build` `ERRATA.md`: record the doc mistakes already seen
-      (verify each against the installed `@opencode/plugin` types).
+### opencode skills
+
+Moved to https://github.com/rjstone/opencode-dev-plugin (its TODO.md), 2026-11-28.
+
 ### docshelf
 
 Moved to https://github.com/rjstone/docshelf-plugin (its TODO.md), 2026-11-28.
