@@ -23,10 +23,7 @@ SECRETS = [
 
 EMAIL = re.compile(r"\b[A-Za-z0-9._%+-]+@([A-Za-z0-9-]+(?:\.[A-Za-z0-9-]+)*\.[A-Za-z]{2,})\b")
 # noreply / example addresses, and the "git@" user of SSH remotes (git@github.com:org/x.git)
-# Vendors' published support addresses in downloaded upstream docs, listed one
-# by one: help@anoma.ly (opencode Console docs, skills/opencode-console/references/).
-EMAIL_OK = re.compile(r"(?i)^(?:noreply@|no-reply@|git@)|@(?:example\.(?:com|org|net)|users\.noreply\.github\.com)$"
-                      r"|^help@anoma\.ly$")
+EMAIL_OK = re.compile(r"(?i)^(?:noreply@|no-reply@|git@)|@(?:example\.(?:com|org|net)|users\.noreply\.github\.com)$")
 
 # absolute home paths with a real-looking account name
 HOME = re.compile(r"(?:/home/|/Users/|[A-Za-z]:[\\/]+Users[\\/]+)([A-Za-z0-9._-]+)")

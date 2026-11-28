@@ -192,18 +192,9 @@ metadata:
 
 ## Skills
 
-- `opencode-build` - opencode v2 Build docs (plugins, client, SDK) cached as
-  Markdown in `references/`, with `scripts/refresh_references.py` to update
-  them and `ERRATA.md` for known doc mistakes. Never hand-edit the downloaded
-  `references/` pages (a test compares each file with its hash in
-  `references/manifest.json`). Our own additions go in `references/X.local.md`
-  beside the page `X.md` they supplement (the user, 2026-11-09). Where they
-  go, their style and the scripts that print type declarations
-  (`scripts/dts_decls.py`, `scripts/client_outline.py`) are in the skill's
-  `MAINTAINING.md`, which `SKILL.md` only points to: most uses of the skill
-  never maintain it (the user, 2026-11-10).
-  Started in the project that first needed it; that copy stays until this
-  repo is set up and tested (the user, 2026-11-08).
+- `opencode-api`, `opencode-build`, `opencode-cli`, `opencode-console` -
+  moved, with their history, to https://github.com/rjstone/opencode-dev-plugin,
+  their own plugin repo (the user, 2026-11-28).
 - `timestamp` - `/timestamp [start|end|both|on|off]` prints a tool-read
   time with a delta at the start and/or end of each turn.
 - `concept-parable` - explains a concept as a fable whose governing
@@ -239,22 +230,6 @@ metadata:
   community list (`foisalislambd/all-llm-provider-list`, no license: read at
   run time, never copied), minus its cookie/OAuth/no-auth entries
   (the user, 2026-11-18).
-- `opencode-cli` - opencode v2 CLI docs (commands, `cli.json`, keybinds,
-  themes, web UI, ACP) cached like `opencode-build`, with its own refresh
-  script copy and `ERRATA.md`.
-- `opencode-api` - opencode v2 server HTTP API: the published OpenAPI spec
-  cached in `references/openapi.json`, searched with `scripts/api_lookup.py`
-  (too large to read whole); calls via `opencode api` or Basic auth.
-- `opencode-console` - OpenCode Console docs (workspaces, members, budgets,
-  API keys, inference endpoints, the `npx @opencode/console` CLI, the Console
-  MCP server, harness setup) cached like `opencode-cli`, with every dollar
-  amount except `$0` replaced by `[check-api]` at download; `SKILL.md` says
-  how to look prices up live (the user, 2026-11-21). `SKILL.md` has two
-  parts: configuring it yourself, and acting for the user (Console MCP tools,
-  CLI, API). Our own `CLI.md` (from the `@opencode/console` npm README) and
-  `API.md` (from its `types/`) sit beside `SKILL.md`, not in `references/`
-  (the user, 2026-11-21). The safety scan allows `help@anoma.ly` (vendor
-  support address in those docs).
 - `docshelf`, `docshelf-build` - moved, with their history, to
   https://github.com/rjstone/docshelf-plugin, their own plugin repo
   (the user, 2026-11-28).
