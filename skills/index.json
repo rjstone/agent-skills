@@ -40,53 +40,6 @@
       ]
     },
     {
-      "name": "docshelf",
-      "version": "0.9.0",
-      "files": [
-        "SKILL.md",
-        "assets/allowlist.txt",
-        "references/dash-zeal.md",
-        "references/getting-docvols.md",
-        "references/lookup-defaults.md",
-        "references/mcp.md",
-        "references/notes.md",
-        "scripts/docshelf.py",
-        "scripts/shelf_backends.py",
-        "scripts/shelf_cli.py",
-        "scripts/shelf_core.py",
-        "scripts/shelf_dash.py",
-        "scripts/shelf_devdocs.py",
-        "scripts/shelf_lookup.py",
-        "scripts/shelf_mcp.py",
-        "scripts/shelf_notes.py",
-        "scripts/shelf_render.py",
-        "scripts/shelf_suggest.py"
-      ]
-    },
-    {
-      "name": "docshelf-build",
-      "version": "0.5.0",
-      "files": [
-        "BUILD-doxygen.md",
-        "BUILD-llmstxt.md",
-        "BUILD-sphinx.md",
-        "SKILL.md",
-        "scripts/build_archive.py",
-        "scripts/build_classify.py",
-        "scripts/build_core.py",
-        "scripts/build_detect.py",
-        "scripts/build_docvol.py",
-        "scripts/build_doxygen.py",
-        "scripts/build_fetch.py",
-        "scripts/build_html.py",
-        "scripts/build_inventory.py",
-        "scripts/build_llms.py",
-        "scripts/build_markdown.py",
-        "scripts/build_plan.py",
-        "scripts/docshelf_build.py"
-      ]
-    },
-    {
       "name": "opencode-api",
       "version": "0.2.1",
       "files": [

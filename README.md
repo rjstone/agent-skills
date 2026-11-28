@@ -11,8 +11,6 @@ NO WARRANTY so inspect them carefully before using.
 - **capturing-tk-screenshots-headless** - run a Tkinter or other Tk GUI on a headless Linux machine or CI and take reliable screenshots of it.
 - **concept-parable** - explain a concept as a short fable whose plot carries the concept's real mechanics, followed by a mapping back to it.
 - **decisions** - use a cheap decision model (TypeSafe Jev, Perplexity Decider and others) to screen, classify or score many items before an agent reads them: provider setup, a privacy check before any data is sent, calibration on labeled examples, and a stdlib client script.
-- **docshelf** - search and read DevDocs documentation and Dash/Zeal docsets offline, with your own notes, from the command line or as an MCP server.
-- **docshelf-build** - build a trimmed docshelf docvol from a documentation site's Sphinx `objects.inv` or `llms.txt` page list, keeping reference pages in full and guides as stubs.
 - **opencode-api** - call opencode's v2 server HTTP API correctly, using its OpenAPI spec cached in the skill.
 - **opencode-build** - write and port opencode v2 plugins and SDK/client code from the current docs.
 - **opencode-cli** - use and script the opencode v2 command line and TUI from the current docs.
@@ -23,6 +21,10 @@ NO WARRANTY so inspect them carefully before using.
 - **skillspector-install** - install NVIDIA SkillSpector and its `skill-inspector` skill from one pinned release, to scan agent skills for security problems.
 - **thonny-plugin** - write, install and debug Thonny IDE plugins: discovery, the plugin folder that actually loads, the UI-thread rule, a test ladder and a verified Thonny 5.0.1 API reference.
 - **timestamp** - toggle time stamps with deltas at the start and/or end of each agent turn.
+
+**docshelf** and **docshelf-build** (offline DevDocs and Dash/Zeal documentation, and docvol builds
+from Sphinx, Doxygen and llms.txt sites) moved to their own plugin:
+[rjstone/docshelf-plugin](https://github.com/rjstone/docshelf-plugin).
 
 ## Install
 

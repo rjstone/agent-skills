@@ -255,61 +255,9 @@ metadata:
   `API.md` (from its `types/`) sit beside `SKILL.md`, not in `references/`
   (the user, 2026-11-21). The safety scan allows `help@anoma.ly` (vendor
   support address in those docs).
-- `docshelf` - DevDocs documentation and read-only Dash/Zeal docsets
-  offline: `search`, `show`, `toc`, `types`, `fts`, `suggest`, per-docvol
-  notes, and `sources` / `install` / `update` fetching from devdocs.io
-  (`sources` also reads the Dash/Zeal catalogs; `remove` is local, and
-  docsets are never changed), plus a `--mcp` stdio server mode. Stdlib only
-  (`scripts/docshelf.py` and `shelf_*.py`). Cache `DOCSHELF_CACHE_DIR`,
-  notes `DOCSHELF_NOTES_DIR`, project file `.docshelf.json` (`"docvols"`
-  list). Its frontmatter has `metadata.credits`. A docvol is docshelf's
-  native format: a third-party documentation bundle (a DevDocs
-  documentation, or a Dash/Zeal docset read in place, read-only) plus
-  docshelf's own metadata, indexes and notes (the user, 2026-11-16).
-- `docshelf-build` - builds a docshelf docvol from a Sphinx site's
-  `objects.inv` (Sphinx, PyDoctor, MkDocs + mkdocstrings), URL or local
-  build folder: an editable plan keeps reference pages (any non-`std:`
-  role) in full and makes guide pages stubs with a live link, then only
-  the full pages are fetched (stdlib, one worker, robots.txt). Writes
-  DevDocs-shaped files to `<cache>/built/<name>/`, plan in
-  `<cache>/built-plans/`; docshelf 0.9.0+ lists them as `built`. A separate
-  skill so lookups can ignore it; the on-disk format is the contract with
-  docshelf (it cannot import docshelf). The two skills are versioned apart
-  (no lockstep); the contract is `"format"` in a built docvol's `meta.json`
-  (`build_core.DOCVOL_FORMAT`, docshelf's `BUILT_FORMAT`), bumped only for
-  a change older docshelf cannot read, together with docshelf's reader
-  and docshelf-build's stated minimum docshelf (the user, 2026-11-21).
-  Agents want dense reference, not tutorials (the user, 2026-11-21; spec
-  and plan under `docs/superpowers/`). 0.2.0 adds `llms.txt` sources
-  (`build_llms.py`, `build_markdown.py`): nested `.txt` sub-indexes
-  followed to depth 3 (index or main docs host only, never `*-full.txt`), every listed
-  page on the main host kept in full, other-host pages stubs (0.4.0; fetch
-  too much, sort later), raw pages cached in
-  `<cache>/built-src/<name>/` so rebuilds and re-sorts need no page
-  downloads, page keys from the URL path (stable whichever index is the
-  SOURCE), per-page `signals` in the plan for a later classifier whose
-  `why: "model:<id>"` choices survive re-planning (the user, 2026-11-21).
-  0.3.0 adds `classify NAME` (`build_classify.py`): rules decide the clear
-  pages from the signals (`why: "model:rules-1"` in 0.3.0, checked
-  against a labelled fixture) and an agent decides the rest through `--apply` (the user,
-  2026-11-22; spec under `docs/superpowers/specs/`). 0.4.0 replaces the
-  rules with `model:rules-2` (tuned on calibration + holdout, fresh split
-  frozen; an old `model:rules-1` page is re-decided).
-  `SKILL.md` only finds the site type (`detect URL_OR_PATH`,
-  `build_detect.py`: `objects.inv` or `llms.txt`, Sphinx preferred when
-  both exist) and points to one `BUILD-<type>.md` beside it, so an agent
-  reads only its own type's procedure; a new source type adds a
-  `BUILD-<type>.md` and a `detect` rule (the user, 2026-11-22). A site's
-  HTML archive (`build_archive.py`) is a delivery shortcut for Sphinx pages,
-  not a type (the user, 2026-11-22).
-  0.5.0 adds the `doxygen` type (`build_doxygen.py`, `BUILD-doxygen.md`):
-  Doxygen HTML read from its search index (`search/*.js`) or, without one,
-  from `menudata.js` and the typed index pages, into `doxygen:<Type>`
-  entries for the Sphinx plan/build path; pages that document members are
-  full, prose pages stubs. One docvol per Doxygen site (CMSIS components
-  separately), the Pico SDK site is not Doxygen and out of scope,
-  tagfiles/XML later, and the PR waits for GLFW and wxWidgets real-site
-  trials (the user, 2026-11-23).
+- `docshelf`, `docshelf-build` - moved, with their history, to
+  https://github.com/rjstone/docshelf-plugin, their own plugin repo
+  (the user, 2026-11-28).
 - `sandboxing` - run a nested agent CLI or test harness in a bubblewrap
   sandbox (Linux) that hides the caller's environment, processes and files:
   `scripts/sandbox.py` (`env -i` + bwrap `--clearenv`, `/work` as `HOME`,
